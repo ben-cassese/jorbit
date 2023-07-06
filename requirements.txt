@@ -1,3 +1,9 @@
+jax
+astropy
+astroquery
+matplotlib
+numpy
+scipy
 nbsphinx
 sphinx-automodapi
 sphinx-book-theme
