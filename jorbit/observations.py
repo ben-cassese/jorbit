@@ -13,7 +13,8 @@ from astroquery.jplhorizons import Horizons
 import matplotlib.pyplot as plt
 import pickle
 
-import importlib.resources as resources
+# import importlib.resources as resources
+import pkg_resources
 
 from .construct_perturbers import (
     construct_perturbers,
@@ -23,8 +24,9 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_GMS,
 )
 
-from . import data
-codes = (resources.files(data) / 'observatory_codes.pkl')
+# from . import data
+# codes = (resources.files(data) / 'observatory_codes.pkl')
+codes = pkg_resources.resource_filename('jorbit', 'data/observatory_codes.pkl')
 with open(codes, "rb") as f:
     observatory_codes = pickle.load(f)
 
