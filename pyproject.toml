@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 keywords = ["orbits", "astronomy", "astrometry"]
-requires-python = ">=3.9"
+requires-python = ">=3.9.16"
 dynamic = ["dependencies"]
 
 [tool.setuptools.dynamic]
