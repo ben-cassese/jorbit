@@ -2,9 +2,11 @@ jax
 jaxlib
 astropy
 astroquery
+jplephem
 matplotlib
 numpy
 scipy
+pandas
 nbsphinx
 sphinx-automodapi
 sphinx-book-theme
