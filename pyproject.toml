@@ -1,0 +1,29 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jorbit"
+version = "0.0.1"
+description = "Solar system orbit fitting and integration with JAX"
+readme = "README.md"
+authors = [{ name = "Ben Cassese", email = "b.c.cassese@columbia.edu" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["orbits", "astronomy", "astrometry"]
+requires-python = ">=3.9"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+
+[project.urls]
+Homepage = "https://github.com/ben-cassese/jorbit"

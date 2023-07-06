@@ -63,7 +63,6 @@ from .data.constants import (
     H,
 )
 
-from .types import *
 
 ################################################################################
 # Integrator functions
