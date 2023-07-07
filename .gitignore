@@ -3,3 +3,5 @@ jorbit/data/__pycache__/
 jorbit.egg-info/
 development/
 .DS_Store
+tests/__pycache__/
+tests/unit/__pycache__/
