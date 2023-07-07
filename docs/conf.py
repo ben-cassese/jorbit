@@ -42,5 +42,5 @@ html_theme = "sphinx_book_theme"
 html_copy_source = True
 html_show_sourcelink = True
 html_sourcelink_suffix = ""
-html_title = "slapshot"
+html_title = "jorbit"
 html_static_path = ["_static"]
