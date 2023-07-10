@@ -10,7 +10,10 @@ import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
+from jorbit import Observations
 from .data.constants import all_planets, large_asteroids
 from .construct_perturbers import (
     construct_perturbers,
@@ -427,98 +430,136 @@ class System:
             == len(self._massive_particle_astrometry_uncertainties)
         )
 
-def __repr__(self):
-    return f"System with {len(self._xs)} particles"
+    def __repr__(self):
+        return f"System with {len(self._xs)} particles"
 
-def __len__(self):
-    return len(self._xs)
+    def __len__(self):
+        return len(self._xs)
 
-################################################################################
-# Methods
-################################################################################
-def add_particle(self):
-    pass
+    ################################################################################
+    # Methods
+    ################################################################################
+    def add_particle(self):
+        pass
 
 
-def propagate(self, times, use_GR=False, obey_large_step_limits=True):
-        
-        # get "times" into an array of (n_times,)
-        if isinstance(times, type(Time("2023-01-01"))):
-            times = jnp.array(times.tdb.jd)
-        elif isinstance(times, list):
-            times = jnp.array([t.tdb.jd for t in times])
-        if times.shape == ():
-            times = jnp.array([times])
+    def propagate(self, times, use_GR=False, obey_large_step_limits=True, sky_positions=False,
+                  observatory_locations=[]):
+            
+            # get "times" into an array of (n_times,)
+            if isinstance(times, type(Time("2023-01-01"))):
+                times = jnp.array(times.tdb.jd)
+            elif isinstance(times, list):
+                times = jnp.array([t.tdb.jd for t in times])
+            if times.shape == ():
+                times = jnp.array([times])
 
-        assert jnp.max(times) < self._latest_time.tdb.jd, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
+            assert jnp.max(times) < self._latest_time.tdb.jd, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
 
-        jumps = jnp.abs(jnp.diff(times))
-        if jumps.shape != (0,): largest_jump = jnp.max(jumps)
-        else: largest_jump = 0
-        first_jump = jnp.abs(self._time - times[0])
-        largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
-        if obey_large_step_limits:
-            assert largest_jump < 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. May have to increase max_steps manually to proceed."
-        if largest_jump < 1000: max_steps = jnp.arange(100)
-        else: max_steps = jnp.arange(1000)
+            jumps = jnp.abs(jnp.diff(times))
+            if jumps.shape != (0,): largest_jump = jnp.max(jumps)
+            else: largest_jump = 0
+            first_jump = jnp.abs(self._time - times[0])
+            largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
+            if obey_large_step_limits:
+                assert largest_jump < 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. May have to increase max_steps manually to proceed."
+            if largest_jump < 1000: max_steps = jnp.arange(100)
+            else: max_steps = jnp.arange(1000)
 
-        if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
+            if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
 
-        xs, vs, final_time, success = integrate_multiple(
-            xs=self._xs,
-            vs=self._vs,
-            gms=self._gms,
-            initial_time=self._time,
-            final_times=times,
-            planet_params=self._planet_params,
-            asteroid_params=self._asteroid_params,
-            planet_gms=self._planet_gms,
-            asteroid_gms=self._asteroid_gms,
-            max_steps=max_steps,
-            use_GR=use_GR,
-        )
+            xs, vs, final_time, success = integrate_multiple(
+                xs=self._xs,
+                vs=self._vs,
+                gms=self._gms,
+                initial_time=self._time,
+                final_times=times,
+                planet_params=self._planet_params,
+                asteroid_params=self._asteroid_params,
+                planet_gms=self._planet_gms,
+                asteroid_gms=self._asteroid_gms,
+                max_steps=max_steps,
+                use_GR=use_GR,
+            )
 
-        self._xs = xs
-        self._vs = vs
-        self._time = final_time
+            self._xs = xs
+            self._vs = vs
+            self._time = final_time
 
-        return xs, vs
 
-################################################################################
-# Properties
-################################################################################
 
-@property
-def xs(self):
-    return self._xs
+            if sky_positions:
+                if observatory_locations == []:
+                    raise ValueError("Must provide observatory locations if on_sky=True. See Observations docstring for more info.")
+                pos = [SkyCoord(0*u.deg, 0*u.deg)]*len(times)
+                obs = Observations(positions=pos, times=times,
+                                   observatory_locations=observatory_locations,
+                                   astrometry_uncertainties=[10*u.mas]*len(times))
+                
+                ras, decs = on_sky(
+                    xs=xs.reshape(-1, xs.shape[-1]),
+                    vs=vs.reshape(-1, vs.shape[-1]),
+                    gms=jnp.tile(self._gms, len(times)),
+                    times=jnp.tile(times, len(xs)),
+                    observer_positions=jnp.array(list(obs.observer_positions)*len(xs)),
+                    planet_params=self._planet_params,
+                    asteroid_params=self._asteroid_params,
+                    planet_gms=self._planet_gms,
+                    asteroid_gms=self._asteroid_gms,
+                )
 
-@xs.setter
-def xs(self, value):
-    raise AttributeError("cannot change xs directly- use propagate(), which will update the entire state of the system") from None
+                s = SkyCoord(ra=ras*u.rad, dec=decs*u.rad)
+                if xs.shape[0] == 1:
+                    return xs[0], vs[0], s
+                return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
 
-@property
-def vs(self):
-    return self._vs
+            if xs.shape[0] == 1:
+                return xs[0], vs[0]
+            return xs, vs
 
-@vs.setter
-def vs(self, value):
-    raise AttributeError("cannot change vs directly- use propagate(), which will update the entire state of the system") from None
+    ################################################################################
+    # Properties
+    ################################################################################
 
-@property
-def gms(self):
-    return self._gms
+    @property
+    def xs(self):
+        if self._xs.shape[0] == 1:
+            return self._xs[0]
+        return self._xs
 
-@gms.setter
-def gms(self, value):
-    raise AttributeError("cannot change gms ") from None
+    @xs.setter
+    def xs(self, value):
+        raise AttributeError("cannot change xs directly- use propagate(), which will update the entire state of the system") from None
 
-@property
-def particles(self):
-    # collapse the current state back into a list of particles
-    pass
+    @property
+    def vs(self):
+        if self._vs.shape[0] == 1:
+            return self._vs[0]
+        return self._vs
 
-@property
-def elements(self):
-    pass
+    @vs.setter
+    def vs(self, value):
+        raise AttributeError("cannot change vs directly- use propagate(), which will update the entire state of the system") from None
+
+    @property
+    def gms(self):
+        if self._gms.shape[0] == 1:
+            return self._gms[0]
+        return self._gms
+
+    @gms.setter
+    def gms(self, value):
+        raise AttributeError("cannot change gms ") from None
+
+    @property
+    def particles(self):
+        # collapse the current state back into a list of particles
+        pass
+
+    @property
+    def elements(self):
+        pass
+
+
 
 
