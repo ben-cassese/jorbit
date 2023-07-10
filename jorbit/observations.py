@@ -56,6 +56,12 @@ class Observations:
             self.times = jnp.array(times.tdb.jd)
         elif isinstance(times, list):
             self.times = jnp.array([t.tdb.jd for t in times])
+        elif isinstance(times, jnp.ndarray):
+            self.times = times
+        else:
+            raise ValueError(
+                "times must be either astropy.time.Time, list of astropy.time.Time, or jax.numpy.ndarray (interpreted as JD in TDB)"
+            )
 
         # OBSERVER POSITIONS
         if isinstance(observatory_locations, str):
