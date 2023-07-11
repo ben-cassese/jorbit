@@ -2694,27 +2694,29 @@ def elements_to_cart(
         * jnp.column_stack((-jnp.sin(nu), ecc + jnp.cos(nu), nu * 0))
     )
 
+    zeros = jnp.zeros_like(omega, dtype=jnp.float64)
+    ones = jnp.ones_like(omega, dtype=jnp.float64)
     Rot1 = jnp.array(
         [
-            [jnp.cos(-omega), -jnp.sin(-omega), 0 * omega],
-            [jnp.sin(-omega), jnp.cos(-omega), 0 * omega],
-            [0 * omega, 0 * omega, omega / omega],
+            [jnp.cos(-omega), -jnp.sin(-omega), zeros],
+            [jnp.sin(-omega), jnp.cos(-omega), zeros],
+            [zeros, zeros, ones],
         ]
     )
 
     Rot2 = jnp.array(
         [
-            [inc / inc, 0 * inc, 0 * inc],
-            [-inc * 0, jnp.cos(-inc), -jnp.sin(-inc)],
-            [-inc * 0, jnp.sin(-inc), jnp.cos(-inc)],
+            [ones, zeros, zeros],
+            [zeros, jnp.cos(-inc), -jnp.sin(-inc)],
+            [zeros, jnp.sin(-inc), jnp.cos(-inc)],
         ]
     )
 
     Rot3 = jnp.array(
         [
-            [jnp.cos(-Omega), -jnp.sin(-Omega), 0 * Omega],
-            [jnp.sin(-Omega), jnp.cos(-Omega), 0 * Omega],
-            [0 * Omega, 0 * Omega, Omega / Omega],
+            [jnp.cos(-Omega), -jnp.sin(-Omega), zeros],
+            [jnp.sin(-Omega), jnp.cos(-Omega), zeros],
+            [zeros, zeros, ones],
         ]
     )
 

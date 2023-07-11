@@ -4,16 +4,20 @@ from jax.config import config
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import warnings
-warnings.filterwarnings('ignore', module='erfa')
+
+warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 import astropy.units as u
 from astropy.coordinates import SkyCoord, ICRS
 import astropy.units as u
 from astroquery.jplhorizons import Horizons
 import matplotlib.pyplot as plt
-import pickle
 
-# import importlib.resources as resources
+import pickle
+import requests
+import pandas as pd
+import io
+import os
 import pkg_resources
 
 from .construct_perturbers import (
@@ -26,7 +30,7 @@ from .construct_perturbers import (
 
 # from . import data
 # codes = (resources.files(data) / 'observatory_codes.pkl')
-codes = pkg_resources.resource_filename('jorbit', 'data/observatory_codes.pkl')
+codes = pkg_resources.resource_filename("jorbit", "data/observatory_codes.pkl")
 with open(codes, "rb") as f:
     observatory_codes = pickle.load(f)
 
@@ -35,7 +39,9 @@ with open(codes, "rb") as f:
 
 
 class Observations:
-    def __init__(self, positions, times, observatory_locations, astrometry_uncertainties):
+    def __init__(
+        self, positions, times, observatory_locations, astrometry_uncertainties
+    ):
         # POSITIONS
         if isinstance(positions, type(SkyCoord(0 * u.deg, 0 * u.deg))):
             s = positions.transform_to(ICRS)  # in case they're barycentric, etc
@@ -50,6 +56,9 @@ class Observations:
                 decs.append(s.dec.rad)
             self.ra = jnp.array(ras)
             self.dec = jnp.array(decs)
+        if self.ra.shape == ():
+            self.ra = jnp.array([self.ra])
+            self.dec = jnp.array([self.dec])
 
         # TIMES
         if isinstance(times, type(Time("2023-01-01"))):
@@ -62,6 +71,8 @@ class Observations:
             raise ValueError(
                 "times must be either astropy.time.Time, list of astropy.time.Time, or jax.numpy.ndarray (interpreted as JD in TDB)"
             )
+        if self.times.shape == ():
+            self.times = jnp.array([self.times])
 
         # OBSERVER POSITIONS
         if isinstance(observatory_locations, str):
@@ -109,66 +120,88 @@ class Observations:
             len(self.observer_positions),
             len(self.astrometry_uncertainties),
         )
-        assert len(self.ra) > 1, "Must include at least two observations"
+        # assert len(self.ra) > 1, "Must include at least two observations"
 
-        self.best_fit = None
-        self.fit = None
+    def __repr__(self):
+        return f"Observations with {len(self.ra)} set(s) of observations"
+
+    def __len__(self):
+        return len(self.ra)
 
     def get_observer_positions(self, times, observatory_codes):
-        # for code in observatory_codes:
-        #     assert code == '500@399', "Only observations from the geocenter are currently supported"
-
-        # positions = []
-        # for i, t in enumerate(times):
-        #     # Need to work out how to pass such a large requests to Horizons
-        #     # temporary solution: use the downloaded ephemeris to get the geocenter
-        #     # note is different than the [(0,3)] barycenter- using 'earth' instead
-        #     positions.append(jnp.array(get_body_barycentric('earth', t).xyz.to(u.au).value))
-
-        # positions = jnp.array(positions)
-        # return positions
         assert len(times) == len(observatory_codes)
 
-        horizons_query = Horizons(id="3", location="500@0", epochs=list(times))
-        emb_from_ssb = horizons_query.vectors(refplane="earth")
-        emb_from_ssb = jnp.array(
-            [
-                emb_from_ssb["x"].value.data,
-                emb_from_ssb["y"].value.data,
-                emb_from_ssb["z"].value.data,
-            ]
-        ).T
+        emb_from_ssb = Observations.homebrewed_horizons_vector_query(
+            "3", "500@0", times
+        )
+        emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
 
         if len(set(observatory_codes)) == 1:
-            horizons_query = Horizons(
-                id="3", location=observatory_codes[0], epochs=list(times)
+            emb_from_observer = Observations.homebrewed_horizons_vector_query(
+                "3", observatory_codes[0], times
             )
-            emb_from_observer = horizons_query.vectors(refplane="earth")
-            emb_from_observer = jnp.array(
-                [
-                    emb_from_observer["x"].value.data,
-                    emb_from_observer["y"].value.data,
-                    emb_from_observer["z"].value.data,
-                ]
-            ).T
+            emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
 
         else:
             emb_from_observer = jnp.zeros((len(times), 3))
             for i, t in enumerate(times):
-                horizons_query = Horizons(
-                    id="3", location=observatory_codes[i], epochs=[t]
+                tmp = Observations.homebrewed_horizons_vector_query(
+                    "3", observatory_codes[i], [t]
                 )
-                tmp = horizons_query.vectors(refplane="earth")
                 emb_from_observer = emb_from_observer.at[i, :].set(
-                    [
-                        tmp["x"].value.data[0],
-                        tmp["y"].value.data[0],
-                        tmp["z"].value.data[0],
-                    ]
+                    jnp.array(tmp[["x", "y", "z"]].values)
                 )
 
         postions = emb_from_ssb - emb_from_observer
         return postions
 
-    def compute_best_fit(self):
-        pass
+    @staticmethod
+    def homebrewed_horizons_vector_query(target, center, times):
+        times = times.tdb.jd
+        if isinstance(times, float):
+            times = [times]
+        assert len(times) < 10_000, "Horizons batch api can only accept less than 10,000 timesteps at a time"
+
+        def construct_horizons_query(target, center, times):
+            with open("horizons_query.txt", "w") as f:
+                f.write("!$$SOF\n")
+                f.write(f'COMMAND= "{target}"\n')
+                f.write("OBJ_DATA='NO'")
+                f.write("MAKE_EPHEM='YES'\n")
+                f.write("TABLE_TYPE='VECTOR'\n")
+                f.write(f"CENTER='{center}'\n")
+                f.write("REF_PLANE='FRAME'\n")
+                f.write("CSV_FORMAT='YES'\n")
+                f.write("OUT_UNITS='AU-D'\n")
+                f.write("TLIST=\n")
+                for t in times:
+                    f.write(f"'{t}'\n")
+                return "horizons_query.txt"
+
+        query = construct_horizons_query(target, center, times)
+        with open(query) as f:
+            url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
+            r = requests.post(url, data={"format": "text"}, files={"input": f})
+            l = r.text.split("\n")
+        start = l.index("$$SOE")
+        end = l.index("$$EOE")
+        data = pd.read_csv(
+            io.StringIO("\n".join(l[start + 1 : end])),
+            header=None,
+            names=[
+                "JDTDB",
+                "Cal",
+                "x",
+                "y",
+                "z",
+                "vx",
+                "vy",
+                "vz",
+                "LT",
+                "RG",
+                "RR",
+                "_",
+            ],
+        )
+        os.remove("horizons_query.txt")
+        return data
