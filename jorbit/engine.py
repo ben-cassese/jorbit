@@ -1952,7 +1952,7 @@ def weave_free_and_fixed(free_mask, free, fixed):
 
 
 @jit
-def prepareloglike_helper_input_helper(
+def prepare_loglike_input_helper(
     free_tracer_state_mask,
     free_tracer_xs,
     fixed_tracer_xs,
@@ -2151,7 +2151,7 @@ def prepareloglike_helper_input_helper(
 
 
 @jit
-def prepareloglike_helper_input(free_params, fixed_params, use_GR, max_steps):
+def prepare_loglike_input(free_params, fixed_params, use_GR, max_steps):
     """
     A wrapper for prepareloglike_helper_input_helper that deals with dictionaries instead of arrays.
 
@@ -2185,7 +2185,7 @@ def prepareloglike_helper_input(free_params, fixed_params, use_GR, max_steps):
         ...    max_steps=jnp.arange(100)
         ... )    
     """
-    return prepareloglike_helper_input_helper(
+    return prepare_loglike_input_helper(
         **fixed_params, **free_params, use_GR=use_GR, max_steps=max_steps
     )
 

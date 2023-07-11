@@ -101,10 +101,10 @@ class System:
             gms.append(p.gm)
 
             # set up the masks for which particles have free positions/velocities
-            if p.fit_state:  # if you want to fit the particle's state...
+            if p.free_orbit:  # if you want to fit the particle's state...
                 if (
                     p.gm > 0.0
-                ) | p.fit_gm:  # if it's definitely a massive particle, or could be...
+                ) | p.free_gm:  # if it's definitely a massive particle, or could be...
                     free_massive_state_mask.append(True)
                     free_massive_xs.append(p.x)
                     free_massive_vs.append(p.v)
@@ -117,7 +117,7 @@ class System:
             else:
                 if (
                     p.gm > 0.0
-                ) | p.fit_gm:  # if it's definitely a massive particle, or could be...
+                ) | p.free_gm:  # if it's definitely a massive particle, or could be...
                     free_massive_state_mask.append(False)
                     fixed_massive_xs.append(p.x)
                     fixed_massive_vs.append(p.v)
@@ -129,7 +129,7 @@ class System:
                     TRACERS.append(True)
 
             # set up the masks for which particles have free gms
-            if p.fit_gm:
+            if p.free_gm:
                 free_massive_gm_mask.append(True)
                 free_massive_gms.append(p.gm)
             else:
@@ -204,8 +204,17 @@ class System:
             self._free_asteroid_gm_mask = jnp.array([False] * len(asteroids)).astype(
                 bool
             )
-        free_asteroid_gms = self._asteroid_gms[self._free_asteroid_gm_mask]
-        self._fixed_asteroid_gms = self._asteroid_gms[~self._free_asteroid_gm_mask]
+        print(self._free_asteroid_gm_mask)
+        print(self._free_asteroid_gm_mask.shape)
+        print(self._asteroid_gms)
+        print(self._asteroid_gms.shape)
+        if len(asteroids) == 0:
+            self._free_asteroid_gm_mask = jnp.array([False])
+            free_asteroid_gms = jnp.array([])
+            self._fixed_asteroid_gms = self._asteroid_gms
+        else:
+            free_asteroid_gms = self._asteroid_gms[self._free_asteroid_gm_mask]
+            self._fixed_asteroid_gms = self._asteroid_gms[~self._free_asteroid_gm_mask]
 
         ########################################################################
         # this is somewhat inelegant, but- for the jax.scans to work, all of the

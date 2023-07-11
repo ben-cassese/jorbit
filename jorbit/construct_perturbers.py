@@ -92,6 +92,12 @@ def construct_perturbers(
 
     # asteroid_ephem = 'https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/sb441-n373.bsp'
     # kernel = SPK.open(download_file(asteroid_ephem, cache=True))
+    if len(asteroids) == 0:
+        asteroids = ["ceres"]
+        no_asteroids = True
+    else:
+        no_asteroids = False
+
     asteroid_ids = []
     asteroid_gms = []
     for p in asteroids:
@@ -138,7 +144,11 @@ def construct_perturbers(
         earliest_time=earliest_time.tdb.jd - 60,
         latest_time=latest_time.tdb.jd + 60,
     )
-
+    if no_asteroids:
+        asteroid_init *= 0
+        asteroid_intlen *= 0
+        asteroid_coeffs *= 0
+        asteroid_gms = [0]
     ############################################################################
     # gms = planet_gms + asteroid_gms
     assert len(planet_gms) + len(asteroid_gms) == len(planet_init) + len(asteroid_init)
