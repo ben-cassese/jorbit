@@ -24,11 +24,10 @@ from .construct_perturbers import (
     STANDARD_SUN_PARAMS,
 )
 from .engine import (
-    negative_loglike_single,
-    negative_loglike_single_grad,
     integrate_multiple,
     on_sky,
-    sky_error,
+    prepare_loglike_input,
+    loglike
 )
 
 
@@ -40,19 +39,21 @@ class System:
         asteroids=large_asteroids,
         fit_planet_gms=False,
         fit_asteroid_gms=False,
-        earliest_time=Time("1980-01-01"),
-        latest_time=Time("2100-01-01"),
         max_steps=jnp.arange(100),
     ):
         # initial stuff we can save/check right away
         self._time = particles[0].time
+        earlys = []
+        lates = []
         for p in particles:
+            earlys.append(p.earliest_time.tdb.jd)
+            lates.append(p.latest_time.tdb.jd)
             assert (
                 p.time == self._time
             ), "All particles must be initalized to the same time"
 
-        self._earliest_time = earliest_time
-        self._latest_time = latest_time
+        self._earliest_time = jnp.min(jnp.array(earlys))
+        self._latest_time = jnp.max(jnp.array(lates))
         self._max_steps = max_steps
 
         ########################################################################
@@ -135,6 +136,7 @@ class System:
             else:
                 if p.gm > 0:
                     free_massive_gm_mask.append(False)
+                    fixed_massive_gms.append(p.gm)
 
         # lock in the current states of all particles
         self._xs = jnp.array(xs)
@@ -161,8 +163,8 @@ class System:
         if (
             (planets != all_planets)
             | (asteroids != large_asteroids)
-            | (earliest_time != Time("1980-01-01"))
-            | (latest_time != Time("2100-01-01"))
+            | (self._earliest_time != Time("1980-01-01").tdb.jd)
+            | (self._latest_time != Time("2100-01-01").tdb.jd)
         ):
             (
                 self._planet_params,
@@ -172,14 +174,17 @@ class System:
             ) = construct_perturbers(
                 planets=planets,
                 asteroids=asteroids,
-                earliest_time=earliest_time,
-                latest_time=latest_time,
+                earliest_time=Time(self._earliest_time, format="jd")-10*u.day,
+                latest_time=Time(self._latest_time, format="jd")+10*u.day,
             )
         else:
             self._planet_params = STANDARD_PLANET_PARAMS
             self._asteroid_params = STANDARD_ASTEROID_PARAMS
             self._planet_gms = STANDARD_PLANET_GMS
             self._asteroid_gms = STANDARD_ASTEROID_GMS
+
+        assert len(self._planet_params[0]) == len(self._planets) + 1, 'Ephemeris could not be generated for at least one requested perturbing planet'
+        assert len(self._asteroid_params[0]) == len(self._asteroids), 'Ephemeris could not be generated for at least one requested perturbing asteroid'
 
         # in case you want to let the masses vary, you can set up free/fixed
         # gms for the planets/asteroids just like we did for the particles
@@ -204,10 +209,7 @@ class System:
             self._free_asteroid_gm_mask = jnp.array([False] * len(asteroids)).astype(
                 bool
             )
-        print(self._free_asteroid_gm_mask)
-        print(self._free_asteroid_gm_mask.shape)
-        print(self._asteroid_gms)
-        print(self._asteroid_gms.shape)
+
         if len(asteroids) == 0:
             self._free_asteroid_gm_mask = jnp.array([False])
             free_asteroid_gms = jnp.array([])
@@ -463,21 +465,21 @@ class System:
             if times.shape == ():
                 times = jnp.array([times])
 
-            assert jnp.max(times) < self._latest_time.tdb.jd, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
-
+            assert jnp.max(times) < self._latest_time, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
+            assert jnp.min(times) > self._earliest_time, "Requested propagation includes times before the earliest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
             jumps = jnp.abs(jnp.diff(times))
             if jumps.shape != (0,): largest_jump = jnp.max(jumps)
             else: largest_jump = 0
             first_jump = jnp.abs(self._time - times[0])
             largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
             if obey_large_step_limits:
-                assert largest_jump < 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. May have to increase max_steps manually to proceed."
+                assert largest_jump <= 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. Shrink the jumps, or set obey_large_step_limits to False."
             if largest_jump < 1000: max_steps = jnp.arange(100)
             else: max_steps = jnp.arange(1000)
 
             if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
 
-            xs, vs, final_time, success = integrate_multiple(
+            xs, vs, final_times, success = integrate_multiple(
                 xs=self._xs,
                 vs=self._vs,
                 gms=self._gms,
@@ -493,7 +495,7 @@ class System:
 
             self._xs = xs
             self._vs = vs
-            self._time = final_time
+            self._time = final_times[-1]
 
 
 
@@ -559,6 +561,37 @@ class System:
     @gms.setter
     def gms(self, value):
         raise AttributeError("cannot change gms ") from None
+    
+    @property
+    def time(self):
+        return self._time
+    
+    @property
+    def loglike(self, use_GR=True, obey_large_step_limits=True):
+        largest = 0
+        for p in jnp.concatenate((self._tracer_particle_times, self._massive_particle_times)):
+            times = p[p != 2458849]
+            if times.shape == (0,): continue
+            jumps = jnp.abs(jnp.diff(times))
+            if jumps.shape != (0,): largest_jump = jnp.max(jumps)
+            else: largest_jump = 0
+            first_jump = jnp.abs(self._time - times[0])
+            largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
+            largest = jnp.where(largest_jump > largest, largest_jump, largest)
+        if obey_large_step_limits:
+            assert largest_jump <= 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. Shrink the jumps, or set obey_large_step_limits to False."
+        if largest_jump < 1000: max_steps = jnp.arange(100)
+        else: max_steps = jnp.arange(1000)
+
+        if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
+
+        d = prepare_loglike_input(free_params=self._free_params, fixed_params=self._fixed_params,
+                          use_GR=use_GR, max_steps=max_steps)
+        return loglike(d)
+    
+    @property
+    def residuals(self):
+        pass
 
     @property
     def particles(self):
