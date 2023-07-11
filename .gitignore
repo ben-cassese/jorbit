@@ -6,3 +6,4 @@ development/
 tests/__pycache__/
 tests/unit/__pycache__/
 .coverage
+.vscode/
