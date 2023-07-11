@@ -34,13 +34,11 @@ class Particle:
         gm=0,
         time=None,
         observations=None,
-        planet_perturbers=all_planets,
-        asteroid_perturbers=large_asteroids,
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2100-01-01"),
         name="",
-        fit_state=True,
-        fit_gm=False,
+        free_orbit=True,
+        free_gm=False,
     ):
         assert time is not None, "Must provide an epoch for the particle"
         if isinstance(time, type(Time("2023-01-01"))):
@@ -96,6 +94,8 @@ class Particle:
             x, v = elements_to_cart(
                 **elements, time=self._time, sun_params=self._sun_params
             )
+            x = x[0]
+            v = v[0]
 
         self._x = x
         self._v = v
@@ -104,23 +104,14 @@ class Particle:
         self.observations = observations
         if type(observations) != type(None):
             self._time = observations.times[0]
+        self._earliest_time = earliest_time
+        self._latest_time = latest_time
 
-        (
-            self.planet_params,
-            self.asteroid_params,
-            self.planet_gms,
-            self.asteroid_gms,
-        ) = construct_perturbers(
-            planets=planet_perturbers,
-            asteroids=asteroid_perturbers,
-            earliest_time=earliest_time,
-            latest_time=latest_time,
-        )
-        self.earliest_time = earliest_time
-        self.latest_time = latest_time
-        self.name = name
-        self.fit_state = fit_state
-        self.fit_gm = fit_gm
+        self._name = name
+        self._free_orbit = free_orbit
+        self._free_gm = free_gm
+
+
 
     @property
     def elements(self):
@@ -128,7 +119,7 @@ class Particle:
             X=self._x[None, :],
             V=self._v[None, :],
             time=self._time,
-            sun_params=STANDARD_SUN_PARAMS,
+            sun_params=self._sun_params,
         )
         return dict(zip(["a", "ecc", "nu", "inc", "Omega", "omega"], z))
 
@@ -147,6 +138,26 @@ class Particle:
     @property
     def time(self):
         return self._time
+    
+    @property
+    def earliest_time(self):
+        return self._earliest_time
+    
+    @property
+    def latest_time(self):
+        return self._latest_time
+    
+    @property
+    def name(self):
+        return self._name
+    
+    @property
+    def free_orbit(self):
+        return self._free_orbit
+    
+    @property
+    def free_gm(self):
+        return self._free_gm
 
     def __repr__(self):
         a = f"Particle: {self.name}."
@@ -254,48 +265,3 @@ class Particle:
     #     }
     # else:
     #     raise ValueError("Failed: Best fit had residuals > 1 arcmin")
-
-    # def propagate(self, times, use_GR=False, obey_large_step_limits=True):
-    #     if isinstance(times, type(Time("2023-01-01"))):
-    #         times = jnp.array(times.tdb.jd)
-    #     elif isinstance(times, list):
-    #         times = jnp.array([t.tdb.jd for t in times])
-    #     if times.shape == ():
-    #         times = jnp.array([times])
-
-    #     assert jnp.max(times) < self.latest_time.tdb.jd, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
-
-    #     jumps = jnp.abs(jnp.diff(times))
-    #     if jumps.shape != (0,): largest_jump = jnp.max(jumps)
-    #     else: largest_jump = 0
-    #     first_jump = jnp.abs(self._time - times[0])
-    #     largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
-    #     if obey_large_step_limits:
-    #         assert largest_jump < 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. May have to increase max_steps manually to proceed."
-    #     if largest_jump < 1000: max_steps = jnp.arange(100)
-    #     else: max_steps = jnp.arange(1000)
-
-    #     if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
-
-    #     xs, vs, final_time, success = integrate_multiple(
-    #         xs=self._x[None, :],
-    #         vs=self._v[None, :],
-    #         gms=jnp.array([self._gm]),
-    #         initial_time=self._time,
-    #         final_times=times,
-    #         planet_params=self.planet_params,
-    #         asteroid_params=self.asteroid_params,
-    #         planet_gms=self.planet_gms,
-    #         asteroid_gms=self.asteroid_gms,
-    #         max_steps=max_steps,
-    #         use_GR=use_GR,
-    #     )
-
-    #     self._x = xs[0, -1]
-    #     self._v = vs[0, -1]
-    #     self._time = final_time[0]
-    #     # if jnp.sum(success) != len(success):
-    #     #     warnings.warn("Integration may not have converged for all times")
-    #     # print(success)
-    #     # print(final_time)
-    #     return xs[0], vs[0]
