@@ -11,14 +11,15 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, ICRS
 import astropy.units as u
 from astroquery.jplhorizons import Horizons
-import matplotlib.pyplot as plt
 
+import matplotlib.pyplot as plt
 import pickle
 import requests
 import pandas as pd
 import io
 import os
 import pkg_resources
+from tqdm import tqdm
 
 from .construct_perturbers import (
     construct_perturbers,
@@ -40,8 +41,88 @@ with open(codes, "rb") as f:
 
 class Observations:
     def __init__(
-        self, positions, times, observatory_locations, astrometry_uncertainties
+        self,
+        positions=None,
+        times=None,
+        observatory_locations=None,
+        astrometric_uncertainties=None,
+        verbose_downloading=False,
+        mpc_file=None,
     ):
+        self.verbose_downloading = verbose_downloading
+
+        if mpc_file is None:
+            assert (
+                (positions is not None)
+                and (times is not None)
+                and (observatory_locations is not None)
+                and (astrometric_uncertainties is not None)
+            ), (
+                "If no MPC file is provided, positions, times, observatory_locations,"
+                " and astrometric_uncertainties must be given manually."
+            )
+        else:
+            assert (
+                (positions is None)
+                and (times is None)
+                and (observatory_locations is None)
+                and (astrometric_uncertainties is None)
+            ), (
+                "If an MPC file is provided, positions, times, observatory_locations,"
+                " and astrometric_uncertainties must be None."
+            )
+            cols = [
+                (0, 5),
+                (5, 12),
+                (12, 13),
+                (13, 14),
+                (14, 15),
+                (15, 32),
+                (32, 44),
+                (44, 56),
+                (65, 70),
+                (70, 71),
+                (77, 80),
+            ]
+
+            names = [
+                "Packed number",
+                "Packed provisional designation",
+                "Discovery asterisk",
+                "Note 1",
+                "Note 2",
+                "Date of observation",
+                "Observed RA (J2000.0)",
+                "Observed Decl. (J2000.0)",
+                "Observed magnitude",
+                "Band",
+                "Observatory code",
+            ]
+
+            data = pd.read_fwf(mpc_file, colspecs=cols, names=names)
+
+            def parse_time(mpc_time):
+                t = mpc_time.replace(" ", "-").split(".")
+                return (
+                    Time(t[0], format="iso", scale="utc") + float(f"0.{t[1]}") * u.day
+                )
+
+            def parse_uncertainty(dec_coord):
+                if len(dec_coord.split(".")) == 1:
+                    return 1 * u.arcsec
+                return 10 ** (-len(dec_coord.split(".")[1])) * u.arcsec
+
+            positions = SkyCoord(
+                data["Observed RA (J2000.0)"],
+                data["Observed Decl. (J2000.0)"],
+                unit=(u.hourangle, u.deg),
+            )
+            times = list(map(parse_time, data["Date of observation"]))
+            observatory_locations = [s + "@399" for s in list(data["Observatory code"])]
+            astrometric_uncertainties = list(
+                map(parse_uncertainty, data["Observed Decl. (J2000.0)"])
+            )
+
         # POSITIONS
         if isinstance(positions, type(SkyCoord(0 * u.deg, 0 * u.deg))):
             s = positions.transform_to(ICRS)  # in case they're barycentric, etc
@@ -99,13 +180,13 @@ class Observations:
         )
 
         # UNCERTAINTIES
-        if isinstance(astrometry_uncertainties, type(u.Quantity(1 * u.arcsec))):
-            self.astrometry_uncertainties = (
-                jnp.ones(len(self.times)) * astrometry_uncertainties.to(u.arcsec).value
+        if isinstance(astrometric_uncertainties, type(u.Quantity(1 * u.arcsec))):
+            self.astrometric_uncertainties = (
+                jnp.ones(len(self.times)) * astrometric_uncertainties.to(u.arcsec).value
             )
-        elif isinstance(astrometry_uncertainties, list):
-            self.astrometry_uncertainties = jnp.array(
-                [p.to(u.arcsec).value for p in astrometry_uncertainties]
+        elif isinstance(astrometric_uncertainties, list):
+            self.astrometric_uncertainties = jnp.array(
+                [p.to(u.arcsec).value for p in astrometric_uncertainties]
             )
 
         # This shouldn't be possible if only dealing with SkyCoords
@@ -114,15 +195,15 @@ class Observations:
             == len(self.dec)
             == len(self.times)
             == len(self.observer_positions)
-            == len(self.astrometry_uncertainties)
+            == len(self.astrometric_uncertainties)
         ), (
             "Inputs must have the same length. Currently: ra={}, dec={}, times={},"
-            " observer_positions={}, astrometry_uncertainties={}".format(
+            " observer_positions={}, astrometric_uncertainties={}".format(
                 len(self.ra),
                 len(self.dec),
                 len(self.times),
                 len(self.observer_positions),
-                len(self.astrometry_uncertainties),
+                len(self.astrometric_uncertainties),
             )
         )
         # assert len(self.ra) > 1, "Must include at least two observations"
@@ -136,6 +217,8 @@ class Observations:
     def get_observer_positions(self, times, observatory_codes):
         assert len(times) == len(observatory_codes)
 
+        if self.verbose_downloading:
+            print("Downloading observer positions from Horizons...")
         emb_from_ssb = Observations.horizons_vector_query("3", "500@0", times)
         emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
 
@@ -147,7 +230,11 @@ class Observations:
 
         else:
             emb_from_observer = jnp.zeros((len(times), 3))
-            for i, t in enumerate(times):
+            if self.verbose_downloading:
+                iter = enumerate(tqdm(times))
+            else:
+                iter = enumerate(times)
+            for i, t in iter:
                 tmp = Observations.horizons_vector_query(
                     "3", observatory_codes[i], t
                 ).iloc[0]
