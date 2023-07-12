@@ -119,7 +119,7 @@ large_asteroid_gms = {
 # Hard coded numbers
 ################################################################################
 SPEED_OF_LIGHT = 173.14463267424034
-INV_SPEED_OF_LIGHT = 1/173.14463267424034  # 1 / AU/day
+INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
 
 (
     h0,

@@ -47,7 +47,8 @@ class Particle:
             self._time = time
         else:
             raise ValueError(
-                "time must be either astropy.time.Time or float (interpreted as JD in TDB)"
+                "time must be either astropy.time.Time or float (interpreted as JD in"
+                " TDB)"
             )
 
         if (earliest_time != Time("1980-01-01")) | (latest_time != Time("2100-01-01")):
@@ -64,9 +65,10 @@ class Particle:
         assert not (
             (x is None) & (elements is None)
         ), "Must provide an initial state for the particle, even if a fit is desired"
-        assert not (
-            (x is not None) & (elements is not None)
-        ), "Must provide either an initial cartesian state or orbital elements for the particle, but not both"
+        assert not ((x is not None) & (elements is not None)), (
+            "Must provide either an initial cartesian state or orbital elements for the"
+            " particle, but not both"
+        )
 
         if elements is not None:
             assert (
@@ -111,8 +113,6 @@ class Particle:
         self._free_orbit = free_orbit
         self._free_gm = free_gm
 
-
-
     @property
     def elements(self):
         z = cart_to_elements(
@@ -138,30 +138,33 @@ class Particle:
     @property
     def time(self):
         return self._time
-    
+
     @property
     def earliest_time(self):
         return self._earliest_time
-    
+
     @property
     def latest_time(self):
         return self._latest_time
-    
+
     @property
     def name(self):
         return self._name
-    
+
     @property
     def free_orbit(self):
         return self._free_orbit
-    
+
     @property
     def free_gm(self):
         return self._free_gm
 
     def __repr__(self):
         a = f"Particle: {self.name}."
-        b = f"Current state:\n--------------\n {self._x} AU\n {self._v} AU/day\n {self._time} JD\n"
+        b = (
+            f"Current state:\n--------------\n {self._x} AU\n {self._v} AU/day\n"
+            f" {self._time} JD\n"
+        )
         c = f"Current Elements:\n-----------------\n" + str(self.elements).replace(
             "), ", "\n"
         )

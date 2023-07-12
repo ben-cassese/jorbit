@@ -23,12 +23,7 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_GMS,
     STANDARD_SUN_PARAMS,
 )
-from .engine import (
-    integrate_multiple,
-    on_sky,
-    prepare_loglike_input,
-    loglike
-)
+from .engine import integrate_multiple, on_sky, prepare_loglike_input, loglike
 
 
 class System:
@@ -174,8 +169,8 @@ class System:
             ) = construct_perturbers(
                 planets=planets,
                 asteroids=asteroids,
-                earliest_time=Time(self._earliest_time, format="jd")-10*u.day,
-                latest_time=Time(self._latest_time, format="jd")+10*u.day,
+                earliest_time=Time(self._earliest_time, format="jd") - 10 * u.day,
+                latest_time=Time(self._latest_time, format="jd") + 10 * u.day,
             )
         else:
             self._planet_params = STANDARD_PLANET_PARAMS
@@ -183,27 +178,35 @@ class System:
             self._planet_gms = STANDARD_PLANET_GMS
             self._asteroid_gms = STANDARD_ASTEROID_GMS
 
-        assert len(self._planet_params[0]) == len(self._planets) + 1, 'Ephemeris could not be generated for at least one requested perturbing planet'
-        assert len(self._asteroid_params[0]) == len(self._asteroids), 'Ephemeris could not be generated for at least one requested perturbing asteroid'
+        assert len(self._planet_params[0]) == len(self._planets) + 1, (
+            "Ephemeris could not be generated for at least one requested perturbing"
+            " planet"
+        )
+        assert len(self._asteroid_params[0]) == len(self._asteroids), (
+            "Ephemeris could not be generated for at least one requested perturbing"
+            " asteroid"
+        )
 
         # in case you want to let the masses vary, you can set up free/fixed
         # gms for the planets/asteroids just like we did for the particles
         if type(fit_planet_gms) != bool:
-            assert len(fit_planet_gms) == len(
-                planets
-            ), "If fitting any planet gms, must provide a list of booleans indicating which to fit of length len(planets)"
+            assert len(fit_planet_gms) == len(planets), (
+                "If fitting any planet gms, must provide a list of booleans indicating"
+                " which to fit of length len(planets)"
+            )
             self._free_planet_gm_mask = fit_planet_gms
         else:
-            self._free_planet_gm_mask = jnp.array([False] * len(self._planet_gms)).astype(
-                bool
-            )
+            self._free_planet_gm_mask = jnp.array(
+                [False] * len(self._planet_gms)
+            ).astype(bool)
         free_planet_gms = self._planet_gms[self._free_planet_gm_mask]
         self._fixed_planet_gms = self._planet_gms[~self._free_planet_gm_mask]
 
         if type(fit_asteroid_gms) != bool:
-            assert len(fit_asteroid_gms) == len(
-                asteroids
-            ), "If fitting any asteroid gms, must provide a list of booleans indicating which to fit of length len(asteroids)"
+            assert len(fit_asteroid_gms) == len(asteroids), (
+                "If fitting any asteroid gms, must provide a list of booleans"
+                " indicating which to fit of length len(asteroids)"
+            )
             self._free_asteroid_gm_mask = fit_asteroid_gms
         else:
             self._free_asteroid_gm_mask = jnp.array([False] * len(asteroids)).astype(
@@ -308,13 +311,21 @@ class System:
             "tracer_particle_times": self._tracer_particle_times,
             "tracer_particle_ras": self._tracer_particle_ras,
             "tracer_particle_decs": self._tracer_particle_decs,
-            "tracer_particle_observer_positions": self._tracer_particle_observer_positions,
-            "tracer_particle_astrometry_uncertainties": self._tracer_particle_astrometry_uncertainties,
+            "tracer_particle_observer_positions": (
+                self._tracer_particle_observer_positions
+            ),
+            "tracer_particle_astrometry_uncertainties": (
+                self._tracer_particle_astrometry_uncertainties
+            ),
             "massive_particle_times": self._massive_particle_times,
             "massive_particle_ras": self._massive_particle_ras,
             "massive_particle_decs": self._massive_particle_decs,
-            "massive_particle_observer_positions": self._massive_particle_observer_positions,
-            "massive_particle_astrometry_uncertainties": self._massive_particle_astrometry_uncertainties,
+            "massive_particle_observer_positions": (
+                self._massive_particle_observer_positions
+            ),
+            "massive_particle_astrometry_uncertainties": (
+                self._massive_particle_astrometry_uncertainties
+            ),
             "planet_params": self._planet_params,
             "asteroid_params": self._asteroid_params,
         }
@@ -453,80 +464,105 @@ class System:
     def add_particle(self):
         pass
 
+    def propagate(
+        self,
+        times,
+        use_GR=False,
+        obey_large_step_limits=True,
+        sky_positions=False,
+        observatory_locations=[],
+    ):
+        # get "times" into an array of (n_times,)
+        if isinstance(times, type(Time("2023-01-01"))):
+            times = jnp.array(times.tdb.jd)
+        elif isinstance(times, list):
+            times = jnp.array([t.tdb.jd for t in times])
+        if times.shape == ():
+            times = jnp.array([times])
 
-    def propagate(self, times, use_GR=False, obey_large_step_limits=True, sky_positions=False,
-                  observatory_locations=[]):
-            
-            # get "times" into an array of (n_times,)
-            if isinstance(times, type(Time("2023-01-01"))):
-                times = jnp.array(times.tdb.jd)
-            elif isinstance(times, list):
-                times = jnp.array([t.tdb.jd for t in times])
-            if times.shape == ():
-                times = jnp.array([times])
+        assert jnp.max(times) < self._latest_time, (
+            "Requested propagation includes times beyond the latest time in considered"
+            " in the ephemeris for this particle. Consider initially setting a broader"
+            " time range for the ephemeris."
+        )
+        assert jnp.min(times) > self._earliest_time, (
+            "Requested propagation includes times before the earliest time in"
+            " considered in the ephemeris for this particle. Consider initially setting"
+            " a broader time range for the ephemeris."
+        )
+        jumps = jnp.abs(jnp.diff(times))
+        if jumps.shape != (0,):
+            largest_jump = jnp.max(jumps)
+        else:
+            largest_jump = 0
+        first_jump = jnp.abs(self._time - times[0])
+        largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
+        if obey_large_step_limits:
+            assert largest_jump <= 7305, (
+                "Requested propagation includes at least one step that is too large-"
+                " max default is 20 years. Shrink the jumps, or set"
+                " obey_large_step_limits to False."
+            )
+        if largest_jump < 1000:
+            max_steps = jnp.arange(100)
+        else:
+            max_steps = jnp.arange(1000)
 
-            assert jnp.max(times) < self._latest_time, "Requested propagation includes times beyond the latest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
-            assert jnp.min(times) > self._earliest_time, "Requested propagation includes times before the earliest time in considered in the ephemeris for this particle. Consider initially setting a broader time range for the ephemeris."
-            jumps = jnp.abs(jnp.diff(times))
-            if jumps.shape != (0,): largest_jump = jnp.max(jumps)
-            else: largest_jump = 0
-            first_jump = jnp.abs(self._time - times[0])
-            largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
-            if obey_large_step_limits:
-                assert largest_jump <= 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. Shrink the jumps, or set obey_large_step_limits to False."
-            if largest_jump < 1000: max_steps = jnp.arange(100)
-            else: max_steps = jnp.arange(1000)
+        if not obey_large_step_limits and largest_jump > 1000:
+            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
 
-            if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
+        xs, vs, final_times, success = integrate_multiple(
+            xs=self._xs,
+            vs=self._vs,
+            gms=self._gms,
+            initial_time=self._time,
+            final_times=times,
+            planet_params=self._planet_params,
+            asteroid_params=self._asteroid_params,
+            planet_gms=self._planet_gms,
+            asteroid_gms=self._asteroid_gms,
+            max_steps=max_steps,
+            use_GR=use_GR,
+        )
 
-            xs, vs, final_times, success = integrate_multiple(
-                xs=self._xs,
-                vs=self._vs,
-                gms=self._gms,
-                initial_time=self._time,
-                final_times=times,
+        self._xs = xs
+        self._vs = vs
+        self._time = final_times[-1]
+
+        if sky_positions:
+            if observatory_locations == []:
+                raise ValueError(
+                    "Must provide observatory locations if on_sky=True. See"
+                    " Observations docstring for more info."
+                )
+            pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
+            obs = Observations(
+                positions=pos,
+                times=times,
+                observatory_locations=observatory_locations,
+                astrometry_uncertainties=[10 * u.mas] * len(times),
+            )
+
+            ras, decs = on_sky(
+                xs=xs.reshape(-1, xs.shape[-1]),
+                vs=vs.reshape(-1, vs.shape[-1]),
+                gms=jnp.tile(self._gms, len(times)),
+                times=jnp.tile(times, len(xs)),
+                observer_positions=jnp.array(list(obs.observer_positions) * len(xs)),
                 planet_params=self._planet_params,
                 asteroid_params=self._asteroid_params,
                 planet_gms=self._planet_gms,
                 asteroid_gms=self._asteroid_gms,
-                max_steps=max_steps,
-                use_GR=use_GR,
             )
 
-            self._xs = xs
-            self._vs = vs
-            self._time = final_times[-1]
-
-
-
-            if sky_positions:
-                if observatory_locations == []:
-                    raise ValueError("Must provide observatory locations if on_sky=True. See Observations docstring for more info.")
-                pos = [SkyCoord(0*u.deg, 0*u.deg)]*len(times)
-                obs = Observations(positions=pos, times=times,
-                                   observatory_locations=observatory_locations,
-                                   astrometry_uncertainties=[10*u.mas]*len(times))
-                
-                ras, decs = on_sky(
-                    xs=xs.reshape(-1, xs.shape[-1]),
-                    vs=vs.reshape(-1, vs.shape[-1]),
-                    gms=jnp.tile(self._gms, len(times)),
-                    times=jnp.tile(times, len(xs)),
-                    observer_positions=jnp.array(list(obs.observer_positions)*len(xs)),
-                    planet_params=self._planet_params,
-                    asteroid_params=self._asteroid_params,
-                    planet_gms=self._planet_gms,
-                    asteroid_gms=self._asteroid_gms,
-                )
-
-                s = SkyCoord(ra=ras*u.rad, dec=decs*u.rad)
-                if xs.shape[0] == 1:
-                    return xs[0], vs[0], s
-                return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
-
+            s = SkyCoord(ra=ras * u.rad, dec=decs * u.rad)
             if xs.shape[0] == 1:
-                return xs[0], vs[0]
-            return xs, vs
+                return xs[0], vs[0], s
+            return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
+
+        if xs.shape[0] == 1:
+            return xs[0], vs[0]
+        return xs, vs
 
     ################################################################################
     # Properties
@@ -540,7 +576,10 @@ class System:
 
     @xs.setter
     def xs(self, value):
-        raise AttributeError("cannot change xs directly- use propagate(), which will update the entire state of the system") from None
+        raise AttributeError(
+            "cannot change xs directly- use propagate(), which will update the entire"
+            " state of the system"
+        ) from None
 
     @property
     def vs(self):
@@ -550,7 +589,10 @@ class System:
 
     @vs.setter
     def vs(self, value):
-        raise AttributeError("cannot change vs directly- use propagate(), which will update the entire state of the system") from None
+        raise AttributeError(
+            "cannot change vs directly- use propagate(), which will update the entire"
+            " state of the system"
+        ) from None
 
     @property
     def gms(self):
@@ -561,34 +603,52 @@ class System:
     @gms.setter
     def gms(self, value):
         raise AttributeError("cannot change gms ") from None
-    
+
     @property
     def time(self):
         return self._time
-    
+
     @property
     def loglike(self, use_GR=True, obey_large_step_limits=True):
         largest = 0
-        for p in jnp.concatenate((self._tracer_particle_times, self._massive_particle_times)):
+        for p in jnp.concatenate(
+            (self._tracer_particle_times, self._massive_particle_times)
+        ):
             times = p[p != 2458849]
-            if times.shape == (0,): continue
+            if times.shape == (0,):
+                continue
             jumps = jnp.abs(jnp.diff(times))
-            if jumps.shape != (0,): largest_jump = jnp.max(jumps)
-            else: largest_jump = 0
+            if jumps.shape != (0,):
+                largest_jump = jnp.max(jumps)
+            else:
+                largest_jump = 0
             first_jump = jnp.abs(self._time - times[0])
-            largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
+            largest_jump = jnp.where(
+                first_jump > largest_jump, first_jump, largest_jump
+            )
             largest = jnp.where(largest_jump > largest, largest_jump, largest)
         if obey_large_step_limits:
-            assert largest_jump <= 7305, "Requested propagation includes at least one step that is too large- max default is 20 years. Shrink the jumps, or set obey_large_step_limits to False."
-        if largest_jump < 1000: max_steps = jnp.arange(100)
-        else: max_steps = jnp.arange(1000)
+            assert largest_jump <= 7305, (
+                "Requested propagation includes at least one step that is too large-"
+                " max default is 20 years. Shrink the jumps, or set"
+                " obey_large_step_limits to False."
+            )
+        if largest_jump < 1000:
+            max_steps = jnp.arange(100)
+        else:
+            max_steps = jnp.arange(1000)
 
-        if not obey_large_step_limits and largest_jump > 1000: max_steps = jnp.arange((largest_jump*1.25 / 12).astype(int))
+        if not obey_large_step_limits and largest_jump > 1000:
+            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
 
-        d = prepare_loglike_input(free_params=self._free_params, fixed_params=self._fixed_params,
-                          use_GR=use_GR, max_steps=max_steps)
+        d = prepare_loglike_input(
+            free_params=self._free_params,
+            fixed_params=self._fixed_params,
+            use_GR=use_GR,
+            max_steps=max_steps,
+        )
         return loglike(d)
-    
+
     @property
     def residuals(self):
         pass
@@ -601,7 +661,3 @@ class System:
     @property
     def elements(self):
         pass
-
-
-
-
