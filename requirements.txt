@@ -10,3 +10,4 @@ pandas
 nbsphinx
 sphinx-automodapi
 sphinx-book-theme
+tqdm
