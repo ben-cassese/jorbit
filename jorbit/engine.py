@@ -82,7 +82,7 @@ def planet_state_helper(
     Calculate the position, velocity, and acceleration of one object at a several times.
 
     This function borrows heavily from Brandon Rhode's
-    `jplephem <https://github.com/brandon-rhodes/python-jplephem>`_ package, 
+    `jplephem <https://github.com/brandon-rhodes/python-jplephem>`_ package,
     specifically the jplephem.spk.SPK._compute method. However, this version is written
     for JAX, not numpy. lax.scan is used instead of a for loop, jnp.where is used
     instead of if statements, etc. Also, in addition to position and velocity, you can
@@ -135,8 +135,6 @@ def planet_state_helper(
         ...     acceleration=True,
         ... )
     """
-
-
 
     tdb2 = 0.0  # leaving in case we ever decide to increase the time precision and use 2 floats
 
@@ -247,7 +245,7 @@ def planet_state(
     Returns:
         Tuple[jnp.ndarray(shape=(N, P, 3)), jnp.ndarray(shape=(N, P, 3)), jnp.ndarray(shape=(N, P, 3))]:
             The positions, velocities, and accelerations of the N objects at the P
-            requested times. The full tuple is always returned, but the velocity and/or 
+            requested times. The full tuple is always returned, but the velocity and/or
             acceleration will be 0s depending on the input flags.
             Units are AU, AU/day, AU/day^2.
 
@@ -382,7 +380,7 @@ def gr(xs, vs, planet_xs, planet_vs, planet_as, planet_gms):
     """
     Calculate the acceleration of multiple particles caused by multiple planets at
     multiple times in the PPN framework.
-    
+
     This function is a thin wrapper around gr_helper, which is the actual function that does
     the computation. This just uses jax.vmap to vectorize the computation over multiple
     particles and multiple times.
@@ -440,7 +438,7 @@ def gr(xs, vs, planet_xs, planet_vs, planet_as, planet_gms):
         ...     planet_as=planet_as,
         ...     planet_gms=STANDARD_PLANET_GMS,
         ... )
-    
+
     """
     return jax.vmap(
         lambda x, v: jax.vmap(gr_helper, in_axes=(0, 0, 1, 1, 1, None))(
@@ -453,7 +451,7 @@ def gr(xs, vs, planet_xs, planet_vs, planet_as, planet_gms):
 def newtonian_helper(x, planet_xs, mu):
     """
     A helper function to calculate the acceleration of a particle from Newtonian gravity
-    
+
     Parameters:
         x (jnp.ndarray(shape=(3,))):
             The 3D position of a particle in AU
@@ -530,7 +528,9 @@ def newtonian(xs, planet_xs, planet_gms):
 
     """
     return jax.vmap(
-        lambda x: jax.vmap(newtonian_helper, in_axes=(0, 1, None))(x, planet_xs, planet_gms)
+        lambda x: jax.vmap(newtonian_helper, in_axes=(0, 1, None))(
+            x, planet_xs, planet_gms
+        )
     )(xs)
 
 
@@ -586,8 +586,8 @@ def acceleration(
     Returns:
         jnp.ndarray(shape=(N, M, 3)):
             The 3D accelerations of N particles at M times in AU/day^2
-    
-    
+
+
     Examples:
         Circular acceleration of a particle around a point source:
 
@@ -648,7 +648,7 @@ def acceleration(
         ...     asteroid_xs=jnp.empty((1, 8, 3)),
         ...     planet_gms=STANDARD_PLANET_GMS,
         ... )
-        
+
         Two particles, 4 times, just the Sun, Jupiter, and the asteroid Psyche:
 
         >>> from jorbit.engine import acceleration, planet_state
@@ -712,7 +712,6 @@ def acceleration(
     # asteroid_gms is (n_asteroids)
 
     A = jnp.zeros(xs.shape)
-
 
     # The fixed planets in the system- separated from asteroids in case you want GR corrections
     def true_func():
@@ -893,7 +892,7 @@ def b6(As):
     Parameters:
         As (jnp.ndarray(shape=(N, 8, 3))):
             The 3D accelerations of N particles felt at the 8 substep times in AU/day^2
-    
+
     Returns:
         jnp.ndarray(shape=(N,3)):
             The B6 constant for each particle in 3 dimensions in AU/day^2
@@ -933,9 +932,9 @@ def single_step(
     "predictor-corrector" is pretty crude compared to something like IAS15- [1]_ it
     takes in no information about the previous timestep, and instead starts by assuming
     particles move in straight lines. It then iteratively corrects this assumption by
-    calculating the accelerations felt by the particles at the 8 substep times, then 
+    calculating the accelerations felt by the particles at the 8 substep times, then
     uses thoseaccelerations to calculate the intermediate positions and velocities. This
-    continuesuntil the difference in positions between successive iterations falls 
+    continuesuntil the difference in positions between successive iterations falls
     below somethreshold. This usually takes 3-5 iterations compared to IAS15's ~2, but
     for now itworks well and fast enough.
 
@@ -966,7 +965,7 @@ def single_step(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -1009,9 +1008,9 @@ def single_step(
 
     References:
         .. [1] Rein and Spiegel 2015: https://doi.org/10.1093/mnras/stu2164
-    
+
     Examples:
-    
+
         A single step of a main belt asteroid:
 
         >>> from jorbit.engine import single_step
@@ -1176,7 +1175,7 @@ def integrate(
     "expensive" single_step function if it has not yet reached final_time. As a result,
     vmapping this function will likely be very slow, since that would convert the
     lax.cond to a lax.select, which will run single_step even when the endpoint has
-    already been reached. 
+    already been reached.
 
     Parameters:
         xs (jnp.ndarray(shape=(N, 3))):
@@ -1193,7 +1192,7 @@ def integrate(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -1209,7 +1208,7 @@ def integrate(
             Same as planet_gms but for the asteroids. If sum(asteroid_gms) != 0, then
             H must equal W. To ignore asteroids, set asteroid_gms to jnp.array([0.]).
         max_steps (jnp.ndarray(shape=(Z,)), default=jnp.arange(100)):
-            Any array of length Z, the maximum number of calls to single_step. 
+            Any array of length Z, the maximum number of calls to single_step.
         use_GR (bool, default=False):
             Whether to use the PPN formalism to calculate the gravitational influence of
             the planets. If False, the planets are treated as Newtonian point masses. The
@@ -1254,7 +1253,7 @@ def integrate(
         ... )
 
         Propagate a pair of main belt asteroids forwards by a month:
-        
+
         >>> from jorbit.engine import integrate
         >>> from jorbit.construct_perturbers): import (
         ...     STANDARD_PLANET_PARAMS,
@@ -1491,7 +1490,7 @@ def integrate_multiple(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -1507,7 +1506,7 @@ def integrate_multiple(
             Same as planet_gms but for the asteroids. If sum(asteroid_gms) != 0, then
             H must equal W. To ignore asteroids, set asteroid_gms to jnp.array([0.]).
         max_steps (jnp.ndarray(shape=(Z,)), default=jnp.arange(100)):
-            Any array of length Z, the maximum number of calls to single_step. 
+            Any array of length Z, the maximum number of calls to single_step.
         use_GR (bool, default=False):
             Whether to use the PPN formalism to calculate the gravitational influence of
             the planets. If False, the planets are treated as Newtonian point masses. The
@@ -1570,6 +1569,7 @@ def integrate_multiple(
         ...     use_GR=True,
         ... )
     """
+
     def scan_func(carry, scan_over):
         xs, vs, t, last_dt, success = carry
         (
@@ -1608,6 +1608,7 @@ def integrate_multiple(
 ################################################################################
 # On-sky functions
 ################################################################################
+
 
 @jit
 def on_sky(
@@ -1654,7 +1655,7 @@ def on_sky(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -1995,7 +1996,7 @@ def prepare_loglike_input_helper(
     including bits that we want to remain fixed to certain values and therefore cannot
     influence the likelihood. For examples, we likely do not want to vary the masses of
     the planets included in the ephemeris, or we might want to fix the initial
-    state vector to some value and fit for a mass. In these cases, we don't want to 
+    state vector to some value and fit for a mass. In these cases, we don't want to
     differentiate w.r.t. these values, so we need a buffer layer to that combines things
     we want to vary with those we want to fix before passing them all off to loglike.
     That's the purpose of this function: to combine all of the parameters contained
@@ -2032,7 +2033,7 @@ def prepare_loglike_input_helper(
         fixed_massive_gms (jnp.ndarray(shape=(P-R,))):
             The current values of the P-R fixed massive particle GMs in AU^3/day^2.
         free_planet_gm_mask (jnp.ndarray(shape=(Y,), dtype=bool)):
-            A mask marking which of the Y planets from an ephemeris have GMs which are 
+            A mask marking which of the Y planets from an ephemeris have GMs which are
             allowed to vary
         free_planet_gms (jnp.ndarray(shape=(Z,))):
             The current values of the Z free planet GMs in AU^3/day^2.
@@ -2077,7 +2078,7 @@ def prepare_loglike_input_helper(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -2086,7 +2087,7 @@ def prepare_loglike_input_helper(
             use_GR=True, in which case the planet perturbations are calculated using the
             PPN formalism while the asteroids are still just Newtonian.
         max_steps (jnp.ndarray(shape=(Z,)), default=jnp.arange(100)):
-            Any array of length Z, the maximum number of calls to single_step. 
+            Any array of length Z, the maximum number of calls to single_step.
         use_GR (bool, default=False):
             Whether to use the PPN formalism to calculate the gravitational influence of
             the planets. If False, the planets are treated as Newtonian point masses. The
@@ -2097,11 +2098,11 @@ def prepare_loglike_input_helper(
         dict:
             A dictionary containing all of the inputs needed for loglike.
 
-    
+
     Examples:
 
         See the source code for System.loglike
-    
+
     """
     tracer_xs = weave_free_and_fixed(
         free_tracer_state_mask, free_tracer_xs, fixed_tracer_xs
@@ -2132,7 +2133,9 @@ def prepare_loglike_input_helper(
         "tracer_particle_ras": tracer_particle_ras,
         "tracer_particle_decs": tracer_particle_decs,
         "tracer_particle_observer_positions": tracer_particle_observer_positions,
-        "tracer_particle_astrometry_uncertainties": tracer_particle_astrometry_uncertainties,
+        "tracer_particle_astrometry_uncertainties": (
+            tracer_particle_astrometry_uncertainties
+        ),
         "massive_particle_xs": massive_xs,
         "massive_particle_vs": massive_vs,
         "massive_particle_gms": massive_gms,
@@ -2140,7 +2143,9 @@ def prepare_loglike_input_helper(
         "massive_particle_ras": massive_particle_ras,
         "massive_particle_decs": massive_particle_decs,
         "massive_particle_observer_positions": massive_particle_observer_positions,
-        "massive_particle_astrometry_uncertainties": massive_particle_astrometry_uncertainties,
+        "massive_particle_astrometry_uncertainties": (
+            massive_particle_astrometry_uncertainties
+        ),
         "planet_params": planet_params,
         "asteroid_params": asteroid_params,
         "planet_gms": planet_gms,
@@ -2183,11 +2188,12 @@ def prepare_loglike_input(free_params, fixed_params, use_GR, max_steps):
         ...    fixed_params=system._fixed_params,
         ...    use_GR=True,
         ...    max_steps=jnp.arange(100)
-        ... )    
+        ... )
     """
     return prepare_loglike_input_helper(
         **fixed_params, **free_params, use_GR=use_GR, max_steps=max_steps
     )
+
 
 @jit
 def loglike_helper(
@@ -2259,7 +2265,7 @@ def loglike_helper(
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
             second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for 
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
             asteroids, it's 32 days). The third element contains the Q coefficients of the
             R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
             x,y,z dimensions.
@@ -2275,7 +2281,7 @@ def loglike_helper(
             Same as planet_gms but for the asteroids. If sum(asteroid_gms) != 0, then
             H must equal W. To ignore asteroids, set asteroid_gms to jnp.array([0.]).
         max_steps (jnp.ndarray(shape=(Z,)), default=jnp.arange(100)):
-            Any array of length Z, the maximum number of calls to single_step. 
+            Any array of length Z, the maximum number of calls to single_step.
         use_GR (bool, default=False):
             Whether to use the PPN formalism to calculate the gravitational influence of
             the planets. If False, the planets are treated as Newtonian point masses. The
@@ -2545,7 +2551,7 @@ def barycentricmeanecliptic_to_icrs(xs):
     Parameters:
         xs (jnp.ndarray(shape=(N, 3))):
             The N 3D positions or velocities in the Barycentric Mean Ecliptic frame.
-    
+
     Returns:
         jnp.ndarray(shape=(N, 3)):
             The N 3D positions or velocities in ICRS.
@@ -2581,7 +2587,7 @@ def icrs_to_barycentricmeanecliptic(xs):
     Parameters:
         xs (jnp.ndarray(shape=(N, 3))):
             The N 3D positions or velocities in ICRS.
-    
+
     Returns:
         jnp.ndarray(shape=(N, 3)):
             The N 3D positions or velocities in the Barycentric Mean Ecliptic frame.
@@ -2603,9 +2609,7 @@ def icrs_to_barycentricmeanecliptic(xs):
 
 @jit
 def cart_to_elements(X, V, time, sun_params=STANDARD_SUN_PARAMS):
-    """
-    
-    """
+    """ """
     # X is (n_particles, 3)
     # V is (n_particles, 3)
     # sun_params is TUPLE (3), the first entries of something like STANDARD_PLANET_PARAMS

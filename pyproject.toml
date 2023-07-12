@@ -21,6 +21,9 @@ keywords = ["orbits", "astronomy", "astrometry"]
 requires-python = ">=3.9"
 dynamic = ["dependencies"]
 
+[tool.setuptools]
+py-modules = ["jorbit"]
+
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 

@@ -31,9 +31,15 @@ def construct_perturbers(
     latest_time=Time("2100-01-01"),
 ):
     assert earliest_time.tdb.jd < latest_time.tdb.jd
-    
-    assert earliest_time.tdb.jd > 2287184.5, 'The DE440 ephemeris only covers between 1549-12-31 and 2650-01-25. Please adjust earliest and latest times.' 
-    assert latest_time.tdb.jd < 2688976.5, 'The DE440 ephemeris only covers between 1549-12-31 and 2650-01-25. Please adjust earliest and latest times.'
+
+    assert earliest_time.tdb.jd > 2287184.5, (
+        "The DE440 ephemeris only covers between 1549-12-31 and 2650-01-25. Please"
+        " adjust earliest and latest times."
+    )
+    assert latest_time.tdb.jd < 2688976.5, (
+        "The DE440 ephemeris only covers between 1549-12-31 and 2650-01-25. Please"
+        " adjust earliest and latest times."
+    )
 
     assert isinstance(planets, list)
     assert "sun" not in planets
