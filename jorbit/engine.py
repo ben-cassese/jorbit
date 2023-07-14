@@ -69,7 +69,6 @@ from .data.constants import (
 ################################################################################
 
 
-@jit
 def planet_state_helper(
     init,
     intlen,
@@ -210,7 +209,6 @@ def planet_state_helper(
     )
 
 
-@jit
 def planet_state(
     planet_params,
     times,
@@ -269,7 +267,6 @@ def planet_state(
     )
 
 
-@jit
 def gr_helper(x, v, planet_xs, planet_vs, planet_as, mu):
     """
     A helper function to calculate the acceleration of an object in the PPN framework.
@@ -375,7 +372,6 @@ def gr_helper(x, v, planet_xs, planet_vs, planet_as, mu):
     return g
 
 
-@jit
 def gr(xs, vs, planet_xs, planet_vs, planet_as, planet_gms):
     """
     Calculate the acceleration of multiple particles caused by multiple planets at
@@ -447,7 +443,6 @@ def gr(xs, vs, planet_xs, planet_vs, planet_as, planet_gms):
     )(xs, vs)
 
 
-@jit
 def newtonian_helper(x, planet_xs, mu):
     """
     A helper function to calculate the acceleration of a particle from Newtonian gravity
@@ -484,7 +479,6 @@ def newtonian_helper(x, planet_xs, mu):
     return -((mu / r**3)[:, None] * r_vec).sum(axis=0)
 
 
-@jit
 def newtonian(xs, planet_xs, planet_gms):
     """
     Calculate the gravitational acceleration felt by multiple particles from multiple
@@ -534,7 +528,6 @@ def newtonian(xs, planet_xs, planet_gms):
     )(xs)
 
 
-@jit
 def acceleration(
     xs,
     vs,
@@ -758,7 +751,6 @@ def acceleration(
         a = jnp.sum(s, axis=1)
         return None, a
 
-    
     def true_func():
         ts = jnp.moveaxis(xs, 0, 1)  # (n_times, n_particles, 3)
         tmp = lax.scan(scan_func, None, ts)[1]
@@ -772,7 +764,6 @@ def acceleration(
     return A
 
 
-@jit
 def inferred_xs(As, v0, x0, dt):
     """
     Compute the 8 intermediate cartesian positions (substeps) during an integration step
@@ -806,7 +797,6 @@ def inferred_xs(As, v0, x0, dt):
     )
 
 
-@jit
 def final_x_prediction(As, x0, v0, dt):
     """
     Compute the final cartesian position at the end of an integration step
@@ -833,7 +823,6 @@ def final_x_prediction(As, x0, v0, dt):
     return dt**2 * (XF_CONSTANT[None, :, None] * As).sum(axis=1) + dt * v0 + x0
 
 
-@jit
 def inferred_vs(As, v0, dt):
     """
     Compute the 8 intermediate cartesian velocities (substeps) during an integration step
@@ -861,7 +850,6 @@ def inferred_vs(As, v0, dt):
     )
 
 
-@jit
 def final_v_prediction(As, v0, dt):
     """
     Compute the final cartesian velocity at the end of an integration step
@@ -885,7 +873,6 @@ def final_v_prediction(As, v0, dt):
     return dt * (VF_CONSTANT[None, :, None] * As).sum(axis=1) + v0
 
 
-@jit
 def b6(As):
     """
     Compute the B6 constant from Rein and Spiegel 2015 [1]_ from the 8 substep accelerations
@@ -909,7 +896,6 @@ def b6(As):
     return (B6_CONSTANT[None, :, None] * As).sum(axis=1)
 
 
-@jit
 def single_step(
     x0,
     v0,
@@ -1150,7 +1136,6 @@ def single_step(
     )
 
 
-@jit
 def integrate(
     xs,
     vs,
@@ -1455,7 +1440,6 @@ def integrate(
     return xs, vs, t, last_dt, last_big_dt, success
 
 
-@jit
 def integrate_multiple(
     xs,
     vs,
@@ -1611,7 +1595,6 @@ def integrate_multiple(
 ################################################################################
 
 
-@jit
 def on_sky(
     xs,
     vs,
@@ -1759,7 +1742,6 @@ def on_sky(
     return jax.lax.scan(scan_func, None, (xs, vs, times, observer_positions))[1]
 
 
-@jit
 def sky_error(calc_ra, calc_dec, true_ra, true_dec):
     """
     Calculate the angular distance between two points on the sky.
@@ -1816,7 +1798,6 @@ def sky_error(calc_ra, calc_dec, true_ra, true_dec):
 ################################################################################
 
 
-@jit
 def negative_loglike_single(
     X,
     times,
@@ -1873,7 +1854,6 @@ def negative_loglike_single(
     return -q
 
 
-@jit
 def negative_loglike_single_grad(
     X,
     times,
@@ -1902,7 +1882,6 @@ def negative_loglike_single_grad(
     )
 
 
-@jit
 def weave_free_and_fixed(free_mask, free, fixed):
     """
     Combine free and fixed parameters into a single array.
@@ -1953,7 +1932,6 @@ def weave_free_and_fixed(free_mask, free, fixed):
     return jax.lax.scan(scan_func, 0, jnp.arange(len(free_mask)))[1]
 
 
-@jit
 def prepare_loglike_input_helper(
     free_tracer_state_mask,
     free_tracer_xs,
@@ -1978,12 +1956,12 @@ def prepare_loglike_input_helper(
     tracer_particle_ras,
     tracer_particle_decs,
     tracer_particle_observer_positions,
-    tracer_particle_astrometry_uncertainties,
+    tracer_particle_astrometric_uncertainties,
     massive_particle_times,
     massive_particle_ras,
     massive_particle_decs,
     massive_particle_observer_positions,
-    massive_particle_astrometry_uncertainties,
+    massive_particle_astrometric_uncertainties,
     planet_params,
     asteroid_params,
     max_steps,
@@ -2060,7 +2038,7 @@ def prepare_loglike_input_helper(
         tracer_particle_observer_positions (jnp.ndarray(shape=(N,T,3))):
             The T 3D positions of the observers at each observation time in AU. Will be a
             sequence of 999s for particles that were not observed- see System for more info.
-        tracer_particle_astrometry_uncertainties (jnp.ndarray(shape=(N,T))):
+        tracer_particle_astrometric_uncertainties (jnp.ndarray(shape=(N,T))):
             The T astrometric uncertainties of the N tracer particles in arcsec. Will be a
             sequence of infs for particles that were not observed- see System for more info.
         massive_particle_times: (jnp.ndarray(shape=(P,D))):
@@ -2072,8 +2050,8 @@ def prepare_loglike_input_helper(
         massive_particle_observer_positions (jnp.ndarray(shape=(P,D,3))):
             Analog of free_particle observer_positions for the P massive particles each
             observed D times.
-        massive_particle_astrometry_uncertainties (jnp.ndarray(shape=(P,D))):
-            Analog of free_particle astrometry_uncertainties for the P massive particles
+        massive_particle_astrometric_uncertainties (jnp.ndarray(shape=(P,D))):
+            Analog of free_particle astrometric_uncertainties for the P massive particles
             each observed D times.
         planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.construct_perturbers):
             The ephemeris describing P massive objects in the solar system. The first
@@ -2134,8 +2112,8 @@ def prepare_loglike_input_helper(
         "tracer_particle_ras": tracer_particle_ras,
         "tracer_particle_decs": tracer_particle_decs,
         "tracer_particle_observer_positions": tracer_particle_observer_positions,
-        "tracer_particle_astrometry_uncertainties": (
-            tracer_particle_astrometry_uncertainties
+        "tracer_particle_astrometric_uncertainties": (
+            tracer_particle_astrometric_uncertainties
         ),
         "massive_particle_xs": massive_xs,
         "massive_particle_vs": massive_vs,
@@ -2144,8 +2122,8 @@ def prepare_loglike_input_helper(
         "massive_particle_ras": massive_particle_ras,
         "massive_particle_decs": massive_particle_decs,
         "massive_particle_observer_positions": massive_particle_observer_positions,
-        "massive_particle_astrometry_uncertainties": (
-            massive_particle_astrometry_uncertainties
+        "massive_particle_astrometric_uncertainties": (
+            massive_particle_astrometric_uncertainties
         ),
         "planet_params": planet_params,
         "asteroid_params": asteroid_params,
@@ -2156,7 +2134,6 @@ def prepare_loglike_input_helper(
     }
 
 
-@jit
 def prepare_loglike_input(free_params, fixed_params, use_GR, max_steps):
     """
     A wrapper for prepareloglike_helper_input_helper that deals with dictionaries instead of arrays.
@@ -2196,7 +2173,6 @@ def prepare_loglike_input(free_params, fixed_params, use_GR, max_steps):
     )
 
 
-@jit
 def loglike_helper(
     tracer_particle_xs=jnp.empty((0, 3)),
     tracer_particle_vs=jnp.empty((0, 3)),
@@ -2204,7 +2180,7 @@ def loglike_helper(
     tracer_particle_ras=jnp.empty((0, 1)),
     tracer_particle_decs=jnp.empty((0, 1)),
     tracer_particle_observer_positions=jnp.empty((0, 1, 3)),
-    tracer_particle_astrometry_uncertainties=jnp.empty((0, 1)),
+    tracer_particle_astrometric_uncertainties=jnp.empty((0, 1)),
     massive_particle_xs=jnp.empty((0, 3)),
     massive_particle_vs=jnp.empty((0, 3)),
     massive_particle_gms=jnp.empty((0)),
@@ -2212,7 +2188,7 @@ def loglike_helper(
     massive_particle_ras=jnp.empty((0, 1)),
     massive_particle_decs=jnp.empty((0, 1)),
     massive_particle_observer_positions=jnp.empty((0, 1, 3)),
-    massive_particle_astrometry_uncertainties=jnp.empty((0, 1)),
+    massive_particle_astrometric_uncertainties=jnp.empty((0, 1)),
     planet_params=STANDARD_PLANET_PARAMS,
     asteroid_params=STANDARD_ASTEROID_PARAMS,
     planet_gms=STANDARD_PLANET_GMS,
@@ -2220,7 +2196,7 @@ def loglike_helper(
     max_steps=jnp.arange(100),
     use_GR=False,
 ):
-    """loglike_helper(tracer_particle_xs=jnp.empty((0, 3)),tracer_particle_vs=jnp.empty((0, 3)), tracer_particle_times=jnp.empty((0, 1)), tracer_particle_ras=jnp.empty((0, 1)), tracer_particle_decs=jnp.empty((0, 1)), tracer_particle_observer_positions=jnp.empty((0, 1, 3)), tracer_particle_astrometry_uncertainties=jnp.empty((0, 1)), massive_particle_xs=jnp.empty((0, 3)), massive_particle_vs=jnp.empty((0, 3)), massive_particle_gms=jnp.empty((0)), massive_particle_times=jnp.empty((0, 1)), massive_particle_ras=jnp.empty((0, 1)), massive_particle_decs=jnp.empty((0, 1)), massive_particle_observer_positions=jnp.empty((0, 1, 3)), massive_particle_astrometry_uncertainties=jnp.empty((0, 1)), planet_params=STANDARD_PLANET_PARAMS, asteroid_params=STANDARD_ASTEROID_PARAMS, planet_gms=STANDARD_PLANET_GMS, asteroid_gms=STANDARD_ASTEROID_GMS, max_steps=jnp.arange(100), use_GR=False)
+    """loglike_helper(tracer_particle_xs=jnp.empty((0, 3)),tracer_particle_vs=jnp.empty((0, 3)), tracer_particle_times=jnp.empty((0, 1)), tracer_particle_ras=jnp.empty((0, 1)), tracer_particle_decs=jnp.empty((0, 1)), tracer_particle_observer_positions=jnp.empty((0, 1, 3)), tracer_particle_astrometric_uncertainties=jnp.empty((0, 1)), massive_particle_xs=jnp.empty((0, 3)), massive_particle_vs=jnp.empty((0, 3)), massive_particle_gms=jnp.empty((0)), massive_particle_times=jnp.empty((0, 1)), massive_particle_ras=jnp.empty((0, 1)), massive_particle_decs=jnp.empty((0, 1)), massive_particle_observer_positions=jnp.empty((0, 1, 3)), massive_particle_astrometric_uncertainties=jnp.empty((0, 1)), planet_params=STANDARD_PLANET_PARAMS, asteroid_params=STANDARD_ASTEROID_PARAMS, planet_gms=STANDARD_PLANET_GMS, asteroid_gms=STANDARD_ASTEROID_GMS, max_steps=jnp.arange(100), use_GR=False)
     Calculate the log likelihood of a System given some data.
 
     Parameters:
@@ -2238,7 +2214,7 @@ def loglike_helper(
             The T Decs of the N tracer particles in radians.
         tracer_particle_observer_positions (jnp.ndarray(shape=(N,T,3), default=jnp.empty((0, 1, 3))):
             The T 3D positions of the observers at each observation time in AU.
-        tracer_particle_astrometry_uncertainties (jnp.ndarray(shape=(N,T), default=jnp.empty((0, 1))):
+        tracer_particle_astrometric_uncertainties (jnp.ndarray(shape=(N,T), default=jnp.empty((0, 1))):
             The T astrometric uncertainties of the N tracer particles in arcsec. To make
             sure padded observations are ignored, dummy values should be set to "inf". This
             is so that division by sigma^2 gives zero, which will not contribute to the sum.
@@ -2259,7 +2235,7 @@ def loglike_helper(
             The D Decs of the P massive particles in radians.
         massive_particle_observer_positions (jnp.ndarray(shape=(P,D,3), default=jnp.empty((0, 1, 3))):
             The D 3D positions of the observers at each observation time in AU.
-        massive_particle_astrometry_uncertainties (jnp.ndarray(shape=(P,D)jnp.empty((0, 1))
+        massive_particle_astrometric_uncertainties (jnp.ndarray(shape=(P,D)jnp.empty((0, 1))
             The D astrometric uncertainties of the P massive particles in arcsec. Similar
             again to the tracers, use inf to pad out observations that don't exist.
         planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.construct_perturbers):
@@ -2344,7 +2320,7 @@ def loglike_helper(
     ...     ),
     ...     times=times,
     ...     observatory_locations="kitt peak",
-    ...     astrometry_uncertainties=100 * u.mas,
+    ...     astrometric_uncertainties=100 * u.mas,
     ... )
     >>> asteroid = Particle(
     ...     x=true_x0,
@@ -2362,7 +2338,7 @@ def loglike_helper(
     ...     tracer_particle_ras=obs.ra[None, :],
     ...     tracer_particle_decs=obs.dec[None, :],
     ...     tracer_particle_observer_positions=obs.observer_positions[None, :],
-    ...     tracer_particle_astrometry_uncertainties=obs.astrometry_uncertainties[None, :],
+    ...     tracer_particle_astrometric_uncertainties=obs.astrometric_uncertainties[None, :],
     ...     massive_particle_xs=jnp.empty((0, 3)),
     ...     massive_particle_vs=jnp.empty((0, 3)),
     ...     massive_particle_gms=jnp.empty((0)),
@@ -2370,7 +2346,7 @@ def loglike_helper(
     ...     massive_particle_ras=jnp.empty((0, 1)),
     ...     massive_particle_decs=jnp.empty((0, 1)),
     ...     massive_particle_observer_positions=jnp.empty((0, 1, 3)),
-    ...     massive_particle_astrometry_uncertainties=jnp.empty((0, 1)),
+    ...     massive_particle_astrometric_uncertainties=jnp.empty((0, 1)),
     ...     planet_params=STANDARD_PLANET_PARAMS,
     ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
     ...     planet_gms=STANDARD_PLANET_GMS,
@@ -2425,7 +2401,7 @@ def loglike_helper(
         return q
 
     def tracer_scan_func(carry, scan_over):
-        # x_, v_, times, observer_positions, ras, decs, astrometry_uncertainties = scan_over
+        # x_, v_, times, observer_positions, ras, decs, astrometric_uncertainties = scan_over
 
         # This is a little gross right now- if the very first entry in the list is inf,
         # then there were no observations of this particle and it's not worth integrating/checking error.
@@ -2478,21 +2454,21 @@ def loglike_helper(
             true_dec=massive_particle_decs[ind],
         )
 
-        sigma2 = massive_particle_astrometry_uncertainties[ind] ** 2
+        sigma2 = massive_particle_astrometric_uncertainties[ind] ** 2
         # p = jnp.log(2 * jnp.pi * sigma2)
         q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
         return q
 
     def massive_scan_func(carry, scan_over):
         q = jax.lax.cond(
-            massive_particle_astrometry_uncertainties[scan_over][0] != 999.0,
+            massive_particle_astrometric_uncertainties[scan_over][0] != 999.0,
             massive_true_func,
             false_func,
             scan_over,
         )
         return None, q
 
-    if len(tracer_particle_astrometry_uncertainties) > 0:
+    if len(tracer_particle_astrometric_uncertainties) > 0:
         tracer_contribution = jax.lax.scan(
             tracer_scan_func,
             None,
@@ -2503,13 +2479,13 @@ def loglike_helper(
                 tracer_particle_observer_positions,
                 tracer_particle_ras,
                 tracer_particle_decs,
-                tracer_particle_astrometry_uncertainties,
+                tracer_particle_astrometric_uncertainties,
             ),
         )[1].sum()
     else:
         tracer_contribution = 0.0
 
-    if len(massive_particle_astrometry_uncertainties) > 0:
+    if len(massive_particle_astrometric_uncertainties) > 0:
         massive_contribution = jax.lax.scan(
             massive_scan_func, None, jnp.arange(len(massive_particle_xs))
         )[1].sum()
@@ -2522,7 +2498,6 @@ def loglike_helper(
     return Q
 
 
-@jit
 def loglike(params):
     """
     A wrapper for loglike_helper that deals with dictionaries instead of arrays.
@@ -2537,12 +2512,10 @@ def loglike(params):
 ################################################################################
 
 
-@jit
 def _barycentricmeanecliptic_to_icrs(bary_vec):
     return jnp.matmul(BARY_TO_ICRS_ROT_MAT, bary_vec)
 
 
-@jit
 def barycentricmeanecliptic_to_icrs(xs):
     """
     Convert 3D positions or velocities from the Barycentric Mean Ecliptic frame to ICRS.
@@ -2573,12 +2546,10 @@ def barycentricmeanecliptic_to_icrs(xs):
     return jax.vmap(_barycentricmeanecliptic_to_icrs)(xs)
 
 
-@jit
 def _icrs_to_barycentricmeanecliptic(icrs_vec):
     return jnp.matmul(ICRS_TO_BARY_ROT_MAT, icrs_vec)
 
 
-@jit
 def icrs_to_barycentricmeanecliptic(xs):
     """
     Convert 3D positions or velocities from ICRS to the Barycentric Mean Ecliptic frame.
@@ -2608,7 +2579,6 @@ def icrs_to_barycentricmeanecliptic(xs):
     return jax.vmap(_icrs_to_barycentricmeanecliptic)(xs)
 
 
-@jit
 def cart_to_elements(X, V, time, sun_params=STANDARD_SUN_PARAMS):
     """ """
     # X is (n_particles, 3)
@@ -2666,7 +2636,6 @@ def cart_to_elements(X, V, time, sun_params=STANDARD_SUN_PARAMS):
     )
 
 
-@jit
 def elements_to_cart(
     a, ecc, nu, inc, Omega, omega, time, sun_params=STANDARD_SUN_PARAMS
 ):
@@ -2737,3 +2706,34 @@ def elements_to_cart(
     v = barycentricmeanecliptic_to_icrs(v)
 
     return x, v
+
+
+########################################################################################
+j_planet_state_helper = jax.jit(planet_state_helper)
+j_planet_state = jax.jit(planet_state)
+j_gr_helper = jax.jit(gr_helper)
+j_gr = jax.jit(gr)
+j_newtonian_helper = jax.jit(newtonian_helper)
+j_newtonian = jax.jit(newtonian)
+j_acceleration = jax.jit(acceleration)
+j_inferred_xs = jax.jit(inferred_xs)
+j_final_x_prediction = jax.jit(final_x_prediction)
+j_inferred_vs = jax.jit(inferred_vs)
+j_final_v_prediction = jax.jit(final_v_prediction)
+j_b6 = jax.jit(b6)
+j_single_step = jax.jit(single_step)
+j_integrate = jax.jit(integrate)
+j_integrate_multiple = jax.jit(integrate_multiple)
+j_on_sky = jax.jit(on_sky)
+j_sky_error = jax.jit(sky_error)
+j_negative_loglike_single = jax.jit(negative_loglike_single)
+j_negative_loglike_single_grad = jax.jit(negative_loglike_single_grad)
+j_weave_free_and_fixed = jax.jit(weave_free_and_fixed)
+j_prepare_loglike_input_helper = jax.jit(prepare_loglike_input_helper)
+j_prepare_loglike_input = jax.jit(prepare_loglike_input)
+j_loglike_helper = jax.jit(loglike_helper)
+j_loglike = jax.jit(loglike)
+j_barycentricmeanecliptic_to_icrs = jax.jit(barycentricmeanecliptic_to_icrs)
+j_icrs_to_barycentricmeanecliptic = jax.jit(icrs_to_barycentricmeanecliptic)
+j_cart_to_elements = jax.jit(cart_to_elements)
+j_elements_to_cart = jax.jit(elements_to_cart)

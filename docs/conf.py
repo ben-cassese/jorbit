@@ -1,8 +1,7 @@
 import os
 import sys
-sys.path.insert(
-    0, os.path.abspath("..")
-)
+
+sys.path.insert(0, os.path.abspath(".."))
 
 # Configuration file for the Sphinx documentation builder.
 #
@@ -12,9 +11,9 @@ sys.path.insert(
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'jorbit'
-copyright = '2023, Ben Cassese'
-author = 'Ben Cassese'
+project = "jorbit"
+copyright = "2023, Ben Cassese"
+author = "Ben Cassese"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -31,8 +30,8 @@ extensions = [
     "sphinx_automodapi.automodapi",
 ]
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 
 # -- Options for HTML output -------------------------------------------------
