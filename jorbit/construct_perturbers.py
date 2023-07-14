@@ -15,6 +15,8 @@ from jplephem.spk import SPK
 import pandas as pd
 
 from .data.constants import (
+    planet_ephemeris,
+    asteroid_ephemeris,
     all_planets,
     all_planet_nums,
     all_planet_gms,
@@ -58,8 +60,7 @@ def construct_perturbers(
         except:
             print(f"{p} not a valid planet name, not included in integration")
 
-    planet_ephem = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
-    kernel = SPK.open(download_file(planet_ephem, cache=True))
+    kernel = SPK.open(download_file(planet_ephemeris, cache=True))
 
     planet_init = []
     planet_intlen = []
@@ -113,10 +114,7 @@ def construct_perturbers(
         except:
             print(f"{p} not a valid asteroid name, not included in integration")
     # asteroid_ephem = 'https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/sb441-n373.bsp'
-    asteroid_ephem = (
-        "https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
-    )
-    kernel = SPK.open(download_file(asteroid_ephem, cache=True))
+    kernel = SPK.open(download_file(asteroid_ephemeris, cache=True))
 
     asteroid_init = []
     asteroid_intlen = []
