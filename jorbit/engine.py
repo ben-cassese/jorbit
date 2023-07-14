@@ -1201,7 +1201,7 @@ def integrate(
             asteroids are always treated as Newtonian point masses regardless of this flag.
 
     Returns:
-        Tuple[jnp.ndarray(shape=(N, 3)), jnp.ndarray(shape=(N, 3)), float, float, float, bool]:
+        Tuple[jnp.ndarray(shape=(N, 3)), jnp.ndarray(shape=(N, 3)), float, float, bool]:
         xs (jnp.ndarray(shape=(N, 3))):
             The 3D positions of N particles at the end of the integration in AU
         vs (jnp.ndarray(shape=(N, 3))):
@@ -1213,10 +1213,6 @@ def integrate(
             The final timestep used in days. Will likely be small, since final step is
             chosen to exactly land on final_time. Not really used for anything else in the
             package anymore.
-        last_big_dt (float):
-            The second-to-last timestep used in days. Gives a sense of the steps being used
-            throughout the integration. Not really used for anything else in the package
-            anymore.
         success (bool):
             Whether the integration "succeeded". This is a pretty crude check- it just makes
             sure that all of the individual single_steps succeeded and that the final time
@@ -1435,9 +1431,8 @@ def integrate(
     last_dt = Q[0][3]
     t = Q[0][4]
     success = (jnp.sum(Q[1][0]) == max_steps.shape[0]) * (t == final_time)
-    last_big_dt = Q[1][1][jnp.argmin(Q[1][1]) - 2]
 
-    return xs, vs, t, last_dt, last_big_dt, success
+    return xs, vs, t, last_dt, success
 
 
 def integrate_multiple(
@@ -1562,7 +1557,6 @@ def integrate_multiple(
             vs,
             t,
             last_dt,
-            last_big_dt,
             success,
         ) = integrate(
             xs=xs,
@@ -1581,7 +1575,7 @@ def integrate_multiple(
 
     xs, vs, final_time, last_dt, success = jax.lax.scan(
         scan_func,
-        (xs, vs, initial_time, 0.1, True),
+        (xs, vs, initial_time, 0.01, True),
         final_times,
     )[1]
     xs = jnp.swapaxes(xs, 0, 1)
@@ -1682,6 +1676,7 @@ def on_sky(
     def _on_sky(
         x,
         v,
+        gm,
         time,
         observer_position,
         planet_params,
@@ -1705,7 +1700,7 @@ def on_sky(
             Q = single_step(
                 x0=x[None, :],
                 v0=v[None, :],
-                gms=gms,
+                gms=gm,
                 dt=nudge,
                 t=time,
                 planet_params=planet_params,
@@ -1726,10 +1721,11 @@ def on_sky(
         return calc_ra, calc_dec
 
     def scan_func(carry, scan_over):
-        x, v, time, observer_position = scan_over
+        x, v, gm, time, observer_position = scan_over
         calc_ra, calc_dec = _on_sky(
             x=x,
             v=v,
+            gm=gm,
             time=time,
             observer_position=observer_position,
             planet_params=planet_params,
@@ -1739,7 +1735,7 @@ def on_sky(
         )
         return None, (calc_ra, calc_dec)
 
-    return jax.lax.scan(scan_func, None, (xs, vs, times, observer_positions))[1]
+    return jax.lax.scan(scan_func, None, (xs, vs, gms, times, observer_positions))[1]
 
 
 def sky_error(calc_ra, calc_dec, true_ra, true_dec):
@@ -1837,7 +1833,7 @@ def negative_loglike_single(
     calc_RAs, calc_Decs = on_sky(
         xs=xs[0],
         vs=vs[0],
-        gms=jnp.array([0]),
+        gms=jnp.zeros(len(xs[0])),
         times=times,
         observer_positions=observer_positions,
         planet_params=planet_params,
@@ -2384,7 +2380,7 @@ def loglike_helper(
         calc_RAs, calc_Decs = on_sky(
             xs=xs[0],
             vs=vs[0],
-            gms=jnp.array([0]),
+            gms=jnp.zeros(len(xs[0]), dtype=jnp.float64),
             times=times,
             observer_positions=observer_pos,
             planet_params=planet_params,
@@ -2435,10 +2431,13 @@ def loglike_helper(
         xs = jnp.concatenate((massive_particle_xs[:, None, :], xs), axis=1)
         vs = jnp.concatenate((massive_particle_vs[:, None, :], vs), axis=1)
 
+        # Note: here, when correcting for light travel time, we are setting the GMs
+        # of the massive particles to zero. Assuming that self-interaction is
+        # negligible on this short timescale
         calc_RAs, calc_Decs = on_sky(
             xs=xs[ind],
             vs=vs[ind],
-            gms=jnp.array([0]),
+            gms=jnp.zeros(len(xs[ind]), dtype=jnp.float64),
             times=massive_particle_times[ind],
             observer_positions=massive_particle_observer_positions[ind],
             planet_params=planet_params,

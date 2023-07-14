@@ -406,6 +406,17 @@ class System:
                 **{"free_asteroid_gms": jnp.array(free_asteroid_gms)},
             }
 
+        largest = 0
+        for p in jnp.concatenate(
+            (self._tracer_particle_times, self._massive_particle_times)
+        ):
+            times = p[p != 2458849]
+            if times.shape == (0,):
+                continue
+            d = self._set_max_steps(times, obey_large_step_limits=False)
+            largest = jnp.where(len(d) > largest, len(d), largest)
+        self._loglike_max_steps = jnp.arange(largest)
+
         ########################################################################
         # check that everything just worked
         assert len(self._xs) == len(self._vs) == len(self._gms)
@@ -464,6 +475,34 @@ class System:
     def add_particle(self):
         pass
 
+    def _set_max_steps(self, times, obey_large_step_limits=True):
+        largest = 0
+
+        jumps = jnp.abs(jnp.diff(times))
+        if jumps.shape != (0,):
+            largest_jump = jnp.max(jumps)
+        else:
+            largest_jump = 0
+        first_jump = jnp.abs(self._time - times[0])
+        largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
+        largest = jnp.where(largest_jump > largest, largest_jump, largest)
+
+        if obey_large_step_limits:
+            assert largest_jump <= 7305, (
+                "Requested propagation includes at least one step that is too large-"
+                " max default is 20 years. Shrink the jumps, or set"
+                " obey_large_step_limits to False."
+            )
+        if largest_jump < 1000:
+            max_steps = jnp.arange(100)
+        else:
+            max_steps = jnp.arange(1000)
+
+        if not obey_large_step_limits and largest_jump > 1000:
+            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
+
+        return max_steps
+
     def propagate(
         self,
         times,
@@ -490,26 +529,8 @@ class System:
             " considered in the ephemeris for this particle. Consider initially setting"
             " a broader time range for the ephemeris."
         )
-        jumps = jnp.abs(jnp.diff(times))
-        if jumps.shape != (0,):
-            largest_jump = jnp.max(jumps)
-        else:
-            largest_jump = 0
-        first_jump = jnp.abs(self._time - times[0])
-        largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
-        if obey_large_step_limits:
-            assert largest_jump <= 7305, (
-                "Requested propagation includes at least one step that is too large-"
-                " max default is 20 years. Shrink the jumps, or set"
-                " obey_large_step_limits to False."
-            )
-        if largest_jump < 1000:
-            max_steps = jnp.arange(100)
-        else:
-            max_steps = jnp.arange(1000)
 
-        if not obey_large_step_limits and largest_jump > 1000:
-            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
+        max_steps = self._set_max_steps(times, obey_large_step_limits)
 
         xs, vs, final_times, success = j_integrate_multiple(
             xs=self._xs,
@@ -610,42 +631,11 @@ class System:
 
     @property
     def loglike(self, use_GR=True, obey_large_step_limits=True):
-        largest = 0
-        for p in jnp.concatenate(
-            (self._tracer_particle_times, self._massive_particle_times)
-        ):
-            times = p[p != 2458849]
-            if times.shape == (0,):
-                continue
-            jumps = jnp.abs(jnp.diff(times))
-            if jumps.shape != (0,):
-                largest_jump = jnp.max(jumps)
-            else:
-                largest_jump = 0
-            first_jump = jnp.abs(self._time - times[0])
-            largest_jump = jnp.where(
-                first_jump > largest_jump, first_jump, largest_jump
-            )
-            largest = jnp.where(largest_jump > largest, largest_jump, largest)
-        if obey_large_step_limits:
-            assert largest_jump <= 7305, (
-                "Requested propagation includes at least one step that is too large-"
-                " max default is 20 years. Shrink the jumps, or set"
-                " obey_large_step_limits to False."
-            )
-        if largest_jump < 1000:
-            max_steps = jnp.arange(100)
-        else:
-            max_steps = jnp.arange(1000)
-
-        if not obey_large_step_limits and largest_jump > 1000:
-            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
-
         d = j_prepare_loglike_input(
             free_params=self._free_params,
             fixed_params=self._fixed_params,
             use_GR=use_GR,
-            max_steps=max_steps,
+            max_steps=self._loglike_max_steps,
         )
         return j_loglike(d)
 
