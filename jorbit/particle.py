@@ -15,13 +15,8 @@ from astropy.time import Time
 from .data.constants import all_planets, large_asteroids
 from .construct_perturbers import construct_perturbers, STANDARD_SUN_PARAMS
 from .engine import (
-    negative_loglike_single,
-    negative_loglike_single_grad,
-    integrate_multiple,
-    on_sky,
-    sky_error,
-    cart_to_elements,
-    elements_to_cart,
+    j_cart_to_elements,
+    j_elements_to_cart,
 )
 
 
@@ -45,6 +40,8 @@ class Particle:
             self._time = time.tdb.jd
         elif isinstance(time, float):
             self._time = time
+        elif type(time) == type(jnp.array([1.0])) and len(time) == 1:
+            self._time = time[0]
         else:
             raise ValueError(
                 "time must be either astropy.time.Time or float (interpreted as JD in"
@@ -93,7 +90,7 @@ class Particle:
                 elements["inc"] = jnp.array([elements["inc"]], dtype=jnp.float64)
                 elements["Omega"] = jnp.array([elements["Omega"]], dtype=jnp.float64)
                 elements["omega"] = jnp.array([elements["omega"]], dtype=jnp.float64)
-            x, v = elements_to_cart(
+            x, v = j_elements_to_cart(
                 **elements, time=self._time, sun_params=self._sun_params
             )
             x = x[0]
@@ -115,7 +112,7 @@ class Particle:
 
     @property
     def elements(self):
-        z = cart_to_elements(
+        z = j_cart_to_elements(
             X=self._x[None, :],
             V=self._v[None, :],
             time=self._time,
@@ -169,102 +166,3 @@ class Particle:
             "), ", "\n"
         )
         return a + "\n" + b + "\n" + c
-
-    # def _negative_loglike(self, X):
-    #     return negative_loglike_single(
-    #         X=X,
-    #         times=self.observations.times,
-    #         planet_params=self.planet_params,
-    #         asteroid_params=self.asteroid_params,
-    #         planet_gms=self.planet_gms,
-    #         asteroid_gms=self.asteroid_gms,
-    #         observer_positions=self.observations.observer_positions,
-    #         ra=self.observations.ra,
-    #         dec=self.observations.dec,
-    #         position_uncertainties=self.observations.astrometry_uncertainties,
-    #     )
-
-    # def _negative_loglike_grad(self, X):
-    #     return negative_loglike_single_grad(
-    #         X,
-    #         times=self.observations.times,
-    #         planet_params=self.planet_params,
-    #         asteroid_params=self.asteroid_params,
-    #         planet_gms=self.planet_gms,
-    #         asteroid_gms=self.asteroid_gms,
-    #         observer_positions=self.observations.observer_positions,
-    #         ra=self.observations.ra,
-    #         dec=self.observations.dec,
-    #         position_uncertainties=self.observations.astrometry_uncertainties,
-    #     )
-
-    # def compute_best_fit(self):
-    #     assert self.observations is not None, "No observations provided to fit"
-
-    #     def inner():
-    #         x0 = jnp.array(
-    #             list(np.random.uniform(-10, 10, size=3))
-    #             + list(np.random.uniform(-1, 1, size=3))
-    #         )
-    #         res = minimize(self._negative_loglike, x0, jac=self._negative_loglike_grad)
-    #         x = res.x[:3][None, :]
-    #         v = res.x[3:][None, :]
-
-    #         xs, vs, final_times, success = integrate_multiple(
-    #             xs=x,
-    #             vs=v,
-    #             gms=jnp.array([0]),
-    #             initial_time=self.observations.times[0],
-    #             final_times=self.observations.times[1:],
-    #             planet_params=self.planet_params,
-    #             asteroid_params=self.asteroid_params,
-    #             planet_gms=self.planet_gms,
-    #             asteroid_gms=self.asteroid_gms,
-    #         )
-
-    #         xs = jnp.concatenate((x[:, None, :], xs), axis=1)
-    #         vs = jnp.concatenate((v[:, None, :], vs), axis=1)
-
-    #         calc_RAs, calc_Decs = on_sky(
-    #             xs=xs[0],
-    #             vs=vs[0],
-    #             gms=jnp.array([0]),
-    #             times=self.observations.times,
-    #             observer_positions=self.observations.observer_positions,
-    #             planet_params=self.planet_params,
-    #             asteroid_params=self.asteroid_params,
-    #             planet_gms=self.planet_gms,
-    #             asteroid_gms=self.asteroid_gms,
-    #         )
-
-    #         err = sky_error(
-    #             calc_ra=calc_RAs,
-    #             calc_dec=calc_Decs,
-    #             true_ra=self.observations.ra,
-    #             true_dec=self.observations.dec,
-    #         )
-    #         return x[0], v[0], err, res
-
-    #     good = False
-    # for i in range(5):
-    #     x, v, err, res = inner()
-    #     if jnp.max(err) < 60:
-    #         good = True
-    #         break
-    # if good:
-    #     self.best_fit_computed = True
-    #     self._time = self.observations.times[0]
-    #     self._xs = res.x[:3]
-    #     self._vs = res.x[3:]
-    #     self._time = self.observations.times[0]
-    #     return {
-    #         "Status": "Success",
-    #         "Residuals (arcsec)": err,
-    #         "Best Fit": {
-    #             "x (au)": self._xs,
-    #             "v (au / day)": self._vs,
-    #             "time": self._time,
-    #         },
-    #     }
-    # else:
-    #     raise ValueError("Failed: Best fit had residuals > 1 arcmin")

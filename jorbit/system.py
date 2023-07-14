@@ -23,7 +23,7 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_GMS,
     STANDARD_SUN_PARAMS,
 )
-from .engine import integrate_multiple, on_sky, prepare_loglike_input, loglike
+from .engine import j_integrate_multiple, j_on_sky, j_prepare_loglike_input, j_loglike
 
 
 class System:
@@ -246,7 +246,7 @@ class System:
         observation_ras = jnp.zeros((len(particles), largest_coverage))
         observation_decs = jnp.zeros((len(particles), largest_coverage))
         observer_positions = jnp.ones((len(particles), largest_coverage, 3)) * 999
-        astrometry_uncertainties = (
+        astrometric_uncertainties = (
             jnp.ones((len(particles), largest_coverage)) * jnp.inf
         )
 
@@ -266,9 +266,9 @@ class System:
             observer_positions = observer_positions.at[
                 i, : len(p.observations.observer_positions)
             ].set(p.observations.observer_positions)
-            astrometry_uncertainties = astrometry_uncertainties.at[
-                i, : len(p.observations.astrometry_uncertainties)
-            ].set(p.observations.astrometry_uncertainties)
+            astrometric_uncertainties = astrometric_uncertainties.at[
+                i, : len(p.observations.astrometric_uncertainties)
+            ].set(p.observations.astrometric_uncertainties)
 
         # break up the padded arrays into the tracers and massive particles
         # these will not vary during fits (for now- might be nice to marginalize
@@ -277,7 +277,7 @@ class System:
         self._tracer_particle_ras = observation_ras[self._TRACERS]
         self._tracer_particle_decs = observation_decs[self._TRACERS]
         self._tracer_particle_observer_positions = observer_positions[self._TRACERS]
-        self._tracer_particle_astrometry_uncertainties = astrometry_uncertainties[
+        self._tracer_particle_astrometric_uncertainties = astrometric_uncertainties[
             self._TRACERS
         ]
 
@@ -285,14 +285,14 @@ class System:
         self._massive_particle_ras = observation_ras[~self._TRACERS]
         self._massive_particle_decs = observation_decs[~self._TRACERS]
         self._massive_particle_observer_positions = observer_positions[~self._TRACERS]
-        self._massive_particle_astrometry_uncertainties = astrometry_uncertainties[
+        self._massive_particle_astrometric_uncertainties = astrometric_uncertainties[
             ~self._TRACERS
         ]
 
         ########################################################################
         # here we'll group all of the parameters that can/can't vary in a fit
-        # into different dicts. these will be combined via "prepare_loglike_input"
-        # during actual fitting, which will produce a dict appropriate for "loglike"
+        # into different dicts. these will be combined via "j_prepare_loglike_input"
+        # during actual fitting, which will produce a dict appropriate for "j_loglike"
 
         # these are the parameters that will definitely never change
         self._fixed_params = {
@@ -314,8 +314,8 @@ class System:
             "tracer_particle_observer_positions": (
                 self._tracer_particle_observer_positions
             ),
-            "tracer_particle_astrometry_uncertainties": (
-                self._tracer_particle_astrometry_uncertainties
+            "tracer_particle_astrometric_uncertainties": (
+                self._tracer_particle_astrometric_uncertainties
             ),
             "massive_particle_times": self._massive_particle_times,
             "massive_particle_ras": self._massive_particle_ras,
@@ -323,8 +323,8 @@ class System:
             "massive_particle_observer_positions": (
                 self._massive_particle_observer_positions
             ),
-            "massive_particle_astrometry_uncertainties": (
-                self._massive_particle_astrometry_uncertainties
+            "massive_particle_astrometric_uncertainties": (
+                self._massive_particle_astrometric_uncertainties
             ),
             "planet_params": self._planet_params,
             "asteroid_params": self._asteroid_params,
@@ -441,7 +441,7 @@ class System:
             == len(self._tracer_particle_ras)
             == len(self._tracer_particle_decs)
             == len(self._tracer_particle_observer_positions)
-            == len(self._tracer_particle_astrometry_uncertainties)
+            == len(self._tracer_particle_astrometric_uncertainties)
         )
 
         assert (
@@ -449,7 +449,7 @@ class System:
             == len(self._massive_particle_ras)
             == len(self._massive_particle_decs)
             == len(self._massive_particle_observer_positions)
-            == len(self._massive_particle_astrometry_uncertainties)
+            == len(self._massive_particle_astrometric_uncertainties)
         )
 
     def __repr__(self):
@@ -511,7 +511,7 @@ class System:
         if not obey_large_step_limits and largest_jump > 1000:
             max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
 
-        xs, vs, final_times, success = integrate_multiple(
+        xs, vs, final_times, success = j_integrate_multiple(
             xs=self._xs,
             vs=self._vs,
             gms=self._gms,
@@ -532,7 +532,7 @@ class System:
         if sky_positions:
             if observatory_locations == []:
                 raise ValueError(
-                    "Must provide observatory locations if on_sky=True. See"
+                    "Must provide observatory locations if sky_positions=True. See"
                     " Observations docstring for more info."
                 )
             pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
@@ -540,10 +540,10 @@ class System:
                 positions=pos,
                 times=times,
                 observatory_locations=observatory_locations,
-                astrometry_uncertainties=[10 * u.mas] * len(times),
+                astrometric_uncertainties=[10 * u.mas] * len(times),
             )
 
-            ras, decs = on_sky(
+            ras, decs = j_on_sky(
                 xs=xs.reshape(-1, xs.shape[-1]),
                 vs=vs.reshape(-1, vs.shape[-1]),
                 gms=jnp.tile(self._gms, len(times)),
@@ -641,13 +641,13 @@ class System:
         if not obey_large_step_limits and largest_jump > 1000:
             max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
 
-        d = prepare_loglike_input(
+        d = j_prepare_loglike_input(
             free_params=self._free_params,
             fixed_params=self._fixed_params,
             use_GR=use_GR,
             max_steps=max_steps,
         )
-        return loglike(d)
+        return j_loglike(d)
 
     @property
     def residuals(self):
