@@ -16,6 +16,11 @@ BARY_TO_ICRS_ROT_MAT = jnp.array(ICRS_TO_BARY_ROT_MAT.T)
 # Hard coded strings/dicts
 ################################################################################
 
+planet_ephemeris = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
+asteroid_ephemeris = (
+    "https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
+)
+
 all_planets = [
     "mercury",
     "venus",

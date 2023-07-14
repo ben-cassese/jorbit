@@ -44,3 +44,11 @@ html_show_sourcelink = True
 html_sourcelink_suffix = ""
 html_title = "jorbit"
 html_static_path = ["_static"]
+
+html_theme_options = {
+    "path_to_docs": "docs",
+    "repository_url": "https://github.com/ben-cassese/jorbit",
+    "repository_branch": "main",
+    "use_repository_button": True,
+    "use_download_button": True,
+}

@@ -729,6 +729,7 @@ def acceleration(
             return newtonian(xs=xs, planet_xs=planet_xs, planet_gms=planet_gms)
 
         return jax.lax.cond(use_GR, gr_func, newtonian_func)
+        # return newtonian(xs=xs, planet_xs=planet_xs, planet_gms=planet_gms)
 
     def false_func():
         return jnp.zeros(xs.shape)
@@ -757,9 +758,9 @@ def acceleration(
         a = jnp.sum(s, axis=1)
         return None, a
 
-    ts = jnp.moveaxis(xs, 0, 1)  # (n_times, n_particles, 3)
-
+    
     def true_func():
+        ts = jnp.moveaxis(xs, 0, 1)  # (n_times, n_particles, 3)
         tmp = lax.scan(scan_func, None, ts)[1]
         return jnp.moveaxis(tmp, 0, 1)
 
@@ -1846,7 +1847,7 @@ def negative_loglike_single(
         planet_gms=planet_gms,
         asteroid_gms=asteroid_gms,
         max_steps=max_steps,
-        use_GR=True,
+        use_GR=False,
     )
 
     xs = jnp.concatenate((x[:, None, :], xs), axis=1)
