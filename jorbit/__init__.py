@@ -14,4 +14,5 @@ from .particle import Particle
 from .observations import Observations
 from .system import System
 
-s = 'test super long string that is not used anywhere to see if github actions is actually enforcing black code style'
+s = "test super long string that is not used anywhere to see if github actions is actually enforcing black code style"
+z = "now a test of the automated pre-commit hook"
