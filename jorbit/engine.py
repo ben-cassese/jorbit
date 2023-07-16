@@ -538,7 +538,7 @@ def acceleration(
     asteroid_xs,
     planet_gms=jnp.array([0]),
     asteroid_gms=jnp.array([0]),
-    use_GR=False,
+    use_GR=True,
 ):
     """
     Calculate the acceleration of multiple particles at multiple times
@@ -906,9 +906,9 @@ def single_step(
     asteroid_params=STANDARD_ASTEROID_PARAMS,
     planet_gms=STANDARD_PLANET_GMS,
     asteroid_gms=STANDARD_ASTEROID_GMS,
-    use_GR=False,
+    use_GR=True,
 ):
-    """single_step(x0,v0,gms,dt,t,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,use_GR=False,)
+    """single_step(x0,v0,gms,dt,t,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,use_GR=True,)
 
     Propagate a system of particles by one integration timestep
 
@@ -1147,9 +1147,9 @@ def integrate(
     planet_gms=STANDARD_PLANET_GMS,
     asteroid_gms=STANDARD_ASTEROID_GMS,
     max_steps=jnp.arange(100),
-    use_GR=False,
+    use_GR=True,
 ):
-    """integrate(xs,vs,gms,initial_time,final_time,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,max_steps=jnp.arange(100),use_GR=False,)
+    """integrate(xs,vs,gms,initial_time,final_time,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,max_steps=jnp.arange(100),use_GR=True,)
     Propagate an N-body system from initial_time to final_time
 
     This is the fully assembled integrator. It repeatedly calls single_step to
@@ -1446,9 +1446,9 @@ def integrate_multiple(
     planet_gms=STANDARD_PLANET_GMS,
     asteroid_gms=STANDARD_ASTEROID_GMS,
     max_steps=jnp.arange(100),
-    use_GR=False,
+    use_GR=True,
 ):
-    """integrate_multiple(xs,vs,gms,initial_time,final_times,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,max_steps=jnp.arange(100),use_GR=False,)
+    """integrate_multiple(xs,vs,gms,initial_time,final_times,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS,max_steps=jnp.arange(100),use_GR=True,)
     Integrate an N-body system to several different times.
 
     This is a thin wrapper over integrate- it just scans over an array of final_times
@@ -1707,7 +1707,7 @@ def on_sky(
                 asteroid_params=asteroid_params,
                 planet_gms=planet_gms,
                 asteroid_gms=asteroid_gms,
-                use_GR=False,
+                use_GR=True,
             )
 
             xz = Q[0][0]
@@ -1824,7 +1824,7 @@ def negative_loglike_single(
         planet_gms=planet_gms,
         asteroid_gms=asteroid_gms,
         max_steps=max_steps,
-        use_GR=False,
+        use_GR=True,
     )
 
     xs = jnp.concatenate((x[:, None, :], xs), axis=1)
@@ -1846,7 +1846,7 @@ def negative_loglike_single(
 
     sigma2 = position_uncertainties**2
     # p = jnp.log(2 * jnp.pi * sigma2)
-    q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
+    q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
     return -q
 
 
@@ -2190,9 +2190,9 @@ def loglike_helper(
     planet_gms=STANDARD_PLANET_GMS,
     asteroid_gms=STANDARD_ASTEROID_GMS,
     max_steps=jnp.arange(100),
-    use_GR=False,
+    use_GR=True,
 ):
-    """loglike_helper(tracer_particle_xs=jnp.empty((0, 3)),tracer_particle_vs=jnp.empty((0, 3)), tracer_particle_times=jnp.empty((0, 1)), tracer_particle_ras=jnp.empty((0, 1)), tracer_particle_decs=jnp.empty((0, 1)), tracer_particle_observer_positions=jnp.empty((0, 1, 3)), tracer_particle_astrometric_uncertainties=jnp.empty((0, 1)), massive_particle_xs=jnp.empty((0, 3)), massive_particle_vs=jnp.empty((0, 3)), massive_particle_gms=jnp.empty((0)), massive_particle_times=jnp.empty((0, 1)), massive_particle_ras=jnp.empty((0, 1)), massive_particle_decs=jnp.empty((0, 1)), massive_particle_observer_positions=jnp.empty((0, 1, 3)), massive_particle_astrometric_uncertainties=jnp.empty((0, 1)), planet_params=STANDARD_PLANET_PARAMS, asteroid_params=STANDARD_ASTEROID_PARAMS, planet_gms=STANDARD_PLANET_GMS, asteroid_gms=STANDARD_ASTEROID_GMS, max_steps=jnp.arange(100), use_GR=False)
+    """loglike_helper(tracer_particle_xs=jnp.empty((0, 3)),tracer_particle_vs=jnp.empty((0, 3)), tracer_particle_times=jnp.empty((0, 1)), tracer_particle_ras=jnp.empty((0, 1)), tracer_particle_decs=jnp.empty((0, 1)), tracer_particle_observer_positions=jnp.empty((0, 1, 3)), tracer_particle_astrometric_uncertainties=jnp.empty((0, 1)), massive_particle_xs=jnp.empty((0, 3)), massive_particle_vs=jnp.empty((0, 3)), massive_particle_gms=jnp.empty((0)), massive_particle_times=jnp.empty((0, 1)), massive_particle_ras=jnp.empty((0, 1)), massive_particle_decs=jnp.empty((0, 1)), massive_particle_observer_positions=jnp.empty((0, 1, 3)), massive_particle_astrometric_uncertainties=jnp.empty((0, 1)), planet_params=STANDARD_PLANET_PARAMS, asteroid_params=STANDARD_ASTEROID_PARAMS, planet_gms=STANDARD_PLANET_GMS, asteroid_gms=STANDARD_ASTEROID_GMS, max_steps=jnp.arange(100), use_GR=True)
     Calculate the log likelihood of a System given some data.
 
     Parameters:
@@ -2393,7 +2393,7 @@ def loglike_helper(
 
         sigma2 = pos_uncertainty**2
         # p = jnp.log(2 * jnp.pi * sigma2)
-        q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
+        q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
         return q
 
     def tracer_scan_func(carry, scan_over):
@@ -2455,7 +2455,7 @@ def loglike_helper(
 
         sigma2 = massive_particle_astrometric_uncertainties[ind] ** 2
         # p = jnp.log(2 * jnp.pi * sigma2)
-        q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
+        q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
         return q
 
     def massive_scan_func(carry, scan_over):
@@ -2725,8 +2725,8 @@ j_integrate = jax.jit(integrate)
 j_integrate_multiple = jax.jit(integrate_multiple)
 j_on_sky = jax.jit(on_sky)
 j_sky_error = jax.jit(sky_error)
-j_negative_loglike_single = jax.jit(negative_loglike_single)
-j_negative_loglike_single_grad = jax.jit(negative_loglike_single_grad)
+# j_negative_loglike_single = jax.jit(negative_loglike_single)
+# j_negative_loglike_single_grad = jax.jit(negative_loglike_single_grad)
 j_weave_free_and_fixed = jax.jit(weave_free_and_fixed)
 j_prepare_loglike_input_helper = jax.jit(prepare_loglike_input_helper)
 j_prepare_loglike_input = jax.jit(prepare_loglike_input)
