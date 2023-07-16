@@ -7,6 +7,7 @@ from jax import jit
 import numpy as np
 from scipy.optimize import minimize
 import warnings
+from functools import partial
 
 warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
@@ -23,7 +24,7 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_GMS,
     STANDARD_SUN_PARAMS,
 )
-from .engine import j_integrate_multiple, j_on_sky, j_prepare_loglike_input, j_loglike
+from .engine import j_integrate_multiple, j_on_sky, j_sky_error, prepare_loglike_input, loglike
 
 
 class System:
@@ -291,8 +292,8 @@ class System:
 
         ########################################################################
         # here we'll group all of the parameters that can/can't vary in a fit
-        # into different dicts. these will be combined via "j_prepare_loglike_input"
-        # during actual fitting, which will produce a dict appropriate for "j_loglike"
+        # into different dicts. these will be combined via "prepare_loglike_input"
+        # during actual fitting, which will produce a dict appropriate for "loglike"
 
         # these are the parameters that will definitely never change
         self._fixed_params = {
@@ -503,6 +504,126 @@ class System:
 
         return max_steps
 
+    
+    def _neg_loglike(self, free_params):
+        d = prepare_loglike_input(
+            free_params=free_params,
+            fixed_params=self._fixed_params,
+            use_GR=True,
+            max_steps=self._loglike_max_steps,
+        )
+        return -loglike(d)
+    
+    @partial(jit, static_argnums=(0,))
+    def _loglike_objective(self, free_params):
+        return self._neg_loglike(free_params)
+    
+    @partial(jit, static_argnums=(0,))
+    def _loglike_objective_jac(self, free_params):
+        return jax.jacfwd(self._neg_loglike)(free_params)
+
+    def maximimze_loglike(self):
+        keys = []
+        shapes = []
+        for key in self._free_params:
+            keys.append(key)
+            shapes.append(self._free_params[key].shape)
+
+        def dict_to_array(params):
+            vals = []
+            for key in keys:
+                vals += (list(params[key].flatten()))
+            return jnp.array(vals)
+
+        # TODO: this is for the 1 tracer particle case only rn
+        def array_to_dict(arr):
+            ind = 0
+            chunked = []
+            for chunk in shapes:
+                chunked.append(arr[ind : np.prod(chunk) + ind].reshape(chunk))
+                ind += np.prod(chunk)
+            return dict(zip(keys, chunked))
+
+        def scipy_obj(arr):
+            return np.array(self._loglike_objective(array_to_dict(arr)))
+
+        def scipy_jac(arr):
+            g = self._loglike_objective_jac(array_to_dict(arr))
+            return np.array(dict_to_array(g))
+        
+        def inner():
+            x0 = jnp.array(
+                list(np.random.uniform(-10, 10, size=3))
+                + list(np.random.uniform(-1, 1, size=3))
+            )
+            res = minimize(scipy_obj, x0, jac=scipy_jac, method="BFGS")
+            return res
+
+        # temporary- need to generalize the resids function in scratch,
+        # here is the version for the 1 particle case
+        return inner()
+
+        #     x = res.x[:3][None, :]
+        #     v = res.x[3:][None, :]
+
+        #     xs, vs, final_times, success = j_integrate_multiple(
+        #         xs=x,
+        #         vs=v,
+        #         gms=jnp.array([0]),
+        #         initial_time=self.observations.times[0],
+        #         final_times=self.observations.times[1:],
+        #         planet_params=self.planet_params,
+        #         asteroid_params=self.asteroid_params,
+        #         planet_gms=self.planet_gms,
+        #         asteroid_gms=self.asteroid_gms,
+        #     )
+
+        #     xs = jnp.concatenate((x[:, None, :], xs), axis=1)
+        #     vs = jnp.concatenate((v[:, None, :], vs), axis=1)
+
+        #     calc_RAs, calc_Decs = j_on_sky(
+        #         xs=xs[0],
+        #         vs=vs[0],
+        #         gms=jnp.array([0]),
+        #         times=self.observations.times,
+        #         observer_positions=self.observations.observer_positions,
+        #         planet_params=self.planet_params,
+        #         asteroid_params=self.asteroid_params,
+        #         planet_gms=self.planet_gms,
+        #         asteroid_gms=self.asteroid_gms,
+        #     )
+
+        #     err = j_sky_error(
+        #         calc_ra=calc_RAs,
+        #         calc_dec=calc_Decs,
+        #         true_ra=self.observations.ra,
+        #         true_dec=self.observations.dec,
+        #     )
+        #     return x[0], v[0], err, res
+
+        # good = False
+        # for i in range(5):
+        #     x, v, err, res = inner()
+        #     if jnp.max(err) < 60:
+        #         good = True
+        #         break
+        # if good:
+        #     self.time = self.observations.times[0]
+        #     self._xs = res.x[:3][None, :]
+        #     self._vs = res.x[3:][None, :]
+        #     return {
+        #         "Status": "Success",
+        #         "Residuals (arcsec)": err,
+        #         "Best Fit": {
+        #             "x (au)": self.xs,
+        #             "v (au / day)": self.vs,
+        #             "time": self.time,
+        #         },
+        #     }
+        # else:
+        #     raise ValueError("Failed: Best fit had residuals > 1 arcmin")
+        
+
     def propagate(
         self,
         times,
@@ -628,20 +749,6 @@ class System:
     @property
     def time(self):
         return self._time
-
-    @property
-    def loglike(self, use_GR=True, obey_large_step_limits=True):
-        d = j_prepare_loglike_input(
-            free_params=self._free_params,
-            fixed_params=self._fixed_params,
-            use_GR=use_GR,
-            max_steps=self._loglike_max_steps,
-        )
-        return j_loglike(d)
-
-    @property
-    def residuals(self):
-        pass
 
     @property
     def particles(self):

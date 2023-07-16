@@ -1,4 +1,4 @@
-name: jorbit tests
+name: Tests
 
 on: [push]
 
