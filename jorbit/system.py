@@ -27,7 +27,7 @@ from .construct_perturbers import (
 from .engine import (
     j_integrate_multiple,
     j_on_sky,
-    j_sky_error,
+    j_prepare_loglike_input,
     prepare_loglike_input,
     loglike,
 )
@@ -477,11 +477,8 @@ class System:
         return len(self._xs)
 
     ################################################################################
-    # Methods
+    # Heler methods
     ################################################################################
-    def add_particle(self):
-        pass
-
     def _set_max_steps(self, times, obey_large_step_limits=True):
         largest = 0
 
@@ -510,6 +507,39 @@ class System:
 
         return max_steps
 
+    def _collapse_dicts(self, free_params):
+        d = j_prepare_loglike_input(
+            free_params=free_params,
+            fixed_params=self._fixed_params,
+            use_GR=True,
+            max_steps=jnp.arange(100),
+        )
+
+        xs = []
+        vs = []
+        gms = []
+        for is_tracer in self._TRACERS:
+            if is_tracer:
+                xs.append(d["tracer_particle_xs"][0])
+                d["tracer_particle_xs"] = d["tracer_particle_xs"][1:]
+                vs.append(d["tracer_particle_vs"][0])
+                d["tracer_particle_vs"] = d["tracer_particle_vs"][1:]
+                gms.append(0.0)
+            else:
+                xs.append(d["massive_particle_xs"][0])
+                d["massive_particle_xs"] = d["massive_particle_xs"][1:]
+                vs.append(d["massive_particle_vs"][0])
+                d["massive_particle_vs"] = d["massive_particle_vs"][1:]
+                gms.append(d["massive_particle_gms"][0])
+                d["massive_particle_gms"] = d["massive_particle_gms"][1:]
+        planet_gms = d["planet_gms"]
+        asteroid_gms = d["asteroid_gms"]
+
+        return xs, vs, gms, planet_gms, asteroid_gms
+
+    ####################################################################################
+    # Loglike methods
+    ####################################################################################
     def _neg_loglike(self, free_params):
         d = prepare_loglike_input(
             free_params=free_params,
@@ -528,6 +558,9 @@ class System:
         return jax.jacfwd(self._neg_loglike)(free_params)
 
     def maximimze_loglike(self):
+        original_params = self._collapse_dicts(self._free_params)
+        original_free = self._free_params
+
         keys = []
         shapes = []
         for key in self._free_params:
@@ -540,7 +573,6 @@ class System:
                 vals += list(params[key].flatten())
             return jnp.array(vals)
 
-        # TODO: this is for the 1 tracer particle case only rn
         def array_to_dict(arr):
             ind = 0
             chunked = []
@@ -557,54 +589,32 @@ class System:
             return np.array(dict_to_array(g))
 
         def inner():
-            x0 = jnp.array(
-                list(np.random.uniform(-10, 10, size=3))
-                + list(np.random.uniform(-1, 1, size=3))
-            )
+            vals = []
+            for i, k in enumerate(keys):
+                if "xs" in k:
+                    vals.append(np.random.uniform(-10, 10, size=shapes[i]))
+                elif "vs" in k:
+                    vals.append(np.random.uniform(-1, 1, size=shapes[i]))
+                elif "gm" in k:
+                    vals.append(10 ** np.random.uniform(-16, -12, size=shapes[i]))
+                else:
+                    raise ValueError("unknown key")
+
+            guess = dict(zip(keys, vals))
+            x0 = dict_to_array(guess)
             res = minimize(scipy_obj, x0, jac=scipy_jac, method="BFGS")
+
+            d = array_to_dict(res.x)
+
+            # self._xs, self._vs, self._gms, self._planet_xs, self._asteroid_xs = self._collapse_dicts(d)
+            # xs, vs, s = self.propagate(
+
+            # want to examine the residuals. if they're fine, accept these as the new
+            # states, if not, go back to original params
+
             return res
 
-        # temporary- need to generalize the resids function in scratch,
-        # here is the version for the 1 particle case
         return inner()
-
-        #     x = res.x[:3][None, :]
-        #     v = res.x[3:][None, :]
-
-        #     xs, vs, final_times, success = j_integrate_multiple(
-        #         xs=x,
-        #         vs=v,
-        #         gms=jnp.array([0]),
-        #         initial_time=self.observations.times[0],
-        #         final_times=self.observations.times[1:],
-        #         planet_params=self.planet_params,
-        #         asteroid_params=self.asteroid_params,
-        #         planet_gms=self.planet_gms,
-        #         asteroid_gms=self.asteroid_gms,
-        #     )
-
-        #     xs = jnp.concatenate((x[:, None, :], xs), axis=1)
-        #     vs = jnp.concatenate((v[:, None, :], vs), axis=1)
-
-        #     calc_RAs, calc_Decs = j_on_sky(
-        #         xs=xs[0],
-        #         vs=vs[0],
-        #         gms=jnp.array([0]),
-        #         times=self.observations.times,
-        #         observer_positions=self.observations.observer_positions,
-        #         planet_params=self.planet_params,
-        #         asteroid_params=self.asteroid_params,
-        #         planet_gms=self.planet_gms,
-        #         asteroid_gms=self.asteroid_gms,
-        #     )
-
-        #     err = j_sky_error(
-        #         calc_ra=calc_RAs,
-        #         calc_dec=calc_Decs,
-        #         true_ra=self.observations.ra,
-        #         true_dec=self.observations.dec,
-        #     )
-        #     return x[0], v[0], err, res
 
         # good = False
         # for i in range(5):
@@ -754,6 +764,11 @@ class System:
     def time(self):
         return self._time
 
+    ########################################################################################
+    # not done
+    def add_particle(self):
+        pass
+
     @property
     def particles(self):
         # collapse the current state back into a list of particles
@@ -761,4 +776,7 @@ class System:
 
     @property
     def elements(self):
+        pass
+
+    def residuals(self):
         pass
