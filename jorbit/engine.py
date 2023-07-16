@@ -1846,7 +1846,7 @@ def negative_loglike_single(
 
     sigma2 = position_uncertainties**2
     # p = jnp.log(2 * jnp.pi * sigma2)
-    q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
+    q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
     return -q
 
 
@@ -2393,7 +2393,7 @@ def loglike_helper(
 
         sigma2 = pos_uncertainty**2
         # p = jnp.log(2 * jnp.pi * sigma2)
-        q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
+        q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
         return q
 
     def tracer_scan_func(carry, scan_over):
@@ -2455,7 +2455,7 @@ def loglike_helper(
 
         sigma2 = massive_particle_astrometric_uncertainties[ind] ** 2
         # p = jnp.log(2 * jnp.pi * sigma2)
-        q = -0.5 * jnp.sum(((err**2 / sigma2)))# + p))
+        q = -0.5 * jnp.sum(((err**2 / sigma2)))  # + p))
         return q
 
     def massive_scan_func(carry, scan_over):

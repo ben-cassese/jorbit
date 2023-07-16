@@ -24,7 +24,13 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_GMS,
     STANDARD_SUN_PARAMS,
 )
-from .engine import j_integrate_multiple, j_on_sky, j_sky_error, prepare_loglike_input, loglike
+from .engine import (
+    j_integrate_multiple,
+    j_on_sky,
+    j_sky_error,
+    prepare_loglike_input,
+    loglike,
+)
 
 
 class System:
@@ -504,7 +510,6 @@ class System:
 
         return max_steps
 
-    
     def _neg_loglike(self, free_params):
         d = prepare_loglike_input(
             free_params=free_params,
@@ -513,11 +518,11 @@ class System:
             max_steps=self._loglike_max_steps,
         )
         return -loglike(d)
-    
+
     @partial(jit, static_argnums=(0,))
     def _loglike_objective(self, free_params):
         return self._neg_loglike(free_params)
-    
+
     @partial(jit, static_argnums=(0,))
     def _loglike_objective_jac(self, free_params):
         return jax.jacfwd(self._neg_loglike)(free_params)
@@ -532,7 +537,7 @@ class System:
         def dict_to_array(params):
             vals = []
             for key in keys:
-                vals += (list(params[key].flatten()))
+                vals += list(params[key].flatten())
             return jnp.array(vals)
 
         # TODO: this is for the 1 tracer particle case only rn
@@ -550,7 +555,7 @@ class System:
         def scipy_jac(arr):
             g = self._loglike_objective_jac(array_to_dict(arr))
             return np.array(dict_to_array(g))
-        
+
         def inner():
             x0 = jnp.array(
                 list(np.random.uniform(-10, 10, size=3))
@@ -622,7 +627,6 @@ class System:
         #     }
         # else:
         #     raise ValueError("Failed: Best fit had residuals > 1 arcmin")
-        
 
     def propagate(
         self,
