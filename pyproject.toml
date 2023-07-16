@@ -21,12 +21,14 @@ keywords = ["orbits", "astronomy", "astrometry"]
 requires-python = ">=3.9"
 dynamic = ["dependencies"]
 
+[project.urls]
+Homepage = "https://github.com/ben-cassese/jorbit"
+
 [tool.setuptools]
 py-modules = ["jorbit"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
-
-[project.urls]
-Homepage = "https://github.com/ben-cassese/jorbit"
+[tool.black]
+preview = true

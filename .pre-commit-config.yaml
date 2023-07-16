@@ -2,7 +2,7 @@ repos:
   - repo: https://github.com/psf/black
     rev: 23.7.0
     hooks:
-      - id: black-jupyter
+      - id: black
         # It is recommended to specify the latest version of Python
         # supported by your project here, or alternatively use
         # pre-commit's default_language_version, see
