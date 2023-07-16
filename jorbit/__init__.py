@@ -18,3 +18,9 @@ s = (
     "super long string meant to check if the pre-commit hook is working properly, this"
     " should be wrapped by black hopefully"
 )
+
+s = (
+    "hm that only sort of worked, I'm not sure why the above wrapped by then"
+    " observations failed. here's another attempt at making pre-commit fix formatting"
+    " itself"
+)

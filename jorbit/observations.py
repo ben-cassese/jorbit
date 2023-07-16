@@ -169,9 +169,8 @@ class Observations:
             else:
                 raise ValueError(
                     "Observer location '{}' is not a recognized observatory. Please"
-                    " refer to https://minorplanetcenter.net/iau/lists/ObsCodesF.html".format(
-                        loc
-                    )
+                    " refer to https://minorplanetcenter.net/iau/lists/ObsCodesF.html"
+                    .format(loc)
                 )
 
         self.observatory_locations = observatory_locations

@@ -32,3 +32,4 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.black]
 preview = true
+extend-exclude = '.*.ipynb'
