@@ -42,7 +42,7 @@ with open(codes, "rb") as f:
 class Observations:
     def __init__(
         self,
-        positions=None,
+        observed_coordinates=None,
         times=None,
         observatory_locations=None,
         astrometric_uncertainties=None,
@@ -53,23 +53,24 @@ class Observations:
 
         if mpc_file is None:
             assert (
-                (positions is not None)
+                (observed_coordinates is not None)
                 and (times is not None)
                 and (observatory_locations is not None)
                 and (astrometric_uncertainties is not None)
             ), (
-                "If no MPC file is provided, positions, times, observatory_locations,"
-                " and astrometric_uncertainties must be given manually."
+                "If no MPC file is provided, observed_coordinates, times,"
+                " observatory_locations, and astrometric_uncertainties must be given"
+                " manually."
             )
         else:
             assert (
-                (positions is None)
+                (observed_coordinates is None)
                 and (times is None)
                 and (observatory_locations is None)
                 and (astrometric_uncertainties is None)
             ), (
-                "If an MPC file is provided, positions, times, observatory_locations,"
-                " and astrometric_uncertainties must be None."
+                "If an MPC file is provided, observed_coordinates, times,"
+                " observatory_locations, and astrometric_uncertainties must be None."
             )
             cols = [
                 (0, 5),
@@ -112,7 +113,7 @@ class Observations:
                     return 1 * u.arcsec
                 return 10 ** (-len(dec_coord.split(".")[1])) * u.arcsec
 
-            positions = SkyCoord(
+            observed_coordinates = SkyCoord(
                 data["Observed RA (J2000.0)"],
                 data["Observed Decl. (J2000.0)"],
                 unit=(u.hourangle, u.deg),
@@ -124,14 +125,16 @@ class Observations:
             )
 
         # POSITIONS
-        if isinstance(positions, type(SkyCoord(0 * u.deg, 0 * u.deg))):
-            s = positions.transform_to(ICRS)  # in case they're barycentric, etc
+        if isinstance(observed_coordinates, type(SkyCoord(0 * u.deg, 0 * u.deg))):
+            s = observed_coordinates.transform_to(
+                ICRS
+            )  # in case they're barycentric, etc
             self.ra = s.ra.rad
             self.dec = s.dec.rad
-        elif isinstance(positions, list):
+        elif isinstance(observed_coordinates, list):
             ras = []
             decs = []
-            for s in positions:
+            for s in observed_coordinates:
                 s = s.transform_to(ICRS)
                 ras.append(s.ra.rad)
                 decs.append(s.dec.rad)
@@ -235,12 +238,25 @@ class Observations:
             else:
                 iter = enumerate(times)
             for i, t in iter:
-                tmp = Observations.horizons_vector_query(
+                # might as well switch back to astroquery since the batch is too slow
+                # here, and at least astroquery caches the results
+
+                emb_from_observer = Observations.horizons_vector_query(
                     "3", observatory_codes[i], t
-                ).iloc[0]
-                emb_from_observer = emb_from_observer.at[i, :].set(
-                    jnp.array([tmp.x, tmp.y, tmp.z])
                 )
+                emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
+
+                # horizons_query = Horizons(
+                #     id="3", location=observatory_codes[i], epochs=[t.tdb.jd]
+                # )
+                # tmp = horizons_query.vectors(refplane="earth")
+                # emb_from_observer = emb_from_observer.at[i, :].set(
+                #     [
+                #         tmp["x"].value.data[0],
+                #         tmp["y"].value.data[0],
+                #         tmp["z"].value.data[0],
+                #     ]
+                # )
 
         postions = emb_from_ssb - emb_from_observer
         return postions

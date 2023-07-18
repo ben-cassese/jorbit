@@ -83,7 +83,7 @@ class Particle:
                     }
                 )
             ), "elements must be a dictionary of standard orbital elements"
-            if isinstance(elements["a"], float):
+            if isinstance(elements["a"], float) or isinstance(elements["a"], int):
                 elements["a"] = jnp.array([elements["a"]], dtype=jnp.float64)
                 elements["ecc"] = jnp.array([elements["ecc"]], dtype=jnp.float64)
                 elements["nu"] = jnp.array([elements["nu"]], dtype=jnp.float64)
