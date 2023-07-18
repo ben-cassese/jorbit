@@ -7,14 +7,14 @@ from jax import jit
 import numpy as np
 from scipy.optimize import minimize
 import warnings
-from functools import partial
+import time
 
 warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
-from jorbit import Observations
+from jorbit import Observations, Particle
 from .data.constants import all_planets, large_asteroids
 from .construct_perturbers import (
     construct_perturbers,
@@ -22,14 +22,14 @@ from .construct_perturbers import (
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
-    STANDARD_SUN_PARAMS,
 )
 from .engine import (
     j_integrate_multiple,
     j_on_sky,
     j_prepare_loglike_input,
-    prepare_loglike_input,
-    loglike,
+    j_system_negative_loglike,
+    j_system_negative_loglike_grad,
+    j_residuals,
 )
 
 
@@ -41,22 +41,65 @@ class System:
         asteroids=large_asteroids,
         fit_planet_gms=False,
         fit_asteroid_gms=False,
-        max_steps=jnp.arange(100),
+    ):
+        self._planets = planets
+        self._asteroids = asteroids
+        self._fit_planet_gms = fit_planet_gms
+        self._fit_asteroid_gms = fit_asteroid_gms
+        self._initialize_particles(
+            particles=particles,
+            planets=planets,
+            asteroids=asteroids,
+            fit_planet_gms=fit_planet_gms,
+            fit_asteroid_gms=fit_asteroid_gms,
+        )
+
+    def __repr__(self):
+        return f"System with {len(self._xs)} particles"
+
+    def __len__(self):
+        return len(self._xs)
+
+    ################################################################################
+    # Misc general heler methods
+    ################################################################################
+    def _initialize_particles(
+        self, particles, planets, asteroids, fit_planet_gms, fit_asteroid_gms
     ):
         # initial stuff we can save/check right away
         self._time = particles[0].time
         earlys = []
         lates = []
-        for p in particles:
+
+        self._particle_names = []
+        self._particle_observations = []
+        self._particle_free_orbit = []
+        self._particle_free_gm = []
+        for i, p in enumerate(particles):
             earlys.append(p.earliest_time.tdb.jd)
             lates.append(p.latest_time.tdb.jd)
             assert (
                 p.time == self._time
             ), "All particles must be initalized to the same time"
 
+            if p.name == "":
+                self._particle_names.append(f"Particle {i}")
+            else:
+                self._particle_names.append(p.name)
+
+            num_unique_names = len(set(self._particle_names))
+            assert num_unique_names == i + 1, (
+                "2 or more identical names detected. If using custom names, make sure"
+                " they are each unique and not 'Particle (int < # of particles in the"
+                " system)'"
+            )
+
+            self._particle_observations.append(p.observations)
+            self._particle_free_orbit.append(p.free_orbit)
+            self._particle_free_gm.append(p.free_gm)
+
         self._earliest_time = jnp.min(jnp.array(earlys))
         self._latest_time = jnp.max(jnp.array(lates))
-        self._max_steps = max_steps
 
         ########################################################################
         # now we're going to loop through all of the particles and collect/sort
@@ -248,8 +291,7 @@ class System:
                 largest_coverage = len(p.observations.times)
 
         # create empty padded arrays
-        # Close to Jan 2020- something hopefully close to other observations so the integration isn't too long
-        observation_times = jnp.ones((len(particles), largest_coverage)) * 2458849
+        observation_times = jnp.ones((len(particles), largest_coverage))
         observation_ras = jnp.zeros((len(particles), largest_coverage))
         observation_decs = jnp.zeros((len(particles), largest_coverage))
         observer_positions = jnp.ones((len(particles), largest_coverage, 3)) * 999
@@ -264,6 +306,13 @@ class System:
             observation_times = observation_times.at[
                 i, : len(p.observations.times)
             ].set(p.observations.times)
+
+            # set all of the padded values to the last actual time so you don't have to
+            # integrate
+            observation_times = observation_times.at[
+                i, len(p.observations.times) :
+            ].set(jnp.max(p.observations.times))
+
             observation_ras = observation_ras.at[i, : len(p.observations.ra)].set(
                 p.observations.ra
             )
@@ -470,15 +519,6 @@ class System:
             == len(self._massive_particle_astrometric_uncertainties)
         )
 
-    def __repr__(self):
-        return f"System with {len(self._xs)} particles"
-
-    def __len__(self):
-        return len(self._xs)
-
-    ################################################################################
-    # Heler methods
-    ################################################################################
     def _set_max_steps(self, times, obey_large_step_limits=True):
         largest = 0
 
@@ -509,9 +549,9 @@ class System:
 
     def _collapse_dicts(self, free_params):
         d = j_prepare_loglike_input(
-            free_params=free_params,
-            fixed_params=self._fixed_params,
-            use_GR=True,
+            **free_params,
+            **self._fixed_params,
+            use_GR=True,  # doesn't matter, not reported
             max_steps=jnp.arange(100),
         )
 
@@ -537,29 +577,30 @@ class System:
 
         return xs, vs, gms, planet_gms, asteroid_gms
 
-    ####################################################################################
-    # Loglike methods
-    ####################################################################################
-    def _neg_loglike(self, free_params):
-        d = prepare_loglike_input(
+    def _loglike_objective(self, free_params):
+        return j_system_negative_loglike(
             free_params=free_params,
             fixed_params=self._fixed_params,
             use_GR=True,
             max_steps=self._loglike_max_steps,
         )
-        return -loglike(d)
 
-    @partial(jit, static_argnums=(0,))
-    def _loglike_objective(self, free_params):
-        return self._neg_loglike(free_params)
+    def _loglike_objective_grad(self, free_params):
+        return j_system_negative_loglike_grad(
+            free_params,
+            fixed_params=self._fixed_params,
+            use_GR=True,
+            max_steps=self._loglike_max_steps,
+        )
 
-    @partial(jit, static_argnums=(0,))
-    def _loglike_objective_jac(self, free_params):
-        return jax.jacfwd(self._neg_loglike)(free_params)
+    ####################################################################################
+    # User methods
+    ####################################################################################
 
-    def maximimze_loglike(self):
-        original_params = self._collapse_dicts(self._free_params)
-        original_free = self._free_params
+    def maximimze_likelihood(
+        self, threshold=3 * u.arcsec, max_attempts=5, verbose=True, method="BFGS"
+    ):
+        threshold = threshold.to(u.arcsec).value
 
         keys = []
         shapes = []
@@ -582,11 +623,24 @@ class System:
             return dict(zip(keys, chunked))
 
         def scipy_obj(arr):
-            return np.array(self._loglike_objective(array_to_dict(arr)))
+            return jnp.array(self._loglike_objective(array_to_dict(arr)))
 
         def scipy_jac(arr):
-            g = self._loglike_objective_jac(array_to_dict(arr))
-            return np.array(dict_to_array(g))
+            g = self._loglike_objective_grad(array_to_dict(arr))
+            return jnp.array(dict_to_array(g))
+
+        if verbose:
+            print("Compling likelihood and its gradient, if not cached...")
+        test = scipy_obj(dict_to_array(self._free_params))
+        test = scipy_jac(dict_to_array(self._free_params))
+
+        if verbose:
+            t = time.time()
+            test = scipy_obj(dict_to_array(self._free_params)).block_until_ready()
+            print(f"Time to evaluate loglike: {(time.time() - t)*1000:.2f} ms")
+            t = time.time()
+            test = scipy_jac(dict_to_array(self._free_params)).block_until_ready()
+            print(f"Time to evaluate loglike gradient: {(time.time() - t)*1000:.2f} ms")
 
         def inner():
             vals = []
@@ -594,7 +648,7 @@ class System:
                 if "xs" in k:
                     vals.append(np.random.uniform(-10, 10, size=shapes[i]))
                 elif "vs" in k:
-                    vals.append(np.random.uniform(-1, 1, size=shapes[i]))
+                    vals.append(np.random.uniform(-0.1, 0.1, size=shapes[i]))
                 elif "gm" in k:
                     vals.append(10 ** np.random.uniform(-16, -12, size=shapes[i]))
                 else:
@@ -602,41 +656,84 @@ class System:
 
             guess = dict(zip(keys, vals))
             x0 = dict_to_array(guess)
-            res = minimize(scipy_obj, x0, jac=scipy_jac, method="BFGS")
+            res = minimize(scipy_obj, x0, jac=scipy_jac, method=method)
 
-            d = array_to_dict(res.x)
+            new_free_params = array_to_dict(res.x)
+            loglike_inputs = j_prepare_loglike_input(
+                **new_free_params,
+                **self._fixed_params,
+                use_GR=True,
+                max_steps=self._loglike_max_steps,
+            )
 
-            # self._xs, self._vs, self._gms, self._planet_xs, self._asteroid_xs = self._collapse_dicts(d)
-            # xs, vs, s = self.propagate(
+            tracer_resids, massive_resids = j_residuals(**loglike_inputs)
 
-            # want to examine the residuals. if they're fine, accept these as the new
-            # states, if not, go back to original params
+            return new_free_params, tracer_resids, massive_resids
 
-            return res
+        good = False
+        for i in range(max_attempts):
+            new_free_params, tracer_resids, massive_resids = inner()
 
-        return inner()
+            if tracer_resids.shape != ():
+                tracer_resids = jnp.where(
+                    self._tracer_particle_astrometric_uncertainties != jnp.inf,
+                    tracer_resids,
+                    0,
+                )
+            else:
+                tracer_resids = jnp.zeros(1)
+            if massive_resids.shape != ():
+                massive_resids = jnp.where(
+                    self._massive_particle_astrometric_uncertainties != jnp.inf,
+                    massive_resids,
+                    0,
+                )
+            else:
+                massive_resids = jnp.zeros(1)
 
-        # good = False
-        # for i in range(5):
-        #     x, v, err, res = inner()
-        #     if jnp.max(err) < 60:
-        #         good = True
-        #         break
-        # if good:
-        #     self.time = self.observations.times[0]
-        #     self._xs = res.x[:3][None, :]
-        #     self._vs = res.x[3:][None, :]
-        #     return {
-        #         "Status": "Success",
-        #         "Residuals (arcsec)": err,
-        #         "Best Fit": {
-        #             "x (au)": self.xs,
-        #             "v (au / day)": self.vs,
-        #             "time": self.time,
-        #         },
-        #     }
-        # else:
-        #     raise ValueError("Failed: Best fit had residuals > 1 arcmin")
+            if (jnp.max(tracer_resids) < threshold) & (
+                jnp.max(massive_resids) < threshold
+            ):
+                good = True
+                break
+            else:
+                if verbose:
+                    print(
+                        f"Failed {i+1} times(s), will make up to"
+                        f" {max_attempts} attempts"
+                    )
+
+        results = {}
+        for i in range(len(self._xs)):
+            name = self._particle_names[i]
+            if self._particle_observations is None:
+                continue
+            observation_times = self._particle_observations[i].times
+            resids = tracer_resids[i][: len(observation_times)]
+            results = dict(
+                results,
+                **{
+                    f"{name}": {
+                        "Residuals (arcsec)": resids,
+                        "Observation Times (JD)": observation_times,
+                    }
+                },
+            )
+
+        if good:
+            self._xs, self._vs, self._gms, self._planet_gms, self._asteroid_gms = (
+                self._collapse_dicts(new_free_params)
+            )
+
+            return {
+                "Status": "Success",
+                "Observation Residuals": results,
+            }
+        else:
+            return {
+                "Status": "Failure",
+                "Observation Residuals": results,
+            }
 
     def propagate(
         self,
@@ -720,6 +817,14 @@ class System:
             return xs[0], vs[0]
         return xs, vs
 
+    def add_particle(self, particle):
+        old_particles = self.particles
+        new_particles = old_particles + [particle]
+        try:
+            self._initialize_particles(new_particles)
+        except AssertionError:
+            self._initialize_particles(old_particles)
+
     ################################################################################
     # Properties
     ################################################################################
@@ -764,19 +869,23 @@ class System:
     def time(self):
         return self._time
 
-    ########################################################################################
-    # not done
-    def add_particle(self):
-        pass
-
     @property
     def particles(self):
-        # collapse the current state back into a list of particles
-        pass
-
-    @property
-    def elements(self):
-        pass
-
-    def residuals(self):
-        pass
+        particles = []
+        for i, n in enumerate(self._particle_names):
+            particles.append(
+                Particle(
+                    x=self._xs[i],
+                    v=self._vs[i],
+                    elements=None,
+                    gm=self._gms[i],
+                    time=float(self._time),
+                    observations=self._particle_observations[i],
+                    earliest_time=self._earliest_time,
+                    latest_time=self._latest_time,
+                    name=n,
+                    free_orbit=self._particle_free_orbit[i],
+                    free_gm=self._particle_free_gm[i],
+                )
+            )
+        return particles
