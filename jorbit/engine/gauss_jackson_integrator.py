@@ -8,9 +8,12 @@ from jorbit.engine.ephemeris import planet_state
 from jorbit.engine.accelerations import acceleration
 from jorbit.data.constants import EPSILON
 
+
 ########################################################################################
 # Helper functions
 ########################################################################################
+def acceleration(xs, **args):
+    return -(1 / jnp.linalg.norm(xs, axis=-1) ** 3)[:, :, None] * xs
 
 
 def _ode_acceleration(state, dt, args):
@@ -79,6 +82,7 @@ def _startup_scan_func(carry, scan_over, constants):
     # #jax.debug.print(f"v0: {v0.shape}")
     # ##jax.debug.print(f"dt: {dt.shape}")
     c1_prime = v0 / dt - (inferred_as * b_0k).sum(axis=1)
+    # jax.debug.print("c1_prime: {c}", c=c1_prime[0,1])
     # #jax.debug.print(f"c1_prime: {c1_prime.shape}")
     # #jax.debug.print(f"a0: {a0.shape}")
     c1 = c1_prime + a0 / 2
@@ -87,6 +91,7 @@ def _startup_scan_func(carry, scan_over, constants):
     # Calculate S0
     c2 = x0 / dt**2 - (inferred_as * a_0k).sum(axis=1) + c1
     big_S_mid = c2 - c1
+    # jax.debug.print("big_S_mid: {c}", c=big_S_mid[0,0])
 
     # Calculate sn
     pair_sums = (
@@ -118,6 +123,7 @@ def _startup_scan_func(carry, scan_over, constants):
         ),
         axis=1,
     )
+    # jax.debug.print("little_s: {c}", c=little_s[0,0,0])
     # #jax.debug.print(f"little_s: {little_s.shape}")
 
     # Calculate Sn
@@ -156,10 +162,14 @@ def _startup_scan_func(carry, scan_over, constants):
         ),
         axis=1,
     )
+    # jax.debug.print("big_S: {c}", c=big_S[0,0,0])
     # #jax.debug.print(f"big_S: {big_S.shape}")
 
-    b_terms = (b_front * inferred_as[:, None, :, :]).sum(axis=1)
-    a_terms = (a_front * inferred_as[:, None, :, :]).sum(axis=1)
+    b_terms = (b_front * inferred_as[:, None, :, :]).sum(axis=2)
+    a_terms = (a_front * inferred_as[:, None, :, :]).sum(axis=2)
+
+    # jax.debug.print("b_terms: {b}", b=b_terms[0,0,0])
+    # jax.debug.print("more b: {b}", b=b_terms[0])
 
     inferred_vs = dt * (little_s + b_terms)
     inferred_xs = dt**2 * (big_S + a_terms)
@@ -180,9 +190,10 @@ def _startup_scan_func(carry, scan_over, constants):
         use_GR=use_GR,
     )
 
-    # #jax.debug.print("max diff: {m}", m=jnp.max(jnp.abs(new_acceleration - inferred_as)))
+    # jax.debug.print("max diff: {m}", m=jnp.max(jnp.abs(new_acceleration - inferred_as)))
 
     inferred_as = new_acceleration
+    # jax.debug.print("\n")
     return (inferred_as, little_s, big_S), None
 
 
@@ -252,11 +263,16 @@ def _stepping_scan_func(carry, scan_over, constants):
 
     #     # print(f"iteration {i}")
     #     # predict
+    # jax.debug.print("inferred_as: {a}", a=inferred_as[0,0,0])
+    # jax.debug.print("more_a: {a}", a=inferred_as[0,0,1])
     big_S_last = big_S_last + little_s + (inferred_as[:, -1, :] / 2)
+    # jax.debug.print("big_S_last: {b}", b=big_S_last[0,0])
     #     # print(big_S_last)
 
     b_terms = (b_f1 * inferred_as).sum(axis=1)
     a_terms = (a_f1 * inferred_as).sum(axis=1)
+
+    # jax.debug.print("b_terms: {b}", b=b_terms[0,1])
     # jax.debug.print("b_terms: {b}", b=b_terms.shape)
     # jax.debug.print("a_terms: {a}", a=a_terms.shape)
     # jax.debug.print("little_s: {l}", l=little_s.shape)
@@ -323,6 +339,7 @@ def _stepping_scan_func(carry, scan_over, constants):
     inferred_as, new_little_s, predicted_x = jax.lax.scan(
         scan_func, (inferred_as, little_s, predicted_x), None, length=5
     )[0]
+    # jax.debug.print("\n")
 
     return (predicted_x, inferred_as, new_little_s, big_S_last), None
 
@@ -417,7 +434,7 @@ def integrate(
     )
 
     a0 = inferred_as[:, MID_IND, :]
-    # jax.debug.print("{x}", x=inferred_xs)
+    # jax.debug.print("{x}", x=inferred_as[0,0,0])
 
     ####################################################################################
     # Refine those guesses
@@ -458,14 +475,16 @@ def integrate(
         scan_func,
         (inferred_as, jnp.zeros_like(inferred_as), jnp.zeros_like(inferred_as)),
         None,
-        length=4,
+        length=5,
     )[0]
     little_s = little_s[:, -1, :]
     big_S_last = big_S[:, -1, :]
+    # jax.debug.print("{x}", x=inferred_as[0,0,0])
 
     ####################################################################################
     # Step forwards
     ####################################################################################
+    W = inferred_as.copy()
 
     b_f1 = b_jk[None, -1, :, None]
     a_f1 = a_jk[None, -1, :, None]
@@ -507,4 +526,5 @@ def integrate(
         ),
     )[0]
 
-    return predicted_x
+    # return predicted_x
+    return W, predicted_x
