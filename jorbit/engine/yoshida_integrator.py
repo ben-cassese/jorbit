@@ -7,7 +7,7 @@ from jorbit.engine.ephemeris import planet_state
 from jorbit.engine.accelerations import acceleration
 from jorbit.data.constants import EPSILON
 
-from ..construct_perturbers import (
+from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
@@ -19,7 +19,6 @@ def _create_yoshida_coeffs(Ws):
     """Ws from tables 1 and 2"""
     w0 = 1 - 2 * (jnp.sum(Ws))
     w = jnp.concatenate((jnp.array([w0]), Ws))
-    # w = np.array([w0] + list(Ws))
 
     Ds = jnp.zeros(2 * len(Ws) + 1)
     Ds = Ds.at[: len(Ws)].set(Ws[::-1])
@@ -33,6 +32,25 @@ def _create_yoshida_coeffs(Ws):
     Cs = Cs.at[int(len(Cs) / 2) :].set(Cs[: int(len(Cs) / 2)][::-1])
     Cs = Cs.at[0].set(0.5 * w[-1])
     Cs = Cs.at[-1].set(0.5 * w[-1])
+
+    # to do it at extended precision, use Decimal:
+    # tmp = 0
+    # for i in Ws:
+    #     tmp += i
+    # w0 = 1 - 2 * tmp
+    # w = [w0] + Ws
+
+    # Ds = [0]*(2 * len(Ws) + 1)
+    # Ds[:len(Ws)] = Ws[::-1]
+    # Ds[len(Ws)] = w0
+    # Ds[len(Ws) + 1:] = Ws
+
+    # Cs = [0]*(2 * len(Ws) + 2)
+    # for i in range(len(w) - 1):
+    #     Cs[i + 1] = Decimal(0.5) * (w[len(w) - 1 - i] + w[len(w) - 2 - i])
+    # Cs[int(len(Cs) / 2):] = Cs[: int(len(Cs) / 2)][::-1]
+    # Cs[0] = Decimal(0.5) * w[-1]
+    # Cs[-1] = Decimal(0.5) * w[-1]
 
     return jnp.array(Cs), jnp.array(Ds)
 

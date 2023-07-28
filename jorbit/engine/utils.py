@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from jax import jit, lax
 import pickle
 
-from ..construct_perturbers import (
+from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
@@ -15,14 +15,14 @@ from ..construct_perturbers import (
 )
 
 
-from ..data.constants import (
+from jorbit.data.constants import (
     INV_SPEED_OF_LIGHT,
     ICRS_TO_BARY_ROT_MAT,
     BARY_TO_ICRS_ROT_MAT,
 )
 
-from .ephemeris import planet_state
-from .slapshot_integrator import single_step
+from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.slapshot_integrator import single_step
 
 
 def on_sky(

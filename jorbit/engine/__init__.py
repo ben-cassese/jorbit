@@ -39,11 +39,11 @@ config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax import jit, lax
 
-from .accelerations import *
-from .ephemeris import *
-from .slapshot_integrator import *
-from .likelihood import *
-from .utils import *
+from jorbit.engine.accelerations import *
+from jorbit.engine.ephemeris import *
+from jorbit.engine.slapshot_integrator import *
+from jorbit.engine.likelihood import *
+from jorbit.engine.utils import *
 
 j_planet_state_helper = jax.jit(planet_state_helper)
 j_planet_state = jax.jit(planet_state)

@@ -5,7 +5,7 @@ config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax import jit, lax
 
-from ..data.constants import SPEED_OF_LIGHT
+from jorbit.data.constants import SPEED_OF_LIGHT
 
 
 def gr_helper(x, v, planet_xs, planet_vs, planet_as, mu):

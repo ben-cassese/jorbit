@@ -21,22 +21,15 @@ import os
 import pkg_resources
 from tqdm import tqdm
 
-from .construct_perturbers import (
-    construct_perturbers,
+from jorbit.construct_perturbers import construct_perturbers
+
+from jorbit.data import (
+    observatory_codes,
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
 )
-
-# from . import data
-# codes = (resources.files(data) / 'observatory_codes.pkl')
-codes = pkg_resources.resource_filename("jorbit", "data/observatory_codes.pkl")
-with open(codes, "rb") as f:
-    observatory_codes = pickle.load(f)
-
-# with open("./data/observatory_codes.pkl", "rb") as f:
-#     observatory_codes = pickle.load(f)
 
 
 class Observations:

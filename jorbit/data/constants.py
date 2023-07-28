@@ -370,6 +370,10 @@ SLAPSHOT_B6_CONSTANT = jnp.array(
 # Gauss-Jackson constants
 ################################################################################
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ8_B = jnp.array(
     [
         [
@@ -485,6 +489,10 @@ GJ8_B = jnp.array(
     ]
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ8_A = jnp.array(
     [
         [
@@ -600,6 +608,10 @@ GJ8_A = jnp.array(
     ]
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ10_B = jnp.array(
     [
         [
@@ -761,6 +773,10 @@ GJ10_B = jnp.array(
     ]
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ10_A = jnp.array(
     [
         [
@@ -922,6 +938,10 @@ GJ10_A = jnp.array(
     ]
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ12_B = jnp.array(
     [
         [
@@ -1137,6 +1157,10 @@ GJ12_B = jnp.array(
     ],
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ12_A = jnp.array(
     [
         [
@@ -1352,6 +1376,10 @@ GJ12_A = jnp.array(
     ],
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ14_A = jnp.array(
     [
         [
@@ -1629,6 +1657,10 @@ GJ14_A = jnp.array(
     ]
 )
 
+# Created using the coefficients.lisp file associated w/ Berry and Healy 2004
+# The Journal of the Astronautical Sciences, Vol. 52, No. 3,
+# July–September 2004, pp. 331 – 357
+# file is included in the jorbit/data/ directory
 GJ14_B = jnp.array(
     [
         [
@@ -1911,10 +1943,16 @@ GJ14_B = jnp.array(
 # Yoshida constants
 ################################################################################
 
+# Taken from Section 4 of Yoshida 1990
+# DOI: 10.1016/0375-9601(90)90092-3
 Y4_Ws = jnp.array([1 / (2 - 2 ** (1 / 3))])
 
+# Taken from Table 1 of Yoshida 1990
+# DOI: 10.1016/0375-9601(90)90092-3
 Y6_Ws = jnp.array([-0.117767998417887e1, 0.23557321335935, 0.78451361047756])
 
+# Taken from Table 2 of Yoshida 1990
+# DOI: 10.1016/0375-9601(90)90092-3
 Y8_Ws = jnp.array(
     [
         0.102799849391985e0,
@@ -1924,5 +1962,100 @@ Y8_Ws = jnp.array(
         -0.144485223686048e1,
         0.253693336566229e0,
         0.914844246229740e0,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y4_C = jnp.array(
+    [
+        0.675603595979828817023843904,
+        -0.1756035959798288170238439045,
+        -0.1756035959798288170238439045,
+        0.675603595979828817023843904,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y4_D = jnp.array(
+    [
+        1.351207191959657634047687808,
+        -1.702414383919315268095375617,
+        1.351207191959657634047687808,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y6_C = jnp.array(
+    [
+        0.3922568052387799819591407413,
+        0.5100434119184549808245776605,
+        -0.4710533854097600503507692338,
+        0.06875316825252508756705083270,
+        0.06875316825252508756705083270,
+        -0.4710533854097600503507692338,
+        0.5100434119184549808245776605,
+        0.3922568052387799819591407413,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y6_D = jnp.array(
+    [
+        0.78451361047755996391828148261993192136287689208984375,
+        0.2355732133593499977308738380088470876216888427734375,
+        -1.1776799841788700984324123055557720363140106201171875,
+        1.315186320683920273566513971,
+        -1.1776799841788700984324123055557720363140106201171875,
+        0.2355732133593499977308738380088470876216888427734375,
+        0.78451361047755996391828148261993192136287689208984375,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y8_C = jnp.array(
+    [
+        0.4574221231148700161917020068,
+        0.5842687913979845160117321255,
+        -0.5955794501471254609459293760,
+        -0.8015464361143614657745359865,
+        0.8899492511272584505110927465,
+        -0.01123554767636503193273256329,
+        -0.9289051917917524880952129250,
+        0.9056264600894914640338839720,
+        0.9056264600894914640338839720,
+        -0.9289051917917524880952129250,
+        -0.01123554767636503193273256329,
+        0.8899492511272584505110927465,
+        -0.8015464361143614657745359865,
+        -0.5955794501471254609459293760,
+        0.5842687913979845160117321255,
+        0.4574221231148700161917020068,
+    ]
+)
+
+# Created using the Decimal version of
+# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+Y8_D = jnp.array(
+    [
+        0.91484424622974003238340401367167942225933074951171875,
+        0.253693336566228999640060237652505747973918914794921875,
+        -1.4448522368604799215319189897854812443256378173828125,
+        -0.158240635368243010017152982982224784791469573974609375,
+        1.93813913762275991103933847625739872455596923828125,
+        -1.960610232975489974904803602839820086956024169921875,
+        0.102799849391984998714377752548898570239543914794921875,
+        1.708453070786997929353390191,
+        0.102799849391984998714377752548898570239543914794921875,
+        -1.960610232975489974904803602839820086956024169921875,
+        1.93813913762275991103933847625739872455596923828125,
+        -0.158240635368243010017152982982224784791469573974609375,
+        -1.4448522368604799215319189897854812443256378173828125,
+        0.253693336566228999640060237652505747973918914794921875,
+        0.91484424622974003238340401367167942225933074951171875,
     ]
 )
