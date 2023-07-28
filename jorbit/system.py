@@ -15,15 +15,15 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 
 from jorbit import Observations, Particle
-from .data.constants import all_planets, large_asteroids
-from .construct_perturbers import (
-    construct_perturbers,
+from jorbit.data.constants import all_planets, large_asteroids
+from jorbit.construct_perturbers import construct_perturbers
+from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
 )
-from .engine import (
+from jorbit.engine import (
     j_integrate_multiple,
     j_on_sky,
     j_prepare_loglike_input,

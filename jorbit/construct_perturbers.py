@@ -14,7 +14,7 @@ from astropy.utils.data import download_file
 from jplephem.spk import SPK
 import pandas as pd
 
-from .data.constants import (
+from jorbit.data.constants import (
     planet_ephemeris,
     asteroid_ephemeris,
     all_planets,

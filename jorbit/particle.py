@@ -11,10 +11,10 @@ import warnings
 warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 
-
-from .data.constants import all_planets, large_asteroids
-from .construct_perturbers import construct_perturbers, STANDARD_SUN_PARAMS
-from .engine import (
+from jorbit.data import STANDARD_SUN_PARAMS
+from jorbit.data.constants import all_planets, large_asteroids
+from jorbit.construct_perturbers import construct_perturbers
+from jorbit.engine import (
     j_cart_to_elements,
     j_elements_to_cart,
 )

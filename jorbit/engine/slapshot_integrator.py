@@ -6,14 +6,14 @@ import jax.numpy as jnp
 from jax import jit, lax
 import pickle
 
-from ..construct_perturbers import (
+from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
 )
 
-from ..data.constants import (
+from jorbit.data.constants import (
     SLAPSHOT_X_CONSTANT,
     SLAPSHOT_V0_CONSTANT,
     SLAPSHOT_XF_CONSTANT,
@@ -23,8 +23,8 @@ from ..data.constants import (
     SLAPSHOT_H,
 )
 
-from .ephemeris import planet_state
-from .accelerations import acceleration
+from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.accelerations import acceleration
 
 
 def inferred_xs(As, v0, x0, dt):
