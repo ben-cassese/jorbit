@@ -5,55 +5,18 @@ import jax.numpy as jnp
 from jax.experimental.ode import odeint
 
 from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.yoshida_integrator import yoshida_integrate
 from jorbit.engine.accelerations import acceleration
 from jorbit.data.constants import EPSILON
+from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
 
 
 ########################################################################################
 # Helper functions
 ########################################################################################
-def acceleration(xs, **args):
-    return -(1 / jnp.linalg.norm(xs, axis=-1) ** 3)[:, :, None] * xs
-
-
-def _ode_acceleration(state, dt, args):
-    gms, planet_params, asteroid_params, planet_gms, asteroid_gms, use_GR, t0, flip = (
-        args
-    )
-    t = jnp.where(flip, t0 - dt, t0 + dt)
-    planet_xs, planet_vs, planet_as = planet_state(
-        planet_params=planet_params,
-        times=jnp.array([t]),
-        velocity=True,
-        acceleration=True,
-    )
-
-    asteroid_xs, _, _ = planet_state(
-        planet_params=asteroid_params,
-        times=jnp.array([t]),
-        velocity=False,
-        acceleration=False,
-    )
-    # print(state['x'].shape)
-    # print(state['x'][:,None,:].shape)
-    acc = acceleration(
-        xs=state["x"][:, None, :],
-        vs=state["v"][:, None, :],
-        gms=gms,
-        planet_xs=planet_xs,
-        planet_vs=planet_vs,
-        planet_as=planet_as,
-        asteroid_xs=asteroid_xs,
-        planet_gms=planet_gms,
-        asteroid_gms=asteroid_gms,
-        use_GR=use_GR,
-    )
-
-    return {"x": state["v"], "v": acc}
 
 
 def _startup_scan_func(carry, scan_over, constants):
-    # variables, constants = carry
     (inferred_as, little_s, big_S) = carry
     (
         MID_IND,
@@ -76,22 +39,13 @@ def _startup_scan_func(carry, scan_over, constants):
     ) = constants
 
     # Calculate s0
-
-    # #jax.debug.print(f"b_0k: {b_0k.shape}")
-    # #jax.debug.print(f"inferred_as: {inferred_as.shape}")
-    # #jax.debug.print(f"v0: {v0.shape}")
-    # ##jax.debug.print(f"dt: {dt.shape}")
     c1_prime = v0 / dt - (inferred_as * b_0k).sum(axis=1)
-    # jax.debug.print("c1_prime: {c}", c=c1_prime[0,1])
-    # #jax.debug.print(f"c1_prime: {c1_prime.shape}")
-    # #jax.debug.print(f"a0: {a0.shape}")
     c1 = c1_prime + a0 / 2
     little_s_mid = c1_prime
 
     # Calculate S0
     c2 = x0 / dt**2 - (inferred_as * a_0k).sum(axis=1) + c1
     big_S_mid = c2 - c1
-    # jax.debug.print("big_S_mid: {c}", c=big_S_mid[0,0])
 
     # Calculate sn
     pair_sums = (
@@ -101,8 +55,6 @@ def _startup_scan_func(carry, scan_over, constants):
         / 2
     )
     pair_sums = jnp.swapaxes(pair_sums, 0, 1)
-    # #jax.debug.print(f"pair_sums: {pair_sums.shape}")
-    # #jax.debug.print(f"little_s_mid: {little_s_mid.shape}")
     lower_s = jax.lax.scan(
         lambda carry, scan_over: (carry - scan_over, carry - scan_over),
         little_s_mid,
@@ -113,8 +65,6 @@ def _startup_scan_func(carry, scan_over, constants):
         little_s_mid,
         pair_sums[MID_IND:, :, :],
     )[1]
-    # #jax.debug.print(f"lower_s: {lower_s.shape}")
-    # #jax.debug.print(f"upper_s: {upper_s.shape}")
     little_s = jnp.concatenate(
         (
             jnp.swapaxes(lower_s, 0, 1),
@@ -123,8 +73,6 @@ def _startup_scan_func(carry, scan_over, constants):
         ),
         axis=1,
     )
-    # jax.debug.print("little_s: {c}", c=little_s[0,0,0])
-    # #jax.debug.print(f"little_s: {little_s.shape}")
 
     # Calculate Sn
     swapped_little_s = jnp.swapaxes(little_s, 0, 1)
@@ -140,8 +88,6 @@ def _startup_scan_func(carry, scan_over, constants):
             swapped_inferred_as[1 : MID_IND + 1, :, :][::-1] / 2,
         ),
     )[1][::-1]
-    # #jax.debug.print(f"lower_S: {lower_S.shape}")
-
     upper_S = jax.lax.scan(
         lambda carry, scan_over: (
             carry + scan_over[0] + scan_over[1],
@@ -153,7 +99,6 @@ def _startup_scan_func(carry, scan_over, constants):
             swapped_inferred_as[MID_IND:-1, :, :] / 2,
         ),
     )[1]
-    # #jax.debug.print(f"upper_S: {upper_S.shape}")
     big_S = jnp.concatenate(
         (
             jnp.swapaxes(lower_S, 0, 1),
@@ -162,20 +107,12 @@ def _startup_scan_func(carry, scan_over, constants):
         ),
         axis=1,
     )
-    # jax.debug.print("big_S: {c}", c=big_S[0,0,0])
-    # #jax.debug.print(f"big_S: {big_S.shape}")
 
     b_terms = (b_front * inferred_as[:, None, :, :]).sum(axis=2)
     a_terms = (a_front * inferred_as[:, None, :, :]).sum(axis=2)
 
-    # jax.debug.print("b_terms: {b}", b=b_terms[0,0,0])
-    # jax.debug.print("more b: {b}", b=b_terms[0])
-
     inferred_vs = dt * (little_s + b_terms)
     inferred_xs = dt**2 * (big_S + a_terms)
-
-    # #jax.debug.print(f"inferred_vs: {inferred_vs.shape}")
-    # #jax.debug.print(f"inferred_xs: {inferred_xs.shape}")
 
     new_acceleration = acceleration(
         xs=inferred_xs,
@@ -190,10 +127,7 @@ def _startup_scan_func(carry, scan_over, constants):
         use_GR=use_GR,
     )
 
-    # jax.debug.print("max diff: {m}", m=jnp.max(jnp.abs(new_acceleration - inferred_as)))
-
     inferred_as = new_acceleration
-    # jax.debug.print("\n")
     return (inferred_as, little_s, big_S), None
 
 
@@ -216,15 +150,12 @@ def _corrector_scan_func(carry, scan_over, constants):
         asteroid_gms,
         use_GR,
     ) = constants
-    #         # print(inferred_as[-1,0])
+
     new_little_s = little_s + (inferred_as[:, -1, :] + inferred_as[:, -2, :]) / 2
     b_coeffs = b_f * inferred_as[:, -1, :] + frozen_bs
     a_coeffs = a_f * inferred_as[:, -1, :] + frozen_as
     predicted_v = dt * (little_s + b_coeffs)
     predicted_x = dt**2 * (big_S_last + a_coeffs)
-
-    # jax.debug.print("predicted_v: {v}", v=predicted_v.shape)
-    # jax.debug.print("predicted_x: {x}", x=predicted_x.shape)
 
     refined_a = acceleration(
         xs=predicted_x[:, None, :],
@@ -238,7 +169,7 @@ def _corrector_scan_func(carry, scan_over, constants):
         asteroid_gms=asteroid_gms,
         use_GR=use_GR,
     )
-    # jax.debug.print("refined_a: {a}", a=refined_a.shape)
+
     inferred_as = inferred_as.at[:, -1, :].set(refined_a[:, 0, :])
 
     return (inferred_as, new_little_s, predicted_x), None
@@ -261,31 +192,13 @@ def _stepping_scan_func(carry, scan_over, constants):
         use_GR,
     ) = constants
 
-    #     # print(f"iteration {i}")
-    #     # predict
-    # jax.debug.print("inferred_as: {a}", a=inferred_as[0,0,0])
-    # jax.debug.print("more_a: {a}", a=inferred_as[0,0,1])
     big_S_last = big_S_last + little_s + (inferred_as[:, -1, :] / 2)
-    # jax.debug.print("big_S_last: {b}", b=big_S_last[0,0])
-    #     # print(big_S_last)
 
     b_terms = (b_f1 * inferred_as).sum(axis=1)
     a_terms = (a_f1 * inferred_as).sum(axis=1)
 
-    # jax.debug.print("b_terms: {b}", b=b_terms[0,1])
-    # jax.debug.print("b_terms: {b}", b=b_terms.shape)
-    # jax.debug.print("a_terms: {a}", a=a_terms.shape)
-    # jax.debug.print("little_s: {l}", l=little_s.shape)
-    # jax.debug.print("big_S_last: {b}", b=big_S_last.shape)
-
     predicted_v = dt * (little_s + b_terms)
     predicted_x = dt**2 * (big_S_last + a_terms)
-
-    # jax.debug.print("predicted_v: {v}", v=predicted_v.shape)
-    # jax.debug.print("predicted_x: {x}", x=predicted_x.shape)
-
-    # jax.debug.print("planet_xs_step: {x}", x=planet_xs_step.shape)
-    # jax.debug.print("reshaped: {x}", x=planet_xs_step[:, None, :].shape)
 
     predicted_next_a = acceleration(
         xs=predicted_x[:, None, :],
@@ -299,17 +212,12 @@ def _stepping_scan_func(carry, scan_over, constants):
         asteroid_gms=asteroid_gms,
         use_GR=use_GR,
     )
-    # jax.debug.print("predicted_next_a: {a}", a=predicted_next_a.shape)
 
-    #     inferred_as = jnp.concatenate((inferred_as[1:], predicted_next_a[None, :]))
     inferred_as = inferred_as.at[:, :-1, :].set(inferred_as[:, 1:, :])
     inferred_as = inferred_as.at[:, -1, :].set(predicted_next_a[:, 0, :])
 
-    # jax.debug.print("inferred_as: {a}", a=inferred_as.shape)
-
     frozen_bs = (frozen_b_jk * inferred_as[:, :-1, :]).sum(axis=1)
     frozen_as = (frozen_a_jk * inferred_as[:, :-1, :]).sum(axis=1)
-    # jax.debug.print("frozen_as: {a}", a=frozen_as.shape)
 
     planet_corrector_xs = planet_xs_step[:, None, :]
     planet_corrector_vs = planet_vs_step[:, None, :]
@@ -339,7 +247,6 @@ def _stepping_scan_func(carry, scan_over, constants):
     inferred_as, new_little_s, predicted_x = jax.lax.scan(
         scan_func, (inferred_as, little_s, predicted_x), None, length=5
     )[0]
-    # jax.debug.print("\n")
 
     return (predicted_x, inferred_as, new_little_s, big_S_last), None
 
@@ -349,29 +256,118 @@ def _stepping_scan_func(carry, scan_over, constants):
 ########################################################################################
 
 
-def integrate(
+def gj_integrate(
     x0,
     v0,
     gms,
-    t0,
     b_jk,
     a_jk,
-    dt,
+    t0,
+    tf,
     planet_xs,
     planet_vs,
     planet_as,
     asteroid_xs,
-    planet_params,
-    asteroid_params,
+    planet_xs_warmup,
+    asteroid_xs_warmup,
+    warmup_C,
+    warmup_D,
     planet_gms,
     asteroid_gms,
     use_GR,
+    planet_params=STANDARD_PLANET_PARAMS,
+    asteroid_params=STANDARD_ASTEROID_PARAMS,
 ):
+    """
+    A massive foot-gun of a function I'm still working out.
+
+    Really it worked fine with jax.experimental.odeint, but I couldn't forward diff
+    it, so now I'm making a mess of things by trying to use a homebrewed leapfrog
+    integrator for the warmup and then a Gauss-Jackson integrator for the actual
+
+    Parameters:
+        x0 (jnp.ndarray(shape=(N, 3))):
+            Initial position of N particles in AU
+        v0 (jnp.ndarray(shape=(N, 3))):
+            Initial velocity of N particles in AU/day
+        gms (jnp.ndarray(shape=(N,))):
+            The GM values of N particles in AU^3/day^2
+        b_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "b_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
+            precomputed/stored in jorbit.data.constants for orders 8, 10, 12, and 14.
+        a_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. Same as b_jk, these have been precomputed.
+        t0 (float):
+            The initial time in TDB JD
+        tf (float):
+            The final time in TDB JD
+        planet_xs (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D positions of M planets. Each planet has S + K/2 positions, where S
+            is the number of substeps between t0 and tf. The first K/2 positions are
+            *before* the initial time and are needed to warm up the integrator
+        planet_vs (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D velocities of M planets. Same as planet_xs, but for velocities.
+        planet_as (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D accelerations of M planets. Same as planet_xs, but for accelerations.
+        asteroid_xs (jnp.ndarray(shape=(P, S + K/2, 3))):
+            The 3D positions of P asteroids. Same as planet_xs, but for asteroids.
+        planet_xs_warmup (jnp.ndarray(shape=(2, K/2, M, Q, 3))):
+            The 3D positions of M planets. Axis 0 is for the forward/backward warmup
+            steps. Axis 1, K is the order of the GJ integrator, since that's how many
+            steps you need to take forwards and backwards during warmup. Axis 2 is for
+            the M planets. Axis 3 is for the Q substeps taken for each of the K
+            integration steps. Axis 4 is for the {x,y,z} dimensions, in AU
+        asteroid_xs_warmup (jnp.ndarray(shape=(2, K/2, P, Q, 3))):
+            The 3D positions of P asteroids. Same as planet_xs_warmup, but for
+            asteroids.
+        warmup_C (jnp.ndarray):
+            The C coefficients for the Yoshida integrator used to warm up the
+            integrator. Values for 4th, 6th, and 8th order are precomputed and stored
+            in jorbit.data.constants. See Yoshida 1990 [2]_ for more details.
+        warmup_D (jnp.ndarray):
+            The D matrix for the Yoshida integrator used to warm up the Gauss-Jackson
+
+
+    Examples:
+
+        gj_integrate(
+            x0=x,
+            v0=v,
+            gms=gms,
+            b_jk=GJ10_B,
+            a_jk=GJ10_A,
+            t0=0.,
+            tf=jnp.pi,
+            planet_xs=jnp.zeros((1, 50, 3)),
+            planet_vs=jnp.zeros((1, 50, 3)),
+            planet_as=jnp.zeros((1, 50, 3)),
+            asteroid_xs=jnp.zeros((1, 50, 3)),
+            planet_xs_warmup=None,
+            asteroid_xs_warmup=None,
+            warmup_C=None,
+            warmup_D=None,
+            planet_gms=jnp.array([0.]),
+            asteroid_gms=jnp.array([0.]),
+            use_GR=True,
+            planet_params=STANDARD_PLANET_PARAMS,
+            asteroid_params=STANDARD_ASTEROID_PARAMS
+        )
+
+    References:
+        .. [1] "Implementation of Gauss-Jackson Integration for Orbit Propagation": https://doi.org/10.1007/BF03546367
+        .. [2] "Construction of higher order symplectic integrators": https://doi.org/10.1016/0375-9601(90)90092-3
+
+    """
+
     MID_IND = int((a_jk.shape[1] - 1) / 2)
+    dt = (tf - t0) / (planet_xs.shape[1] - 1)
 
     ####################################################################################
     # Initial integration to get leading/trailing points
     ####################################################################################
+
     state = {"x": x0, "v": v0}
     forwards = odeint(
         _ode_acceleration,
@@ -413,12 +409,49 @@ def integrate(
         mxstep=jnp.inf,
         hmax=jnp.inf,
     )
-    # jax.debug.print("{x}", x=backwards)
 
     inferred_xs = jnp.concatenate([backwards["x"][::-1], forwards["x"][1:]])
     inferred_vs = jnp.concatenate([backwards["v"][::-1] * -1, forwards["v"][1:]])
     inferred_xs = jnp.swapaxes(inferred_xs, 0, 1)
     inferred_vs = jnp.swapaxes(inferred_vs, 0, 1)
+
+    jax.debug.print("{x}", x=inferred_xs)
+
+    ####################################################################################
+
+    dt_warmup = dt / (planet_xs_warmup.shape[3] - 1)
+
+    backwards = yoshida_integrate(
+        x0=x0,
+        v0=v0,
+        dt=dt_warmup,
+        gms=gms,
+        planet_xs=planet_xs_warmup[0],
+        asteroid_xs=asteroid_xs_warmup[0],
+        planet_gms=planet_gms,
+        asteroid_gms=asteroid_gms,
+        C=warmup_C,
+        D=warmup_D,
+    )
+    forwards = yoshida_integrate(
+        x0=x0,
+        v0=v0,
+        dt=dt_warmup,
+        gms=gms,
+        planet_xs=planet_xs_warmup[1],
+        asteroid_xs=asteroid_xs_warmup[1],
+        planet_gms=planet_gms,
+        asteroid_gms=asteroid_gms,
+        C=warmup_C,
+        D=warmup_D,
+    )
+
+    tmp1 = jnp.concatenate([backwards[0][::-1], x0, forwards[0]])
+    tmp2 = jnp.concatenate([backwards[1][::-1], v0, forwards[1]])
+    jax.debug.print("{x}", x=tmp1)
+
+    ####################################################################################
+    # return inferred_xs
 
     inferred_as = acceleration(
         xs=inferred_xs,
@@ -434,7 +467,6 @@ def integrate(
     )
 
     a0 = inferred_as[:, MID_IND, :]
-    # jax.debug.print("{x}", x=inferred_as[0,0,0])
 
     ####################################################################################
     # Refine those guesses
@@ -479,7 +511,6 @@ def integrate(
     )[0]
     little_s = little_s[:, -1, :]
     big_S_last = big_S[:, -1, :]
-    # jax.debug.print("{x}", x=inferred_as[0,0,0])
 
     ####################################################################################
     # Step forwards
@@ -510,10 +541,10 @@ def integrate(
         ),
     )
 
-    swapped_planet_xs = jnp.swapaxes(planet_xs, 0, 1)
-    swapped_planet_vs = jnp.swapaxes(planet_vs, 0, 1)
-    swapped_planet_as = jnp.swapaxes(planet_as, 0, 1)
-    swapped_asteroid_xs = jnp.swapaxes(asteroid_xs, 0, 1)
+    swapped_planet_xs = jnp.swapaxes(planet_xs[:, MID_IND + 1 :, :], 0, 1)
+    swapped_planet_vs = jnp.swapaxes(planet_vs[:, MID_IND + 1 :, :], 0, 1)
+    swapped_planet_as = jnp.swapaxes(planet_as[:, MID_IND + 1 :, :], 0, 1)
+    swapped_asteroid_xs = jnp.swapaxes(asteroid_xs[:, MID_IND + 1 :, :], 0, 1)
 
     predicted_x, _, _, _ = jax.lax.scan(
         scan_func,
@@ -526,5 +557,40 @@ def integrate(
         ),
     )[0]
 
-    # return predicted_x
-    return W, predicted_x
+    return predicted_x
+
+
+def _ode_acceleration(state, dt, args):
+    gms, planet_params, asteroid_params, planet_gms, asteroid_gms, use_GR, t0, flip = (
+        args
+    )
+    t = jnp.where(flip, t0 - dt, t0 + dt)
+    planet_xs, planet_vs, planet_as = planet_state(
+        planet_params=planet_params,
+        times=jnp.array([t]),
+        velocity=True,
+        acceleration=True,
+    )
+
+    asteroid_xs, _, _ = planet_state(
+        planet_params=asteroid_params,
+        times=jnp.array([t]),
+        velocity=False,
+        acceleration=False,
+    )
+    # print(state['x'].shape)
+    # print(state['x'][:,None,:].shape)
+    acc = acceleration(
+        xs=state["x"][:, None, :],
+        vs=state["v"][:, None, :],
+        gms=gms,
+        planet_xs=planet_xs,
+        planet_vs=planet_vs,
+        planet_as=planet_as,
+        asteroid_xs=asteroid_xs,
+        planet_gms=planet_gms,
+        asteroid_gms=asteroid_gms,
+        use_GR=use_GR,
+    )
+
+    return {"x": state["v"], "v": acc}
