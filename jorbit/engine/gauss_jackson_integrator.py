@@ -2,10 +2,11 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax.experimental.ode import odeint
+
+# from jax.experimental.ode import odeint
 
 from jorbit.engine.ephemeris import planet_state
-from jorbit.engine.yoshida_integrator import yoshida_integrate
+from jorbit.engine.yoshida_integrator import yoshida_integrate_multiple
 from jorbit.engine.accelerations import acceleration
 from jorbit.data.constants import EPSILON
 from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
@@ -17,6 +18,10 @@ from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
 
 
 def _startup_scan_func(carry, scan_over, constants):
+    """
+    A portion of the Gauss-Jackson integrator. After some other integrator estimates
+    the initial leading and trailing positions, this function refines those estimates
+    """
     (inferred_as, little_s, big_S) = carry
     (
         MID_IND,
@@ -132,6 +137,11 @@ def _startup_scan_func(carry, scan_over, constants):
 
 
 def _corrector_scan_func(carry, scan_over, constants):
+    """
+    Part of the Gauss-Jackson integrator. During each step forwards after startup, this
+    is called repeatedly to refine the position estimate. Is called by
+    _stepping_scan_func
+    """
     inferred_as, _, _ = carry
     (
         dt,
@@ -176,6 +186,11 @@ def _corrector_scan_func(carry, scan_over, constants):
 
 
 def _stepping_scan_func(carry, scan_over, constants):
+    """
+    Part of the Gauss-Jackson integrator. This is the function that advances the system
+    by one time step. It is called repeatedly after startup, and it itself calls
+    _corrector_scan_func several times during each step
+    """
     _, inferred_as, little_s, big_S_last = carry
     planet_xs_step, planet_vs_step, planet_as_step, asteroid_xs_step = scan_over
     (
@@ -368,63 +383,11 @@ def gj_integrate(
     # Initial integration to get leading/trailing points
     ####################################################################################
 
-    state = {"x": x0, "v": v0}
-    forwards = odeint(
-        _ode_acceleration,
-        state,
-        jnp.arange(MID_IND + 1) * dt,
-        (
-            gms,
-            planet_params,
-            asteroid_params,
-            planet_gms,
-            asteroid_gms,
-            use_GR,
-            t0,
-            False,
-        ),
-        rtol=EPSILON,
-        atol=EPSILON,
-        mxstep=jnp.inf,
-        hmax=jnp.inf,
-    )
-
-    state["v"] *= -1
-    backwards = odeint(
-        _ode_acceleration,
-        state,
-        jnp.arange(MID_IND + 1) * dt,
-        (
-            gms,
-            planet_params,
-            asteroid_params,
-            planet_gms,
-            asteroid_gms,
-            use_GR,
-            t0,
-            True,
-        ),
-        rtol=EPSILON,
-        atol=EPSILON,
-        mxstep=jnp.inf,
-        hmax=jnp.inf,
-    )
-
-    inferred_xs = jnp.concatenate([backwards["x"][::-1], forwards["x"][1:]])
-    inferred_vs = jnp.concatenate([backwards["v"][::-1] * -1, forwards["v"][1:]])
-    inferred_xs = jnp.swapaxes(inferred_xs, 0, 1)
-    inferred_vs = jnp.swapaxes(inferred_vs, 0, 1)
-
-    jax.debug.print("{x}", x=inferred_xs)
-
-    ####################################################################################
-
-    dt_warmup = dt / (planet_xs_warmup.shape[3] - 1)
-
-    backwards = yoshida_integrate(
+    backwards_x, backwards_v = yoshida_integrate_multiple(
         x0=x0,
         v0=v0,
-        dt=dt_warmup,
+        t0=t0,
+        times=-jnp.arange(1, MID_IND + 1) * dt,
         gms=gms,
         planet_xs=planet_xs_warmup[0],
         asteroid_xs=asteroid_xs_warmup[0],
@@ -433,10 +396,11 @@ def gj_integrate(
         C=warmup_C,
         D=warmup_D,
     )
-    forwards = yoshida_integrate(
+    forwards_x, forwards_v = yoshida_integrate_multiple(
         x0=x0,
         v0=v0,
-        dt=dt_warmup,
+        t0=t0,
+        times=jnp.arange(1, MID_IND + 1) * dt,
         gms=gms,
         planet_xs=planet_xs_warmup[1],
         asteroid_xs=asteroid_xs_warmup[1],
@@ -446,12 +410,14 @@ def gj_integrate(
         D=warmup_D,
     )
 
-    tmp1 = jnp.concatenate([backwards[0][::-1], x0, forwards[0]])
-    tmp2 = jnp.concatenate([backwards[1][::-1], v0, forwards[1]])
-    jax.debug.print("{x}", x=tmp1)
+    inferred_xs = jnp.column_stack(
+        [backwards_x[:, ::-1, :], x0[:, None, :], forwards_x]
+    )
+    inferred_vs = jnp.column_stack(
+        [backwards_v[:, ::-1, :], v0[:, None, :], forwards_v]
+    )
 
     ####################################################################################
-    # return inferred_xs
 
     inferred_as = acceleration(
         xs=inferred_xs,
@@ -515,8 +481,6 @@ def gj_integrate(
     ####################################################################################
     # Step forwards
     ####################################################################################
-    W = inferred_as.copy()
-
     b_f1 = b_jk[None, -1, :, None]
     a_f1 = a_jk[None, -1, :, None]
     b_f2 = b_jk[None, -2, -1, None]
@@ -558,39 +522,3 @@ def gj_integrate(
     )[0]
 
     return predicted_x
-
-
-def _ode_acceleration(state, dt, args):
-    gms, planet_params, asteroid_params, planet_gms, asteroid_gms, use_GR, t0, flip = (
-        args
-    )
-    t = jnp.where(flip, t0 - dt, t0 + dt)
-    planet_xs, planet_vs, planet_as = planet_state(
-        planet_params=planet_params,
-        times=jnp.array([t]),
-        velocity=True,
-        acceleration=True,
-    )
-
-    asteroid_xs, _, _ = planet_state(
-        planet_params=asteroid_params,
-        times=jnp.array([t]),
-        velocity=False,
-        acceleration=False,
-    )
-    # print(state['x'].shape)
-    # print(state['x'][:,None,:].shape)
-    acc = acceleration(
-        xs=state["x"][:, None, :],
-        vs=state["v"][:, None, :],
-        gms=gms,
-        planet_xs=planet_xs,
-        planet_vs=planet_vs,
-        planet_as=planet_as,
-        asteroid_xs=asteroid_xs,
-        planet_gms=planet_gms,
-        asteroid_gms=asteroid_gms,
-        use_GR=use_GR,
-    )
-
-    return {"x": state["v"], "v": acc}

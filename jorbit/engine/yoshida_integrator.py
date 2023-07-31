@@ -1,3 +1,7 @@
+"""
+A leapfrog integrator that does not include corrections for GR.
+"""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -5,13 +9,10 @@ import jax.numpy as jnp
 
 from jorbit.engine.ephemeris import planet_state
 from jorbit.engine.accelerations import acceleration
-from jorbit.data.constants import EPSILON
 
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
-    STANDARD_PLANET_GMS,
-    STANDARD_ASTEROID_GMS,
 )
 
 
@@ -21,6 +22,17 @@ def _create_yoshida_coeffs(Ws):
 
     Saving this for later reference, but it isn't called anymore- values were
     precomputed and saved in jorbit.data.constants.
+
+    Parameters:
+        WS (jnp.ndarray):
+            An array of "W" values from Tables 1 and 2 of Yoshida (1990)
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray]:
+        C (jnp.ndarray):
+            The coefficients for the mid-step position updates
+        D (jnp.ndarray):
+            The coefficients for the mid-step velocity updates
     """
     w0 = 1 - 2 * (jnp.sum(Ws))
     w = jnp.concatenate((jnp.array([w0]), Ws))
@@ -60,7 +72,7 @@ def _create_yoshida_coeffs(Ws):
     return jnp.array(Cs), jnp.array(Ds)
 
 
-def single_step(
+def _single_step(
     x0, v0, gms, planet_xs, asteroid_xs, planet_gms, asteroid_gms, dt, C, D
 ):
     """
@@ -93,6 +105,13 @@ def single_step(
         D (jnp.ndarray):
             The coefficients for the mid-step velocity updates. Similar to the C
             coefficients.
+
+    Returns:
+        Tuple[jnp.ndarray(shape=(N, 3)), jnp.ndarray(shape=(N, 3))]:
+        x (jnp.ndarray(shape=(N, 3))):
+            The positions of the N particles at the end of the time step. In AU
+        v (jnp.ndarray(shape=(N, 3))):
+            The velocities of the N particles at the end of the time step. In AU/day
     """
 
     def leapfrog_scan(X, mid_step_coeffs):
@@ -120,18 +139,78 @@ def single_step(
     return x, v
 
 
-def prep_single_integrator(
+def prep_integrator_single(
     t0,
     tf,
     steps,
     planet_params=STANDARD_PLANET_PARAMS,
     asteroid_params=STANDARD_ASTEROID_PARAMS,
+    offset=0,
 ):
-    times = jnp.linspace(t0, tf, steps)
-    dt = jnp.diff(times)[0]
+    """
+    Create the inputs to run the leapfrog integrator between a single time span.
 
-    times += dt / 2  # offset the planet positions so they are at the mid-step point.
-    # should be a tiny correction for small steps/large distances
+    Parameters:
+        t0 (float):
+            The initial time in TDB JD
+        tf (float):
+            The final time in TDB JD
+        steps (int):
+            The number of steps to take between t0 and tf
+        planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.data):
+            The ephemeris describing P massive objects in the solar system. The first
+            element is the initial time of the ephemeris in seconds since J2000 TDB. The
+            second element is the length of the interval covered by each piecewise chunk of
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
+            asteroids, it's 32 days). The third element contains the Q coefficients of the
+            R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
+            x,y,z dimensions.
+        asteroid_params (Tuple[jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,Q,3,R))], default=STANDARD_ASTEROID_PARAMS from jorbit.data):
+            Same as the planet_params, but for Q asteroids.
+        offset (float, default=0):
+            Experimental. Offset the time to evaluate the planet positions so that
+            they're more representative over a time step. Not currently used.
+
+    Returns:
+        Tuple[jnp.ndarray(shape=(P, steps, 3)), jnp.ndarray(shape=(Q, steps 3)), float]:
+        planet_xs (jnp.ndarray(shape=(P, steps, 3))):
+            The 3D positions of P planets at steps times. Units are in AU.
+        asteroid_xs (jnp.ndarray(shape=(Q, steps, 3))):
+            The 3D positions of Q asteroids at steps times. Units are in AU.
+        dt (float):
+            The length of each time step in days.
+
+    Examples:
+
+        >>> from astropy.time import Time
+        >>> import astropy.units as u
+        >>> import jax.numpy as jnp
+        >>> from jorbit.data import (
+        ...     STANDARD_PLANET_PARAMS,
+        ...     STANDARD_ASTEROID_PARAMS,
+        ...     STANDARD_PLANET_GMS,
+        ...     STANDARD_ASTEROID_GMS,
+        ... )
+        >>> from jorbit.data.constants import EXAMPLE_X0, EXAMPLE_V0, EXAMPLE_XF, Y8_C, Y8_D
+        >>> from jorbit.engine.yoshida_integrator import prep_integrator_single, yoshida_integrate
+        >>> planet_xs, asteroid_xs, dt = prep_integrator_single(
+        ...     t0=Time("2023-01-01").tdb.jd,
+        ...     tf=Time("2023-06-01").tdb.jd,
+        ...     steps=10_000,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ... )
+
+    """
+    times = jnp.linspace(t0, tf, steps)
+    dt = (tf - t0) / steps
+
+    times += offset
+    # offset the planet positions so they are at the mid-step point, something like
+    # dt / 2. Played around with this and something smaller, on the order of 0.003 days,
+    # almost always improves the accurary compared to Horizons. can't see why though,
+    # leaving it out for now. worth coming back to though, I'm guesssing it's something
+    # with time scale conversions
 
     planet_xs, _, _ = planet_state(
         planet_params=planet_params, times=times, velocity=False, acceleration=False
@@ -141,6 +220,83 @@ def prep_single_integrator(
     )
 
     return planet_xs, asteroid_xs, dt
+
+
+def prep_integrator_multiple(
+    t0,
+    times,
+    steps,
+    planet_params=STANDARD_PLANET_PARAMS,
+    asteroid_params=STANDARD_ASTEROID_PARAMS,
+    offset=0,
+):
+    """
+    Prepare the integrator to integrate through multiple epochs.
+
+    Parameters:
+        t0 (float):
+            The initial time in TDB JD
+        times (jnp.ndarray(shape=(T,))):
+            The times to integrate to, in TDB JD
+        steps (int):
+            The number of steps to take between each time. The number of steps taken to
+            jump between epochs will remain constant- the actual size of those steps,
+            in units like days, will vary depending on the size of the gap between
+            epochs. Take care that the resulting dts are not too large, insert
+            additional intermediate epochs if needed
+        planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.data):
+            The ephemeris describing P massive objects in the solar system. The first
+            element is the initial time of the ephemeris in seconds since J2000 TDB. The
+            second element is the length of the interval covered by each piecewise chunk of
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
+            asteroids, it's 32 days). The third element contains the Q coefficients of the
+            R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
+            x,y,z dimensions.
+        asteroid_params (Tuple[jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,Q,3,R))], default=STANDARD_ASTEROID_PARAMS from jorbit.data):
+            Same as the planet_params, but for Q asteroids.
+        offset (float, default=0):
+            Experimental. See prep_integrator_single for more
+
+    Returns:
+        Tuple[jnp.ndarray(shape=(T, P, steps, 3)), jnp.ndarray(shape=(T, Q, steps, 3)), float]:
+        planet_xs (jnp.ndarray(shape=(T, P, steps, 3))):
+            The 3D positions of P planets at [steps] evenly spaced steps between the
+            T times. Units are in AU
+        asteroid_xs (jnp.ndarray(shape=(T, Q, steps, 3))):
+            Same as planet_xs but for Q asteroids
+        dts (jnp.ndarray(shape=(T,))):
+            The length of the times steps taken to reach each of the T times. Units are
+            in days
+
+    Examples:
+
+        >>> import jax.numpy as jnp
+        >>> from astropy.time import Time
+        >>> from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
+        >>> from jorbit.engine.yoshida_integrator import prep_integrator_multiple
+        >>> times = Time(["2021-01-01T00:00:00", "2021-01-02T00:00:00", "2021-01-03T00:00:00"])
+        >>> planet_xs, asteroid_xs, dts = prep_integrator_multiple(
+        ...     t0=times[0].tdb.jd,
+        ...     times=jnp.array([t.tdb.jd for t in times][1:]),
+        ...     steps=100,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ...     offset=0,
+        ... )
+    """
+
+    def scan_func(carry, scan_over):
+        p_xs, a_xs, dt = prep_integrator_single(
+            t0=carry,
+            tf=scan_over,
+            steps=steps,
+            planet_params=planet_params,
+            asteroid_params=asteroid_params,
+            offset=offset,
+        )
+        return scan_over, (p_xs, a_xs, dt)
+
+    return jax.lax.scan(scan_func, t0, times)[1]
 
 
 def yoshida_integrate(
@@ -185,12 +341,52 @@ def yoshida_integrate(
             The coefficients for the mid-step velocity updates. Similar to the C
             coefficients.
 
+    Returns:
+        Tuple[jnp.ndarray(shape=(N, 3)), jnp.ndarray(shape=(N, 3))]:
+        x (jnp.ndarray(shape=(N, 3))):
+            The positions of the N particles at the end of the time step. In AU
+        v (jnp.ndarray(shape=(N, 3))):
+            The velocities of the N particles at the end of the time step. In AU/day
+
+    Examples:
+
+        >>> from astropy.time import Time
+        >>> import astropy.units as u
+        >>> import jax.numpy as jnp
+        >>> from jorbit.data import (
+        ...     STANDARD_PLANET_PARAMS,
+        ...     STANDARD_ASTEROID_PARAMS,
+        ...     STANDARD_PLANET_GMS,
+        ...     STANDARD_ASTEROID_GMS,
+        ... )
+        >>> from jorbit.data.constants import EXAMPLE_X0, EXAMPLE_V0, EXAMPLE_XF, Y8_C, Y8_D
+        >>> from jorbit.engine.yoshida_integrator import prep_integrator_single, yoshida_integrate
+        >>> planet_xs, asteroid_xs, dt = prep_integrator_single(
+        ...     t0=Time("2023-01-01").tdb.jd,
+        ...     tf=Time("2023-06-01").tdb.jd,
+        ...     steps=10_000,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ... )
+        >>> x, v = yoshida_integrate(
+        ...     x0=jnp.array([EXAMPLE_X0]),
+        ...     v0=jnp.array([EXAMPLE_V0]),
+        ...     dt=dt,
+        ...     gms=jnp.array([0.0]),
+        ...     planet_xs=planet_xs,
+        ...     asteroid_xs=asteroid_xs,
+        ...     planet_gms=STANDARD_PLANET_GMS,
+        ...     asteroid_gms=STANDARD_ASTEROID_GMS,
+        ...     C=Y8_C,
+        ...     D=Y8_D,
+        ... )
+        >>> print(jnp.linalg.norm(x - EXAMPLE_XF) * u.au.to(u.m))
 
     """
 
     def scan_func(carry, scan_over):
         return (
-            single_step(
+            _single_step(
                 x0=carry[0],
                 v0=carry[1],
                 gms=gms,
@@ -211,7 +407,7 @@ def yoshida_integrate(
 
 
 def yoshida_integrate_multiple(
-    x0, v0, gms, t0, times, planet_xs, asteroid_xs, planet_gms, asteroid_gms, C, D
+    x0, v0, gms, dts, planet_xs, asteroid_xs, planet_gms, asteroid_gms, C, D
 ):
     """
     Integrate multiple particle to multiple times using a Yoshida leapfrog integrator.
@@ -229,10 +425,8 @@ def yoshida_integrate_multiple(
             The initial 3D velocities of N particles in AU/day
         gms (jnp.ndarray(shape=(N,))):
             The GM values of N particles in AU^3/day^2
-        t0 (float):
-            The initial time in TDB JD
-        times (jnp.ndarray(shape=(T,))):
-            The T times to propagate the system to in TDB JD. Does not include t0
+        dts (jnp.ndarray(shape=(T,))):
+            The time spacing between each substep for each of the T integrations
         planet_xs (jnp.ndarray(shape=(T, M, S, 3))):
             The 3D positions of M planets, at S evenly spaced substeps, for each of the
             T times. Units are in AU. The time spacing between each substep is even
@@ -293,10 +487,74 @@ def yoshida_integrate_multiple(
         ...     C=Y8_C,
         ...     D=Y8_D,
         ... )
+
+        A realistic main belt asteroid:
+
+        >>> import jax.numpy as jnp
+        >>> from astropy.time import Time
+        >>> import astropy.units as u
+        >>> from astroquery.jplhorizons import Horizons
+        >>> from jorbit.data import (
+        >>>     STANDARD_PLANET_PARAMS,
+        >>>     STANDARD_ASTEROID_PARAMS,
+        >>>     STANDARD_PLANET_GMS,
+        >>>     STANDARD_ASTEROID_GMS,
+        >>> )
+        >>> from jorbit.data.constants import Y8_C, Y8_D
+        >>> from jorbit.engine.yoshida_integrator import (
+        ...     prep_integrator_multiple,
+        ...     yoshida_integrate_multiple,
+        ... )
+        >>> times = Time(["2023-04-08", "2023-06-08", "2023-09-01"])
+        >>> target = 274301  # MBA (274301) Wikipedia
+        >>> horizons_query = Horizons(
+        ...     id=target,
+        ...     location="500@0",
+        ...     epochs=[t.tdb.jd for t in times],
+        ... )
+        >>> horizons_vectors = horizons_query.vectors(refplane="earth")
+        >>> tx0 = jnp.array(
+        ...     [horizons_vectors[0]["x"], horizons_vectors[0]["y"], horizons_vectors[0]["z"]]
+        ... )
+        >>> tv0 = jnp.array(
+        ...     [horizons_vectors[0]["vx"], horizons_vectors[0]["vy"], horizons_vectors[0]["vz"]]
+        ... )
+        >>> txq = jnp.array(
+        ...     [horizons_vectors[1]["x"], horizons_vectors[1]["y"], horizons_vectors[1]["z"]]
+        ... )
+        >>> tvq = jnp.array(
+        ...     [horizons_vectors[1]["vx"], horizons_vectors[1]["vy"], horizons_vectors[1]["vz"]]
+        ... )
+        >>> txf = jnp.array(
+        ...     [horizons_vectors[-1]["x"], horizons_vectors[-1]["y"], horizons_vectors[-1]["z"]]
+        ... )
+        >>> tvf = jnp.array(
+        ...     [horizons_vectors[-1]["vx"], horizons_vectors[-1]["vy"], horizons_vectors[-1]["vz"]]
+        ... )
+        >>> planet_xs, asteroid_xs, dts = prep_integrator_multiple(
+        ...     t0=times[0].tdb.jd,
+        ...     times=jnp.array([t.tdb.jd for t in times][1:]),
+        ...     steps=1_000,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ...     offset=0,
+        ... )
+        >>> a = yoshida_integrate_multiple(
+        ...     x0=jnp.array([tx0]),
+        ...     v0=jnp.array([tv0]),
+        ...     dts=dts,
+        ...     gms=jnp.array([0.0]),
+        ...     planet_xs=planet_xs,
+        ...     asteroid_xs=asteroid_xs,
+        ...     planet_gms=STANDARD_PLANET_GMS,
+        ...     asteroid_gms=STANDARD_ASTEROID_GMS,
+        ...     C=Y8_C,
+        ...     D=Y8_D,
+        ... )
+        >>> print(jnp.linalg.norm(a[0][0, 0] - txq) * u.au.to(u.m))
+        >>> print(jnp.linalg.norm(a[0][0, 1] - txf) * u.au.to(u.m))
+
     """
-    times = jnp.concatenate((jnp.array([t0]), times))
-    steps = planet_xs.shape[2]
-    dts = jnp.diff(times) / (steps)
 
     def scan_func(carry, scan_over):
         x, v = carry
@@ -315,4 +573,7 @@ def yoshida_integrate_multiple(
         )
         return (x, v), (x, v)
 
-    return jax.lax.scan(scan_func, (x0, v0), (dts, planet_xs, asteroid_xs))[1][0]
+    xs, vs = jax.lax.scan(scan_func, (x0, v0), (dts, planet_xs, asteroid_xs))[1]
+    xs = jnp.swapaxes(xs, 0, 1)
+    vs = jnp.swapaxes(vs, 0, 1)
+    return xs, vs
