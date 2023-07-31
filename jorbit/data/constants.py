@@ -64,8 +64,16 @@ INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
 
 # The position and velocity of MBA (274301) Wikipedia at 2023-01-01
 # just got tired of repeatedly querying Horizons for these
-EXAMPLE_X0 = jnp.array([0.7329153714224603, -1.855039720495754, -0.5516332680088478])
-EXAMPLE_V0 = jnp.array([0.01151489844692483, 0.00509674407437003, 0.001612237908921899])
+# retrieved: 7/31/2023
+EXAMPLE_X0 = jnp.array([0.7329153748983271, -1.855039716783791, -0.5516332653861648])
+EXAMPLE_V0 = jnp.array(
+    [0.01151489844541466, 0.005096744114895074, 0.001612237904806718]
+)
+# same as x0, v0 but for 2023-06-01
+EXAMPLE_XF = jnp.array([1.976820340621369, -0.5002197824996011, -0.1359562133928785])
+EXAMPLE_VF = jnp.array(
+    [0.003833449937911029, 0.01169478390479524, 0.003539022399934917]
+)
 
 # These are from the JPL ephemeris comments, and are in units of AU^3 / day^2
 # Pluto is still included in the main "de" ephemeris series, no other dwarf planets
