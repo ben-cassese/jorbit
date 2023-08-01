@@ -139,7 +139,7 @@ def _single_step(
     return x, v
 
 
-def prep_integrator_single(
+def prep_leapfrog_ntegrator_single(
     t0,
     tf,
     steps,
@@ -192,8 +192,8 @@ def prep_integrator_single(
         ...     STANDARD_ASTEROID_GMS,
         ... )
         >>> from jorbit.data.constants import EXAMPLE_X0, EXAMPLE_V0, EXAMPLE_XF, Y8_C, Y8_D
-        >>> from jorbit.engine.yoshida_integrator import prep_integrator_single, yoshida_integrate
-        >>> planet_xs, asteroid_xs, dt = prep_integrator_single(
+        >>> from jorbit.engine.yoshida_integrator import prep_leapfrog_ntegrator_single, yoshida_integrate
+        >>> planet_xs, asteroid_xs, dt = prep_leapfrog_ntegrator_single(
         ...     t0=Time("2023-01-01").tdb.jd,
         ...     tf=Time("2023-06-01").tdb.jd,
         ...     steps=10_000,
@@ -222,7 +222,7 @@ def prep_integrator_single(
     return planet_xs, asteroid_xs, dt
 
 
-def prep_integrator_multiple(
+def prep_leapfrog_integrator_multiple(
     t0,
     times,
     steps,
@@ -255,7 +255,7 @@ def prep_integrator_multiple(
         asteroid_params (Tuple[jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,Q,3,R))], default=STANDARD_ASTEROID_PARAMS from jorbit.data):
             Same as the planet_params, but for Q asteroids.
         offset (float, default=0):
-            Experimental. See prep_integrator_single for more
+            Experimental. See prep_leapfrog_ntegrator_single for more
 
     Returns:
         Tuple[jnp.ndarray(shape=(T, P, steps, 3)), jnp.ndarray(shape=(T, Q, steps, 3)), float]:
@@ -273,9 +273,9 @@ def prep_integrator_multiple(
         >>> import jax.numpy as jnp
         >>> from astropy.time import Time
         >>> from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
-        >>> from jorbit.engine.yoshida_integrator import prep_integrator_multiple
+        >>> from jorbit.engine.yoshida_integrator import prep_leapfrog_integrator_multiple
         >>> times = Time(["2021-01-01T00:00:00", "2021-01-02T00:00:00", "2021-01-03T00:00:00"])
-        >>> planet_xs, asteroid_xs, dts = prep_integrator_multiple(
+        >>> planet_xs, asteroid_xs, dts = prep_leapfrog_integrator_multiple(
         ...     t0=times[0].tdb.jd,
         ...     times=jnp.array([t.tdb.jd for t in times][1:]),
         ...     steps=100,
@@ -286,7 +286,7 @@ def prep_integrator_multiple(
     """
 
     def scan_func(carry, scan_over):
-        p_xs, a_xs, dt = prep_integrator_single(
+        p_xs, a_xs, dt = prep_leapfrog_ntegrator_single(
             t0=carry,
             tf=scan_over,
             steps=steps,
@@ -360,8 +360,8 @@ def yoshida_integrate(
         ...     STANDARD_ASTEROID_GMS,
         ... )
         >>> from jorbit.data.constants import EXAMPLE_X0, EXAMPLE_V0, EXAMPLE_XF, Y8_C, Y8_D
-        >>> from jorbit.engine.yoshida_integrator import prep_integrator_single, yoshida_integrate
-        >>> planet_xs, asteroid_xs, dt = prep_integrator_single(
+        >>> from jorbit.engine.yoshida_integrator import prep_leapfrog_ntegrator_single, yoshida_integrate
+        >>> planet_xs, asteroid_xs, dt = prep_leapfrog_ntegrator_single(
         ...     t0=Time("2023-01-01").tdb.jd,
         ...     tf=Time("2023-06-01").tdb.jd,
         ...     steps=10_000,
@@ -502,7 +502,7 @@ def yoshida_integrate_multiple(
         >>> )
         >>> from jorbit.data.constants import Y8_C, Y8_D
         >>> from jorbit.engine.yoshida_integrator import (
-        ...     prep_integrator_multiple,
+        ...     prep_leapfrog_integrator_multiple,
         ...     yoshida_integrate_multiple,
         ... )
         >>> times = Time(["2023-04-08", "2023-06-08", "2023-09-01"])
@@ -531,7 +531,7 @@ def yoshida_integrate_multiple(
         >>> tvf = jnp.array(
         ...     [horizons_vectors[-1]["vx"], horizons_vectors[-1]["vy"], horizons_vectors[-1]["vz"]]
         ... )
-        >>> planet_xs, asteroid_xs, dts = prep_integrator_multiple(
+        >>> planet_xs, asteroid_xs, dts = prep_leapfrog_integrator_multiple(
         ...     t0=times[0].tdb.jd,
         ...     times=jnp.array([t.tdb.jd for t in times][1:]),
         ...     steps=1_000,
