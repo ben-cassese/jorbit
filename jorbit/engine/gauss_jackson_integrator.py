@@ -3,17 +3,73 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-# from jax.experimental.ode import odeint
-
 from jorbit.engine.ephemeris import planet_state
-from jorbit.engine.yoshida_integrator import yoshida_integrate_multiple
+from jorbit.engine.yoshida_integrator import (
+    prep_leapfrog_integrator_multiple,
+    yoshida_integrate_multiple,
+)
 from jorbit.engine.accelerations import acceleration
-from jorbit.data.constants import EPSILON
 from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
 
 
+def prep_gj_integrator_single(
+    t0,
+    tf,
+    steps,
+    a_jk,
+    planet_params=STANDARD_PLANET_PARAMS,
+    asteroid_params=STANDARD_ASTEROID_PARAMS,
+):
+    dt = (tf - t0) / (steps - 1)
+    MID_IND = int((a_jk.shape[1] - 1) / 2)
+    backwards_times = t0 - jnp.arange(1, MID_IND + 1) * dt
+    forwards_times = t0 + jnp.arange(1, MID_IND + 1) * dt
+
+    # arbitrarily saying the lower order leapfrog should take 5x as many steps as GJ
+    b_planet_xs, b_asteroid_xs, b_dts = prep_leapfrog_integrator_multiple(
+        t0=t0,
+        times=backwards_times,
+        steps=MID_IND * 5,
+        planet_params=planet_params,
+        asteroid_params=asteroid_params,
+    )
+
+    f_planet_xs, f_asteroid_xs, f_dts = prep_leapfrog_integrator_multiple(
+        t0=t0,
+        times=forwards_times,
+        steps=MID_IND * 5,
+        planet_params=planet_params,
+        asteroid_params=asteroid_params,
+    )
+
+    planet_xs_warmup = jnp.stack((b_planet_xs, f_planet_xs))
+    asteroid_xs_warmup = jnp.stack((b_asteroid_xs, f_asteroid_xs))
+    dts_warmup = jnp.stack((b_dts, f_dts))
+
+    times = jnp.concatenate(
+        (backwards_times[::-1], jnp.linspace(t0, tf, steps))
+    )  # + dt/2
+    planet_xs, planet_vs, planet_as = planet_state(
+        planet_params=planet_params, times=times, velocity=True, acceleration=True
+    )
+
+    asteroid_xs, _, _ = planet_state(
+        planet_params=asteroid_params, times=times, velocity=False, acceleration=False
+    )
+
+    return (
+        planet_xs,
+        planet_vs,
+        planet_as,
+        asteroid_xs,
+        planet_xs_warmup,
+        asteroid_xs_warmup,
+        dts_warmup,
+    )
+
+
 ########################################################################################
-# Helper functions
+# Portions of the integrator
 ########################################################################################
 
 
@@ -142,7 +198,8 @@ def _corrector_scan_func(carry, scan_over, constants):
     is called repeatedly to refine the position estimate. Is called by
     _stepping_scan_func
     """
-    inferred_as, _, _ = carry
+    # last 3 args are new_little_s, predicted_x, predicted_v
+    inferred_as, _, _, _ = carry
     (
         dt,
         little_s,
@@ -182,7 +239,7 @@ def _corrector_scan_func(carry, scan_over, constants):
 
     inferred_as = inferred_as.at[:, -1, :].set(refined_a[:, 0, :])
 
-    return (inferred_as, new_little_s, predicted_x), None
+    return (inferred_as, new_little_s, predicted_x, predicted_v), None
 
 
 def _stepping_scan_func(carry, scan_over, constants):
@@ -191,7 +248,7 @@ def _stepping_scan_func(carry, scan_over, constants):
     by one time step. It is called repeatedly after startup, and it itself calls
     _corrector_scan_func several times during each step
     """
-    _, inferred_as, little_s, big_S_last = carry
+    _, _, inferred_as, little_s, big_S_last = carry  # first 2 are x, v
     planet_xs_step, planet_vs_step, planet_as_step, asteroid_xs_step = scan_over
     (
         dt,
@@ -259,11 +316,11 @@ def _stepping_scan_func(carry, scan_over, constants):
         ),
     )
 
-    inferred_as, new_little_s, predicted_x = jax.lax.scan(
-        scan_func, (inferred_as, little_s, predicted_x), None, length=5
+    inferred_as, new_little_s, predicted_x, predicted_v = jax.lax.scan(
+        scan_func, (inferred_as, little_s, predicted_x, predicted_v), None, length=5
     )[0]
 
-    return (predicted_x, inferred_as, new_little_s, big_S_last), None
+    return (predicted_x, predicted_v, inferred_as, new_little_s, big_S_last), None
 
 
 ########################################################################################
@@ -285,13 +342,12 @@ def gj_integrate(
     asteroid_xs,
     planet_xs_warmup,
     asteroid_xs_warmup,
+    dts_warmup,
     warmup_C,
     warmup_D,
     planet_gms,
     asteroid_gms,
     use_GR,
-    planet_params=STANDARD_PLANET_PARAMS,
-    asteroid_params=STANDARD_ASTEROID_PARAMS,
 ):
     """
     A massive foot-gun of a function I'm still working out.
@@ -337,6 +393,11 @@ def gj_integrate(
         asteroid_xs_warmup (jnp.ndarray(shape=(2, K/2, P, Q, 3))):
             The 3D positions of P asteroids. Same as planet_xs_warmup, but for
             asteroids.
+        dts_warmup (jnp.ndarray(shape=(2, K/2))):
+            The time steps used during warmup. Axis 0 is for forward/backward warmup
+            steps. Axis 1, K is the order of the GJ integrator, since that's how many
+            steps you need to take forwards and backwards during warmup. See
+            jorbit.engine.yoshida_integrator.yoshida_integrate_multiple for more
         warmup_C (jnp.ndarray):
             The C coefficients for the Yoshida integrator used to warm up the
             integrator. Values for 4th, 6th, and 8th order are precomputed and stored
@@ -347,28 +408,65 @@ def gj_integrate(
 
     Examples:
 
-        gj_integrate(
-            x0=x,
-            v0=v,
-            gms=gms,
-            b_jk=GJ10_B,
-            a_jk=GJ10_A,
-            t0=0.,
-            tf=jnp.pi,
-            planet_xs=jnp.zeros((1, 50, 3)),
-            planet_vs=jnp.zeros((1, 50, 3)),
-            planet_as=jnp.zeros((1, 50, 3)),
-            asteroid_xs=jnp.zeros((1, 50, 3)),
-            planet_xs_warmup=None,
-            asteroid_xs_warmup=None,
-            warmup_C=None,
-            warmup_D=None,
-            planet_gms=jnp.array([0.]),
-            asteroid_gms=jnp.array([0.]),
-            use_GR=True,
-            planet_params=STANDARD_PLANET_PARAMS,
-            asteroid_params=STANDARD_ASTEROID_PARAMS
-        )
+        Integrate a main belt asteroid forwards for 2 months:
+
+        >>> import jax.numpy as jnp
+        >>> import astropy.units as u
+        >>> from astropy.time import Time
+        >>> from astroquery.jplhorizons import Horizons
+        >>> from jorbit.data.constants import Y8_C, Y8_D, GJ14_A, GJ14_B
+        >>> from jorbit.engine.gauss_jackson_integrator import prep_gj_integrator_single, gj_integrate
+        >>> from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS, STANDARD_PLANET_GMS, STANDARD_ASTEROID_GMS
+        >>> times = Time(['2023-04-08', '2023-06-08'])
+        >>> target = 274301  # MBA (274301) Wikipedia
+        >>> horizons_query = Horizons(
+        ...     id=target,
+        ...     location="500@0",
+        ...     epochs=[t.tdb.jd for t in times],
+        ... )
+        >>> vectors = horizons_query.vectors(refplane="earth")
+        >>> x0 = jnp.array([vectors[0]["x"], vectors[0]["y"], vectors[0]["z"]])
+        >>> v0 = jnp.array([vectors[0]["vx"], vectors[0]["vy"], vectors[0]["vz"]])
+        >>> xf = jnp.array([vectors[1]["x"], vectors[1]["y"], vectors[1]["z"]])
+        >>> vf = jnp.array([vectors[1]["vx"], vectors[1]["vy"], vectors[1]["vz"]])
+        >>> (
+        ...     planet_xs,
+        ...     planet_vs,
+        ...     planet_as,
+        ...     asteroid_xs,
+        ...     planet_xs_warmup,
+        ...     asteroid_xs_warmup,
+        ...     dts_warmup,
+        ... ) = prep_gj_integrator_single(
+        ...     t0=times[0].tdb.jd,
+        ...     tf=times[1].tdb.jd,
+        ...     steps=10,
+        ...     a_jk=GJ14_A,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ... )
+        >>> calc_xf, calc_vf = gj_integrate(
+        ...     x0=jnp.array([x0]),
+        ...     v0=jnp.array([v0]),
+        ...     gms=jnp.array([0.0]),
+        ...     b_jk=GJ14_B,
+        ...     a_jk=GJ14_A,
+        ...     t0=times[0].tdb.jd,
+        ...     tf=times[1].tdb.jd,
+        ...     planet_xs=planet_xs,
+        ...     planet_vs=planet_vs,
+        ...     planet_as=planet_as,
+        ...     asteroid_xs=asteroid_xs,
+        ...     planet_xs_warmup=planet_xs_warmup,
+        ...     asteroid_xs_warmup=asteroid_xs_warmup,
+        ...     dts_warmup=dts_warmup,
+        ...     warmup_C=Y8_C,
+        ...     warmup_D=Y8_D,
+        ...     planet_gms=STANDARD_PLANET_GMS,
+        ...     asteroid_gms=STANDARD_ASTEROID_GMS,
+        ...     use_GR=True,
+        ... )
+        >>> print(jnp.linalg.norm(calc_xf - xf) * u.au.to(u.m))
 
     References:
         .. [1] "Implementation of Gauss-Jackson Integration for Orbit Propagation": https://doi.org/10.1007/BF03546367
@@ -377,7 +475,7 @@ def gj_integrate(
     """
 
     MID_IND = int((a_jk.shape[1] - 1) / 2)
-    dt = (tf - t0) / (planet_xs.shape[1] - 1)
+    dt = (tf - t0) / (planet_xs.shape[1] - (MID_IND + 1))
 
     ####################################################################################
     # Initial integration to get leading/trailing points
@@ -386,9 +484,8 @@ def gj_integrate(
     backwards_x, backwards_v = yoshida_integrate_multiple(
         x0=x0,
         v0=v0,
-        t0=t0,
-        times=-jnp.arange(1, MID_IND + 1) * dt,
         gms=gms,
+        dts=dts_warmup[0],
         planet_xs=planet_xs_warmup[0],
         asteroid_xs=asteroid_xs_warmup[0],
         planet_gms=planet_gms,
@@ -396,12 +493,12 @@ def gj_integrate(
         C=warmup_C,
         D=warmup_D,
     )
+
     forwards_x, forwards_v = yoshida_integrate_multiple(
         x0=x0,
         v0=v0,
-        t0=t0,
-        times=jnp.arange(1, MID_IND + 1) * dt,
         gms=gms,
+        dts=dts_warmup[1],
         planet_xs=planet_xs_warmup[1],
         asteroid_xs=asteroid_xs_warmup[1],
         planet_gms=planet_gms,
@@ -416,8 +513,6 @@ def gj_integrate(
     inferred_vs = jnp.column_stack(
         [backwards_v[:, ::-1, :], v0[:, None, :], forwards_v]
     )
-
-    ####################################################################################
 
     inferred_as = acceleration(
         xs=inferred_xs,
@@ -505,14 +600,20 @@ def gj_integrate(
         ),
     )
 
-    swapped_planet_xs = jnp.swapaxes(planet_xs[:, MID_IND + 1 :, :], 0, 1)
-    swapped_planet_vs = jnp.swapaxes(planet_vs[:, MID_IND + 1 :, :], 0, 1)
-    swapped_planet_as = jnp.swapaxes(planet_as[:, MID_IND + 1 :, :], 0, 1)
-    swapped_asteroid_xs = jnp.swapaxes(asteroid_xs[:, MID_IND + 1 :, :], 0, 1)
+    swapped_planet_xs = jnp.swapaxes(planet_xs[:, 2 * MID_IND + 1 :, :], 0, 1)
+    swapped_planet_vs = jnp.swapaxes(planet_vs[:, 2 * MID_IND + 1 :, :], 0, 1)
+    swapped_planet_as = jnp.swapaxes(planet_as[:, 2 * MID_IND + 1 :, :], 0, 1)
+    swapped_asteroid_xs = jnp.swapaxes(asteroid_xs[:, 2 * MID_IND + 1 :, :], 0, 1)
 
-    predicted_x, _, _, _ = jax.lax.scan(
+    b_terms = (b_f1 * inferred_as).sum(axis=1)
+    a_terms = (a_f1 * inferred_as).sum(axis=1)
+    predicted_v = dt * (little_s + b_terms)
+    predicted_x = dt**2 * (big_S_last + a_terms)
+
+    # last 3 args are inferred_as, new_little_s, big_S_last
+    predicted_x, predicted_v, _, _, _ = jax.lax.scan(
         scan_func,
-        (x0, inferred_as, little_s, big_S_last),
+        (predicted_x, predicted_v, inferred_as, little_s, big_S_last),
         (
             swapped_planet_xs,
             swapped_planet_vs,
@@ -521,4 +622,4 @@ def gj_integrate(
         ),
     )[0]
 
-    return predicted_x
+    return predicted_x, predicted_v
