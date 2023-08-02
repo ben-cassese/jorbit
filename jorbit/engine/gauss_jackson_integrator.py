@@ -11,16 +11,74 @@ from jorbit.engine.yoshida_integrator import (
 from jorbit.engine.accelerations import acceleration
 from jorbit.data import STANDARD_PLANET_PARAMS, STANDARD_ASTEROID_PARAMS
 
+########################################################################################
+# Preparation helpers
+########################################################################################
+
 
 def prep_gj_integrator_single(
     t0,
     tf,
-    steps,
+    jumps,
     a_jk,
     planet_params=STANDARD_PLANET_PARAMS,
     asteroid_params=STANDARD_ASTEROID_PARAMS,
 ):
-    dt = (tf - t0) / (steps - 1)
+    """
+    Create some of the inputs needed to run the Gauss-Jackson integrator for one epoch.
+
+    Parameters:
+        t0 (float):
+            The initial time in TDB JD
+        tf (float):
+            The final time in TDB JD
+        jumps (int):
+            The number of jumps to take between t0 and tf. This implicitly sets the size
+            of the timesteps taken: dt=(tf-t0)/jumps, with dt in days
+        a_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
+            precomputed/stored in jorbit.data.constants for orders 8, 10, 12, and 14.
+        planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.data):
+            The ephemeris describing P massive objects in the solar system. The first
+            element is the initial time of the ephemeris in seconds since J2000 TDB. The
+            second element is the length of the interval covered by each piecewise chunk of
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
+            asteroids, it's 32 days). The third element contains the Q coefficients of the
+            R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
+            x,y,z dimensions.
+        asteroid_params (Tuple[jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,Q,3,R))], default=STANDARD_ASTEROID_PARAMS from jorbit.data):
+            Same as the planet_params, but for Q asteroids.
+
+    Returns:
+        Tuple[(jnp.ndarray(shape=(M, S + K/2, 3)), jnp.ndarray(shape=(M, S + K/2, 3)), jnp.ndarray(shape=(M, S + K/2, 3)), jnp.ndarray(shape=(P, S + K/2, 3)), jnp.ndarray(shape=(2, K/2, M, Q, 3)), jnp.ndarray(shape=(2, K/2, P, Q, 3)), jnp.ndarray(shape=(2, K/2)))]
+        planet_xs (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D positions of M planets. Each planet has S + K/2 positions, where S
+            is the number of subpositions between t0 and tf. The first K/2 positions are
+            *before* the initial time and are needed to warm up the integrator. Between
+            t0 and tf, the integrator will take S-1 jumps: dt=(tf-t0)/(S - (K/2) - 1)
+        planet_vs (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D velocities of M planets. Same as planet_xs, but for velocities.
+        planet_as (jnp.ndarray(shape=(M, S + K/2, 3))):
+            The 3D accelerations of M planets. Same as planet_xs, but for accelerations.
+        asteroid_xs (jnp.ndarray(shape=(P, S + K/2, 3))):
+            The 3D positions of P asteroids. Same as planet_xs, but for asteroids.
+        planet_xs_warmup (jnp.ndarray(shape=(2, K/2, M, Q, 3))):
+            The 3D positions of M planets. Axis 0 is for the forward/backward warmup
+            steps. Axis 1, K is the order of the GJ integrator, since that's how many
+            steps you need to take forwards and backwards during warmup. Axis 2 is for
+            the M planets. Axis 3 is for the Q substeps taken for each of the K
+            integration steps. Axis 4 is for the {x,y,z} dimensions, in AU
+        asteroid_xs_warmup (jnp.ndarray(shape=(2, K/2, P, Q, 3))):
+            The 3D positions of P asteroids. Same as planet_xs_warmup, but for
+            asteroids.
+        dts_warmup (jnp.ndarray(shape=(2, K/2))):
+            The time steps used during warmup. Axis 0 is for forward/backward warmup
+            steps. Axis 1, K is the order of the GJ integrator, since that's how many
+            steps you need to take forwards and backwards during warmup. See
+            jorbit.engine.yoshida_integrator.yoshida_integrate_multiple for more
+    """
+    dt = (tf - t0) / (jumps)
     MID_IND = int((a_jk.shape[1] - 1) / 2)
     backwards_times = t0 - jnp.arange(1, MID_IND + 1) * dt
     forwards_times = t0 + jnp.arange(1, MID_IND + 1) * dt
@@ -29,7 +87,7 @@ def prep_gj_integrator_single(
     b_planet_xs, b_asteroid_xs, b_dts = prep_leapfrog_integrator_multiple(
         t0=t0,
         times=backwards_times,
-        steps=MID_IND * 5,
+        steps=5,
         planet_params=planet_params,
         asteroid_params=asteroid_params,
     )
@@ -37,7 +95,7 @@ def prep_gj_integrator_single(
     f_planet_xs, f_asteroid_xs, f_dts = prep_leapfrog_integrator_multiple(
         t0=t0,
         times=forwards_times,
-        steps=MID_IND * 5,
+        steps=5,
         planet_params=planet_params,
         asteroid_params=asteroid_params,
     )
@@ -46,9 +104,7 @@ def prep_gj_integrator_single(
     asteroid_xs_warmup = jnp.stack((b_asteroid_xs, f_asteroid_xs))
     dts_warmup = jnp.stack((b_dts, f_dts))
 
-    times = jnp.concatenate(
-        (backwards_times[::-1], jnp.linspace(t0, tf, steps))
-    )  # + dt/2
+    times = jnp.concatenate((backwards_times[::-1], jnp.linspace(t0, tf, jumps + 1)))
     planet_xs, planet_vs, planet_as = planet_state(
         planet_params=planet_params, times=times, velocity=True, acceleration=True
     )
@@ -66,6 +122,99 @@ def prep_gj_integrator_single(
         asteroid_xs_warmup,
         dts_warmup,
     )
+
+
+def prep_gj_integrator_multiple(t0, times, jumps, a_jk, planet_params, asteroid_params):
+    """
+    Create some of the inputs needed to run the Gauss-Jackson integrator for multiple epochs.
+
+    Just a wrapper for prep_gj_integrator_single.
+
+    Parameters:
+        t0 (float):
+            The initial time in TDB JD
+        times (jnp.ndarray(shape=(S,))):
+            The epochs to integrate to in TDB JD
+        jumps (int):
+            The number of jumps to take between each epoch. This implicitly sets the
+            size of the timesteps taken: dt=(t_{i+1}-t_{i})/jumps, with dt in days, for
+            each ith epoch. The number of jumps must be the same for each epoch, so
+            unless the epochs themselves are evenly spaced, the size of the timesteps
+            will differ between them.
+        a_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
+            precomputed/stored in jorbit.data.constants for orders 8, 10, 12, and 14.
+        planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.data):
+            The ephemeris describing P massive objects in the solar system. The first
+            element is the initial time of the ephemeris in seconds since J2000 TDB. The
+            second element is the length of the interval covered by each piecewise chunk of
+            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
+            asteroids, it's 32 days). The third element contains the Q coefficients of the
+            R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
+            x,y,z dimensions.
+        asteroid_params (Tuple[jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,)), jnp.ndarray(shape=(Q,Q,3,R))], default=STANDARD_ASTEROID_PARAMS from jorbit.data):
+            Same as the planet_params, but for Q asteroids.
+
+    Returns:
+        planet_xs (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D positions of M planets. Each planet has J + K/2 positions, per
+            integration epoch, and there are S epochs. The first K/2 positions of each
+            epoch are *before* the epoch and are needed to warm up the integrator- see
+            jorbit.engine.gauss_jackson_integrator.gj_integrate for more
+        planet_vs (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D velocities of M planets. Same as planet_xs, but for velocities. Units
+            are AU/day
+        planet_as (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D accelerations of M planets. Same as planet_xs, but for accelerations.
+            Units are AU/day^2
+        asteroid_xs (jnp.ndarray(shape=(S, P, J + K/2, 3))):
+            The 3D positions of P asteroids. Same as planet_xs, but for asteroids
+        planet_xs_warmup (jnp.ndarray(shape=(S, 2, K/2, M, Q, 3))):
+            The 3D positions of M planets during the integrator warmup time. Axis 0
+            marks the epochs. Axis 1 is for the backwards and forwards positions. Axis
+            2, K is the order of the GJ integrator, since that's how many warmup steps
+            you need. Axis 3 is for the M planets. Axis 4 is for the Q substeps taken
+            to reach each of the warmup positions. Axis 5 is for the {x,y,z} dimensions.
+            Units are AU
+        asteroid_xs_warmup (jnp.ndarray(shape=(S, 2, K/2, P, Q, 3))):
+            The 3D positions of P asteroids during the integrator warmup time. Same as
+            planet_xs_warmup, but for asteroids
+        dts_warmup (jnp.ndarray(shape=(S, 2, K/2))):
+            The length of the time steps used to reach each of the warmup positions.
+            Axis 0 marks the epochs. Axis 1 is for the backwards and forwards positions.
+            Axis 2, K is the order of the GJ integrator, since that's how many warmup
+            steps are taken. Units are days
+    """
+
+    def scan_func(carry, scan_over):
+        (
+            planet_xs,
+            planet_vs,
+            planet_as,
+            asteroid_xs,
+            planet_xs_warmup,
+            asteroid_xs_warmup,
+            dts_warmup,
+        ) = prep_gj_integrator_single(
+            t0=carry,
+            tf=scan_over,
+            jumps=jumps,
+            a_jk=a_jk,
+            planet_params=planet_params,
+            asteroid_params=asteroid_params,
+        )
+        return scan_over, (
+            planet_xs,
+            planet_vs,
+            planet_as,
+            asteroid_xs,
+            planet_xs_warmup,
+            asteroid_xs_warmup,
+            dts_warmup,
+        )
+
+    return jax.lax.scan(scan_func, t0, times)[1]
 
 
 ########################################################################################
@@ -221,7 +370,7 @@ def _corrector_scan_func(carry, scan_over, constants):
     new_little_s = little_s + (inferred_as[:, -1, :] + inferred_as[:, -2, :]) / 2
     b_coeffs = b_f * inferred_as[:, -1, :] + frozen_bs
     a_coeffs = a_f * inferred_as[:, -1, :] + frozen_as
-    predicted_v = dt * (little_s + b_coeffs)
+    predicted_v = dt * (new_little_s + b_coeffs)
     predicted_x = dt**2 * (big_S_last + a_coeffs)
 
     refined_a = acceleration(
@@ -269,7 +418,7 @@ def _stepping_scan_func(carry, scan_over, constants):
     b_terms = (b_f1 * inferred_as).sum(axis=1)
     a_terms = (a_f1 * inferred_as).sum(axis=1)
 
-    predicted_v = dt * (little_s + b_terms)
+    predicted_v = dt * (little_s + b_terms + 0.5 * inferred_as[:, -1, :])
     predicted_x = dt**2 * (big_S_last + a_terms)
 
     predicted_next_a = acceleration(
@@ -350,11 +499,7 @@ def gj_integrate(
     use_GR,
 ):
     """
-    A massive foot-gun of a function I'm still working out.
-
-    Really it worked fine with jax.experimental.odeint, but I couldn't forward diff
-    it, so now I'm making a mess of things by trying to use a homebrewed leapfrog
-    integrator for the warmup and then a Gauss-Jackson integrator for the actual
+    Advance a system of particles to a given epoch using the Gauss-Jackson integrator.
 
     Parameters:
         x0 (jnp.ndarray(shape=(N, 3))):
@@ -376,8 +521,9 @@ def gj_integrate(
             The final time in TDB JD
         planet_xs (jnp.ndarray(shape=(M, S + K/2, 3))):
             The 3D positions of M planets. Each planet has S + K/2 positions, where S
-            is the number of substeps between t0 and tf. The first K/2 positions are
-            *before* the initial time and are needed to warm up the integrator
+            is the number of subpositions between t0 and tf. The first K/2 positions are
+            *before* the initial time and are needed to warm up the integrator. Between
+            t0 and tf, the integrator will take S-1 jumps: dt=(tf-t0)/(S - (K/2) - 1)
         planet_vs (jnp.ndarray(shape=(M, S + K/2, 3))):
             The 3D velocities of M planets. Same as planet_xs, but for velocities.
         planet_as (jnp.ndarray(shape=(M, S + K/2, 3))):
@@ -399,12 +545,26 @@ def gj_integrate(
             steps you need to take forwards and backwards during warmup. See
             jorbit.engine.yoshida_integrator.yoshida_integrate_multiple for more
         warmup_C (jnp.ndarray):
-            The C coefficients for the Yoshida integrator used to warm up the
-            integrator. Values for 4th, 6th, and 8th order are precomputed and stored
-            in jorbit.data.constants. See Yoshida 1990 [2]_ for more details.
+            The C coefficients for the Yoshida leapfrog integrator used to warm up the
+            larger Gauss-Jackson integor. See jorbit.engine.yoshida_integrator for more,
+            these are precomputed for orders 4, 6, and 8 in joirbit.data.constants
         warmup_D (jnp.ndarray):
-            The D matrix for the Yoshida integrator used to warm up the Gauss-Jackson
+            The D coefficients for the Yoshida leapfrog integrator used to warm up the
+            larger Gauss-Jackson integor. See jorbit.engine.yoshida_integrator for more,
+            these are precomputed for orders 4, 6, and 8 in joirbit.data.constants
+        planet_gms (jnp.ndarray(shape=(M,))):
+            The GM values of M planets in AU^3/day^2
+        asteroid_gms (jnp.ndarray(shape=(P,))):
+            The GM values of P asteroids in AU^3/day^2
+        use_GR (bool):
+            Whether or not to use general relativity corrections
 
+    Returns:
+        Tuple[jnp.ndarray(shape=(N, 3)), jnp.ndarray(shape=(N, 3))]:
+        xs (jnp.ndarray(shape=(N, 3))):
+            The final positions of N particles in AU
+        vs (jnp.ndarray(shape=(N, 3))):
+            The final velocities of N particles in AU/day
 
     Examples:
 
@@ -440,7 +600,7 @@ def gj_integrate(
         ... ) = prep_gj_integrator_single(
         ...     t0=times[0].tdb.jd,
         ...     tf=times[1].tdb.jd,
-        ...     steps=10,
+        ...     jumps=9,
         ...     a_jk=GJ14_A,
         ...     planet_params=STANDARD_PLANET_PARAMS,
         ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
@@ -467,6 +627,7 @@ def gj_integrate(
         ...     use_GR=True,
         ... )
         >>> print(jnp.linalg.norm(calc_xf - xf) * u.au.to(u.m))
+        >>> print(jnp.linalg.norm(calc_vf - vf) * (u.au/u.day).to(u.m/u.s))
 
     References:
         .. [1] "Implementation of Gauss-Jackson Integration for Orbit Propagation": https://doi.org/10.1007/BF03546367
@@ -623,3 +784,218 @@ def gj_integrate(
     )[0]
 
     return predicted_x, predicted_v
+
+
+def gj_integrate_multiple(
+    x0,
+    v0,
+    gms,
+    b_jk,
+    a_jk,
+    t0,
+    times,
+    planet_xs,
+    planet_vs,
+    planet_as,
+    asteroid_xs,
+    planet_xs_warmup,
+    asteroid_xs_warmup,
+    dts_warmup,
+    warmup_C,
+    warmup_D,
+    planet_gms,
+    asteroid_gms,
+    use_GR,
+):
+    """
+    Integrate to multiple epochs using the Gauss-Jackson integrator
+
+    Just a wrapper for gj_integrate that scans across multiple epochs, so long as number
+    of jumps between all of them are the same.
+
+    Parameters:
+        x0 (jnp.ndarray(shape=(N, 3))):
+            Initial position of N particles in AU
+        v0 (jnp.ndarray(shape=(N, 3))):
+            Initial velocity of N particles in AU/day
+        gms (jnp.ndarray(shape=(N,))):
+            The GM values of N particles in AU^3/day^2
+        b_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "b_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
+            precomputed/stored in jorbit.data.constants for orders 8, 10, 12, 14,
+            and 16.
+        a_jk (jnp.ndarray(shape=(K+2, K+1))):
+            The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
+            Berry and Healy 2004 [1]_. Same as b_jk, these have been precomputed
+        t0 (float):
+            The initial time in TDB JD
+        times (jnp.ndarray(shape=(S,))):
+            The epochs to integrate to in TDB JD
+        planet_xs (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D positions of M planets. Each planet has J + K/2 positions, per
+            integration epoch, and there are S epochs. The first K/2 positions of each
+            epoch are *before* the epoch and are needed to warm up the integrator- see
+            jorbit.engine.gauss_jackson_integrator.gj_integrate for more
+        planet_vs (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D velocities of M planets. Same as planet_xs, but for velocities. Units
+            are AU/day
+        planet_as (jnp.ndarray(shape=(S, M, J + K/2, 3))):
+            The 3D accelerations of M planets. Same as planet_xs, but for accelerations.
+            Units are AU/day^2
+        asteroid_xs (jnp.ndarray(shape=(S, P, J + K/2, 3))):
+            The 3D positions of P asteroids. Same as planet_xs, but for asteroids
+        planet_xs_warmup (jnp.ndarray(shape=(S, 2, K/2, M, Q, 3))):
+            The 3D positions of M planets during the integrator warmup time. Axis 0
+            marks the epochs. Axis 1 is for the backwards and forwards positions. Axis
+            2, K is the order of the GJ integrator, since that's how many warmup steps
+            you need. Axis 3 is for the M planets. Axis 4 is for the Q substeps taken
+            to reach each of the warmup positions. Axis 5 is for the {x,y,z} dimensions.
+            Units are AU
+        asteroid_xs_warmup (jnp.ndarray(shape=(S, 2, K/2, P, Q, 3))):
+            The 3D positions of P asteroids during the integrator warmup time. Same as
+            planet_xs_warmup, but for asteroids
+        dts_warmup (jnp.ndarray(shape=(S, 2, K/2))):
+            The length of the time steps used to reach each of the warmup positions.
+            Axis 0 marks the epochs. Axis 1 is for the backwards and forwards positions.
+            Axis 2, K is the order of the GJ integrator, since that's how many warmup
+            steps are taken. Units are days
+        warmup_C (jnp.ndarray):
+            The C coefficients for the Yoshida leapfrog integrator used to warm up the
+            larger Gauss-Jackson integor. See jorbit.engine.yoshida_integrator for more,
+            these are precomputed for orders 4, 6, and 8 in joirbit.data.constants
+        warmup_D (jnp.ndarray):
+            The D coefficients for the Yoshida leapfrog integrator used to warm up the
+            larger Gauss-Jackson integor. See jorbit.engine.yoshida_integrator for more,
+            these are precomputed for orders 4, 6, and 8 in joirbit.data.constants
+        planet_gms (jnp.ndarray(shape=(M,))):
+            The GM values of the M planets in AU^3/day^2
+        asteroid_gms (jnp.ndarray(shape=(P,))):
+            The GM values of the P asteroids in AU^3/day^2
+        use_GR (bool):
+            Whether or not to use general relativity corrections
+
+    Returns:
+        Tuple[jnp.ndarray(shape=(N, S, 3)), jnp.ndarray(shape=(N, S, 3))]:
+        xs (jnp.ndarray(shape=(N, S, 3))):
+            The final positions of N particles at the S epochs in AU
+        vs (jnp.ndarray(shape=(N, S, 3))):
+            The final velocities of N particles at the S epochs in AU/day
+
+    Examples:
+
+        Integrate a main belt asteroid forwards by a few months:
+
+        >>> import jax
+        >>> jax.config.update("jax_enable_x64", True)
+        >>> import jax.numpy as jnp
+        >>> from astropy.time import Time
+        >>> from astropy import units as u
+        >>> from astroquery.jplhorizons import Horizons
+        >>> from jorbit.data.constants import GJ14_A, GJ14_B, Y8_C, Y8_D
+        >>> from jorbit.data import (
+        ...     STANDARD_PLANET_PARAMS,
+        ...     STANDARD_ASTEROID_PARAMS,
+        ...     STANDARD_PLANET_GMS,
+        ...     STANDARD_ASTEROID_GMS,
+        ... )
+        >>> from jorbit.engine.gauss_jackson_integrator import (
+        ...     prep_gj_integrator_multiple,
+        ...     gj_integrate_multiple,
+        ... )
+        >>> times = Time(["2023-04-08", "2023-06-08", "2023-10-01"])
+        >>> target = 274301  # MBA (274301) Wikipedia
+        >>> horizons_query = Horizons(
+        ...     id=target,
+        ...     location="500@0",  # set the vector origin to the solar system barycenter
+        ...     epochs=[t.tdb.jd for t in times],
+        ... )
+        >>> vectors = horizons_query.vectors(refplane="earth")
+        >>> x0 = jnp.array([vectors[0]["x"], vectors[0]["y"], vectors[0]["z"]])
+        >>> v0 = jnp.array([vectors[0]["vx"], vectors[0]["vy"], vectors[0]["vz"]])
+        >>> xi = jnp.array([vectors[1]["x"], vectors[1]["y"], vectors[1]["z"]])
+        >>> vi = jnp.array([vectors[1]["vx"], vectors[1]["vy"], vectors[1]["vz"]])
+        >>> xf = jnp.array([vectors[2]["x"], vectors[2]["y"], vectors[2]["z"]])
+        >>> vf = jnp.array([vectors[2]["vx"], vectors[2]["vy"], vectors[2]["vz"]])
+        >>> (
+        ...     planet_xs,
+        ...     planet_vs,
+        ...     planet_as,
+        ...     asteroid_xs,
+        ...     planet_xs_warmup,
+        ...     asteroid_xs_warmup,
+        ...     dts_warmup,
+        ... ) = prep_gj_integrator_multiple(
+        ...     t0=times[0].tdb.jd,
+        ...     times=times[1:].tdb.jd,
+        ...     jumps=16,
+        ...     a_jk=GJ14_A,
+        ...     planet_params=STANDARD_PLANET_PARAMS,
+        ...     asteroid_params=STANDARD_ASTEROID_PARAMS,
+        ... )
+        >>> x, v = gj_integrate_multiple(
+        ...     x0=jnp.array([x0]),
+        ...     v0=jnp.array([v0]),
+        ...     gms=jnp.array([0.0]),
+        ...     b_jk=GJ14_B,
+        ...     a_jk=GJ14_A,
+        ...     t0=times[0].tdb.jd,
+        ...     times=times[1:].tdb.jd,
+        ...     planet_xs=planet_xs,
+        ...     planet_vs=planet_vs,
+        ...     planet_as=planet_as,
+        ...     asteroid_xs=asteroid_xs,
+        ...     planet_xs_warmup=planet_xs_warmup,
+        ...     asteroid_xs_warmup=asteroid_xs_warmup,
+        ...     dts_warmup=dts_warmup,
+        ...     warmup_C=Y8_C,
+        ...     warmup_D=Y8_D,
+        ...     planet_gms=STANDARD_PLANET_GMS,
+        ...     asteroid_gms=STANDARD_ASTEROID_GMS,
+        ...     use_GR=True,
+        ... )
+        >>> print(jnp.linalg.norm(x[0, 0] - xi) * u.au.to(u.m))
+        >>> print(jnp.linalg.norm(x[0, 1] - xf) * u.au.to(u.m))
+
+    """
+
+    def scan_func(carry, scan_over):
+        x, v = gj_integrate(
+            x0=carry[0],
+            v0=carry[1],
+            gms=gms,
+            b_jk=b_jk,
+            a_jk=a_jk,
+            t0=carry[2],
+            tf=scan_over[0],
+            planet_xs=scan_over[1],
+            planet_vs=scan_over[2],
+            planet_as=scan_over[3],
+            asteroid_xs=scan_over[4],
+            planet_xs_warmup=scan_over[5],
+            asteroid_xs_warmup=scan_over[6],
+            dts_warmup=scan_over[7],
+            warmup_C=warmup_C,
+            warmup_D=warmup_D,
+            planet_gms=planet_gms,
+            asteroid_gms=asteroid_gms,
+            use_GR=use_GR,
+        )
+        return (x, v, scan_over[0]), (x, v)
+
+    x, v = jax.lax.scan(
+        scan_func,
+        (x0, v0, t0),
+        (
+            times,
+            planet_xs,
+            planet_vs,
+            planet_as,
+            asteroid_xs,
+            planet_xs_warmup,
+            asteroid_xs_warmup,
+            dts_warmup,
+        ),
+    )[1]
+
+    return jnp.swapaxes(x, 0, 1), jnp.swapaxes(v, 0, 1)
