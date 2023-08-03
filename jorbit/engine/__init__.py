@@ -43,7 +43,7 @@ from jorbit.engine.accelerations import *
 from jorbit.engine.ephemeris import *
 from jorbit.engine.slapshot_integrator import *
 from jorbit.engine.likelihood import *
-from jorbit.engine.utils import *
+from jorbit.engine.sky_projection import *
 
 j_planet_state_helper = jax.jit(planet_state_helper)
 j_planet_state = jax.jit(planet_state)

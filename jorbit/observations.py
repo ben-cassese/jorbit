@@ -21,7 +21,7 @@ import os
 import pkg_resources
 from tqdm import tqdm
 
-from jorbit.construct_perturbers import construct_perturbers
+from jorbit.engine.utils import construct_perturbers
 
 from jorbit.data import (
     observatory_codes,
