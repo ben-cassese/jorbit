@@ -13,7 +13,7 @@ from astropy.time import Time
 
 from jorbit.data import STANDARD_SUN_PARAMS
 from jorbit.data.constants import all_planets, large_asteroids
-from jorbit.construct_perturbers import construct_perturbers
+from jorbit.engine.utils import construct_perturbers
 from jorbit.engine import (
     j_cart_to_elements,
     j_elements_to_cart,

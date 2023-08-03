@@ -9,7 +9,7 @@ t = pkg_resources.resource_filename("jorbit", "data/observatory_codes.pkl")
 with open(t, "rb") as f:
     observatory_codes = pickle.load(f)
 
-# These were created by running jorbit.construct_perturbers.construct_perturbers()
+# These were created by running jorbit.engine.utils.construct_perturbers()
 # Caching since they're used the most often
 t = pkg_resources.resource_filename("jorbit", "data/standard_ephemeris_params.pkl")
 with open(t, "rb") as f:

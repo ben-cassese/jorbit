@@ -3,8 +3,6 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit, lax
-import pickle
 
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
@@ -13,9 +11,8 @@ from jorbit.data import (
     STANDARD_ASTEROID_GMS,
 )
 
-
 from jorbit.engine.slapshot_integrator import integrate_multiple
-from jorbit.engine.utils import on_sky, sky_error
+from jorbit.engine.sky_projection import on_sky, sky_error
 
 
 def negative_loglike_single(

@@ -8,3 +8,4 @@ tests/unit/__pycache__/
 .coverage
 .vscode/
 jorbit/engine/__pycache__/
+.pytest_cache/
