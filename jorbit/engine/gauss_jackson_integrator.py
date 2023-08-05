@@ -186,7 +186,7 @@ def _stepping_scan_func(carry, scan_over, constants):
     by one time step. It is called repeatedly after startup, and it itself calls
     _corrector_scan_func several times during each step
     """
-    _, _, inferred_as, little_s, big_S_last = carry  # first 2 are x, v
+
     planet_xs_step, planet_vs_step, planet_as_step, asteroid_xs_step = scan_over
     (
         dt,
@@ -202,63 +202,70 @@ def _stepping_scan_func(carry, scan_over, constants):
         use_GR,
     ) = constants
 
-    big_S_last = big_S_last + little_s + (inferred_as[:, -1, :] / 2)
+    def false_func(carry):
+        return carry, None
 
-    b_terms = (b_f1 * inferred_as).sum(axis=1)
-    a_terms = (a_f1 * inferred_as).sum(axis=1)
+    def true_func(carry):
+        xs, vs, inferred_as, little_s, big_S_last = carry
+        big_S_last = big_S_last + little_s + (inferred_as[:, -1, :] / 2)
 
-    predicted_v = dt * (little_s + b_terms + 0.5 * inferred_as[:, -1, :])
-    predicted_x = dt**2 * (big_S_last + a_terms)
+        b_terms = (b_f1 * inferred_as).sum(axis=1)
+        a_terms = (a_f1 * inferred_as).sum(axis=1)
 
-    predicted_next_a = acceleration(
-        xs=predicted_x[:, None, :],
-        vs=predicted_v[:, None, :],
-        gms=gms,
-        planet_xs=planet_xs_step[:, None, :],
-        planet_vs=planet_vs_step[:, None, :],
-        planet_as=planet_as_step[:, None, :],
-        asteroid_xs=asteroid_xs_step[:, None, :],
-        planet_gms=planet_gms,
-        asteroid_gms=asteroid_gms,
-        use_GR=use_GR,
-    )
+        predicted_v = dt * (little_s + b_terms + 0.5 * inferred_as[:, -1, :])
+        predicted_x = dt**2 * (big_S_last + a_terms)
 
-    inferred_as = inferred_as.at[:, :-1, :].set(inferred_as[:, 1:, :])
-    inferred_as = inferred_as.at[:, -1, :].set(predicted_next_a[:, 0, :])
+        predicted_next_a = acceleration(
+            xs=predicted_x[:, None, :],
+            vs=predicted_v[:, None, :],
+            gms=gms,
+            planet_xs=planet_xs_step[:, None, :],
+            planet_vs=planet_vs_step[:, None, :],
+            planet_as=planet_as_step[:, None, :],
+            asteroid_xs=asteroid_xs_step[:, None, :],
+            planet_gms=planet_gms,
+            asteroid_gms=asteroid_gms,
+            use_GR=use_GR,
+        )
 
-    frozen_bs = (frozen_b_jk * inferred_as[:, :-1, :]).sum(axis=1)
-    frozen_as = (frozen_a_jk * inferred_as[:, :-1, :]).sum(axis=1)
+        inferred_as = inferred_as.at[:, :-1, :].set(inferred_as[:, 1:, :])
+        inferred_as = inferred_as.at[:, -1, :].set(predicted_next_a[:, 0, :])
 
-    planet_corrector_xs = planet_xs_step[:, None, :]
-    planet_corrector_vs = planet_vs_step[:, None, :]
-    planet_corrector_as = planet_as_step[:, None, :]
-    asteroid_corrector_xs = asteroid_xs_step[:, None, :]
-    scan_func = jax.tree_util.Partial(
-        _corrector_scan_func,
-        constants=(
-            dt,
-            little_s,
-            b_f2,
-            a_f2,
-            frozen_bs,
-            frozen_as,
-            big_S_last,
-            planet_corrector_xs,
-            planet_corrector_vs,
-            planet_corrector_as,
-            asteroid_corrector_xs,
-            gms,
-            planet_gms,
-            asteroid_gms,
-            use_GR,
-        ),
-    )
+        frozen_bs = (frozen_b_jk * inferred_as[:, :-1, :]).sum(axis=1)
+        frozen_as = (frozen_a_jk * inferred_as[:, :-1, :]).sum(axis=1)
 
-    inferred_as, new_little_s, predicted_x, predicted_v = jax.lax.scan(
-        scan_func, (inferred_as, little_s, predicted_x, predicted_v), None, length=5
-    )[0]
+        planet_corrector_xs = planet_xs_step[:, None, :]
+        planet_corrector_vs = planet_vs_step[:, None, :]
+        planet_corrector_as = planet_as_step[:, None, :]
+        asteroid_corrector_xs = asteroid_xs_step[:, None, :]
+        scan_func = jax.tree_util.Partial(
+            _corrector_scan_func,
+            constants=(
+                dt,
+                little_s,
+                b_f2,
+                a_f2,
+                frozen_bs,
+                frozen_as,
+                big_S_last,
+                planet_corrector_xs,
+                planet_corrector_vs,
+                planet_corrector_as,
+                asteroid_corrector_xs,
+                gms,
+                planet_gms,
+                asteroid_gms,
+                use_GR,
+            ),
+        )
 
-    return (predicted_x, predicted_v, inferred_as, new_little_s, big_S_last), None
+        inferred_as, new_little_s, predicted_x, predicted_v = jax.lax.scan(
+            scan_func, (inferred_as, little_s, predicted_x, predicted_v), None, length=5
+        )[0]
+
+        return (predicted_x, predicted_v, inferred_as, new_little_s, big_S_last), None
+
+    return jax.lax.cond(planet_xs_step[0, 0] != 999, true_func, false_func, carry)
 
 
 ########################################################################################
@@ -274,6 +281,7 @@ def gj_integrate(
     a_jk,
     t0,
     tf,
+    valid_steps,
     planet_xs,
     planet_vs,
     planet_as,
@@ -308,6 +316,11 @@ def gj_integrate(
             The initial time in TDB JD
         tf (float):
             The final time in TDB JD
+        valid_steps (int):
+            The number of jumps to take between t0 and tf. Unless the array is padded,
+            this should be S + K/2, the same as the shape of the second axis of
+            planet_xs, planet_vs, etc. This is called out separately to enable padded
+            planet positions.
         planet_xs (jnp.ndarray(shape=(M, S + K/2, 3))):
             The 3D positions of M planets. Each planet has S + K/2 positions, where S
             is the number of subpositions between t0 and tf. The first K/2 positions are
@@ -425,7 +438,7 @@ def gj_integrate(
     """
 
     MID_IND = int((a_jk.shape[1] - 1) / 2)
-    dt = (tf - t0) / (planet_xs.shape[1] - (MID_IND + 1))
+    dt = (tf - t0) / (valid_steps - (MID_IND + 1))
 
     ####################################################################################
     # Initial integration to get leading/trailing points
@@ -583,6 +596,7 @@ def gj_integrate_multiple(
     a_jk,
     t0,
     times,
+    valid_steps,
     planet_xs,
     planet_vs,
     planet_as,
@@ -621,6 +635,11 @@ def gj_integrate_multiple(
             The initial time in TDB JD
         times (jnp.ndarray(shape=(S,))):
             The epochs to integrate to in TDB JD
+        valid_steps (jnp.ndarray(shape=(R,))):
+            The number planet_xs, planet_vs, etc to pay attention to between each epoch.
+            Unless dealing with padded arrays, this should be J + K/2, the same as the
+            third axis of planet_xs. If dealing with padded arrays however, setting this
+            to something lower will effectively mask out the padded values.
         planet_xs (jnp.ndarray(shape=(S, M, J + K/2, 3))):
             The 3D positions of M planets. Each planet has J + K/2 positions, per
             integration epoch, and there are S epochs. The first K/2 positions of each
@@ -757,13 +776,14 @@ def gj_integrate_multiple(
             a_jk=a_jk,
             t0=carry[2],
             tf=scan_over[0],
-            planet_xs=scan_over[1],
-            planet_vs=scan_over[2],
-            planet_as=scan_over[3],
-            asteroid_xs=scan_over[4],
-            planet_xs_warmup=scan_over[5],
-            asteroid_xs_warmup=scan_over[6],
-            dts_warmup=scan_over[7],
+            valid_steps=scan_over[1],
+            planet_xs=scan_over[2],
+            planet_vs=scan_over[3],
+            planet_as=scan_over[4],
+            asteroid_xs=scan_over[5],
+            planet_xs_warmup=scan_over[6],
+            asteroid_xs_warmup=scan_over[7],
+            dts_warmup=scan_over[8],
             warmup_C=warmup_C,
             warmup_D=warmup_D,
             planet_gms=planet_gms,
@@ -777,6 +797,7 @@ def gj_integrate_multiple(
         (x0, v0, t0),
         (
             times,
+            valid_steps,
             planet_xs,
             planet_vs,
             planet_as,

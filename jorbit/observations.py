@@ -215,11 +215,11 @@ class Observations:
 
         if self.verbose_downloading:
             print("Downloading observer positions from Horizons...")
-        emb_from_ssb = Observations.horizons_vector_query("3", "500@0", times)
+        emb_from_ssb = Observations.horizons_bulk_vector_query("3", "500@0", times)
         emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
 
         if len(set(observatory_codes)) == 1:
-            emb_from_observer = Observations.horizons_vector_query(
+            emb_from_observer = Observations.horizons_bulk_vector_query(
                 "3", observatory_codes[0], times
             )
             emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
@@ -234,7 +234,7 @@ class Observations:
                 # might as well switch back to astroquery since the batch is too slow
                 # here, and at least astroquery caches the results
 
-                emb_from_observer = Observations.horizons_vector_query(
+                emb_from_observer = Observations.horizons_bulk_vector_query(
                     "3", observatory_codes[i], t
                 )
                 emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
@@ -255,8 +255,9 @@ class Observations:
         return postions
 
     @staticmethod
-    def horizons_vector_query(target, center, times):
-        times = times.tdb.jd
+    def horizons_bulk_vector_query(target, center, times):
+        if type(times) == type(Time("2023-01-01")):
+            times = times.tdb.jd
         if isinstance(times, float):
             times = [times]
         assert (
@@ -309,7 +310,7 @@ class Observations:
         return data
 
     @staticmethod
-    def horizons_astrometry_query(target, center, times, skip_daylight=False):
+    def horizons_bulk_astrometry_query(target, center, times, skip_daylight=False):
         def construct_horizons_query(target, center, times):
             with open("horizons_query.txt", "w") as f:
                 f.write("!$$SOF\n")

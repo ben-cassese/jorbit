@@ -10,14 +10,13 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit, lax
 
 from jplephem.spk import SPK
 import astropy.units as u
 from astropy.time import Time
 from astropy.utils.data import download_file
 import pandas as pd
-import pickle
+from tqdm import tqdm
 
 # jorbit imports:
 from jorbit.engine.ephemeris import planet_state
@@ -495,11 +494,13 @@ def prep_gj_integrator_single(
             The final time in TDB JD
         jumps (int):
             The number of jumps to take between t0 and tf. This implicitly sets the size
-            of the timesteps taken: dt=(tf-t0)/jumps, with dt in days
+            of the timesteps taken: dt=(tf-t0)/jumps, with dt in days. Must be > K/2,
+            where K is the order of the integrator.
         a_jk (jnp.ndarray(shape=(K+2, K+1))):
             The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
             Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
-            precomputed/stored in jorbit.data.constants for orders 8, 10, 12, and 14.
+            precomputed/stored in jorbit.data.constants for orders 6, 8, 10, 12, 14,
+            and 16.
         planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.data):
             The ephemeris describing P massive objects in the solar system. The first
             element is the initial time of the ephemeris in seconds since J2000 TDB. The
@@ -601,7 +602,8 @@ def prep_gj_integrator_multiple(t0, times, jumps, a_jk, planet_params, asteroid_
             size of the timesteps taken: dt=(t_{i+1}-t_{i})/jumps, with dt in days, for
             each ith epoch. The number of jumps must be the same for each epoch, so
             unless the epochs themselves are evenly spaced, the size of the timesteps
-            will differ between them.
+            will differ between them. Must be > K/2, where K is the order of the
+            integrator
         a_jk (jnp.ndarray(shape=(K+2, K+1))):
             The "a_jk" coefficients for the Gauss-Jackson integrator, as defined in
             Berry and Healy 2004 [1]_. K is the order of the integrator. Values are
@@ -676,3 +678,187 @@ def prep_gj_integrator_multiple(t0, times, jumps, a_jk, planet_params, asteroid_
         )
 
     return jax.lax.scan(scan_func, t0, times)[1]
+
+
+def prep_uneven_GJ_integrator(
+    times,
+    low_order,
+    high_order,
+    low_order_cutoff,
+    targeted_low_order_timestep,
+    targeted_high_order_timestep,
+    coeffs_dict,
+    ragged=False,
+):
+    orders = []
+    Jumps = []
+    for i in range(len(times) - 1):
+        # print(f'Current time: {times[i]}')
+        # print(f'Next time: {times[i+1]}')
+        integrator_jump = times[i + 1] - times[i]
+        # print(f'Jump: {integrator_jump}')
+
+        if integrator_jump < low_order_cutoff:
+            # print('desired timestep is below the minimum, using low order')
+            proposed_jumps = integrator_jump / targeted_low_order_timestep
+            actual_jumps = jnp.where(
+                proposed_jumps < (low_order / 2 + 1),
+                low_order / 2 + 1,
+                jnp.ceil(proposed_jumps),
+            )
+            # print(f'actual jumps: {actual_jumps} (should be {low_order/2})')
+            t = integrator_jump / actual_jumps
+            # print(f'low order timestep: {t}')
+            orders.append(low_order)
+            Jumps.append(int(jnp.ceil(actual_jumps)))
+        else:
+            # print('can use more time steps than minimum, using high order')
+            proposed_jumps = integrator_jump / targeted_high_order_timestep
+            # print(f'proposed jumps: {proposed_jumps}')
+            actual_jumps = jnp.where(
+                proposed_jumps < high_order / 2 + 1,
+                high_order / 2 + 1,
+                jnp.ceil(proposed_jumps),
+            )
+            # print(f'actual jumps: {actual_jumps}')
+            t = integrator_jump / actual_jumps
+            # print(f'high order timestep: {t}')
+            # print(f'steps: {jnp.ceil(actual_jumps/t)} (cannot be smaller than {high_order/2})')
+            orders.append(high_order)
+            assert jnp.ceil(integrator_jump / t) >= high_order / 2 + 1
+            Jumps.append(int(jnp.ceil(integrator_jump / t)))
+
+        # print()
+    chunks = []
+    ts = []
+    for i in range(len(times) - 1):
+        if i == 0:
+            current_size = Jumps[i]
+            current_order = orders[i]
+            ts = [times[i + 1]]
+            continue
+
+        if (Jumps[i] == current_size) & (orders[i] == current_order):
+            ts.append(times[i + 1])
+            if i == len(times) - 2:
+                chunks.append(
+                    {
+                        "integrator order": str(int(current_order)),
+                        "jumps per integration": current_size,
+                        "times": jnp.array(ts),
+                    }
+                )
+            continue
+        chunks.append(
+            {
+                "integrator order": str(int(current_order)),
+                "jumps per integration": current_size,
+                "times": jnp.array(ts),
+            }
+        )
+        current_size = Jumps[i]
+        current_order = orders[i]
+        ts = [times[i + 1]]
+
+    Valid_Steps = []
+    Planet_Xs = []
+    Planet_Vs = []
+    Planet_As = []
+    Asteroid_Xs = []
+    Planet_Xs_Warmup = []
+    Asteroid_Xs_Warmup = []
+    Dts_Warmup = []
+
+    t = times[0]
+    for c in tqdm(chunks):
+        z = c["jumps per integration"] + int(c["integrator order"]) / 2 + 1
+        Valid_Steps.append(jnp.array([z] * len(c["times"])))
+        c["valid steps"] = jnp.array([z] * len(c["times"]))
+
+        x = prep_gj_integrator_multiple(
+            t0=t,
+            times=c["times"],
+            jumps=c["jumps per integration"],
+            a_jk=coeffs_dict["a_jk"][c["integrator order"]],
+            planet_params=STANDARD_PLANET_PARAMS,
+            asteroid_params=STANDARD_ASTEROID_PARAMS,
+        )
+        Planet_Xs.append(x[0])
+        Planet_Vs.append(x[1])
+        Planet_As.append(x[2])
+        Asteroid_Xs.append(x[3])
+        Planet_Xs_Warmup.append(x[4])
+        Asteroid_Xs_Warmup.append(x[5])
+        Dts_Warmup.append(x[6])
+
+        t = c["times"][-1]
+
+    # return Valid_Steps
+    if not ragged:
+        most_jumps = 0
+        for p in Planet_Xs:
+            if p.shape[2] > most_jumps:
+                most_jumps = p.shape[2]
+
+        padded_planet_xs = []
+        padded_planet_vs = []
+        padded_planet_as = []
+        padded_asteroid_xs = []
+
+        for i in range(len(Planet_Xs)):
+            padded = (
+                jnp.ones((Planet_Xs[i].shape[0], Planet_Xs[i].shape[1], most_jumps, 3))
+                * 999.0
+            )
+            padded_planet_xs.append(
+                padded.at[:, :, : Planet_Xs[i].shape[2], :].set(Planet_Xs[i])
+            )
+            padded_planet_vs.append(
+                padded.at[:, :, : Planet_Vs[i].shape[2], :].set(Planet_Vs[i])
+            )
+            padded_planet_as.append(
+                padded.at[:, :, : Planet_As[i].shape[2], :].set(Planet_As[i])
+            )
+
+            padded = (
+                jnp.ones(
+                    (Planet_Xs[i].shape[0], Asteroid_Xs[i].shape[1], most_jumps, 3)
+                )
+                * 999.0
+            )
+            padded_asteroid_xs.append(
+                padded.at[:, :, : Asteroid_Xs[i].shape[2], :].set(Asteroid_Xs[i])
+            )
+
+        # jax.debug.print("{x}", x=Valid_Steps[0])
+        # jax.debug.print("{x}", x=Valid_Steps[1])
+        Valid_Steps = jnp.concatenate(Valid_Steps)
+        Planet_Xs = jnp.row_stack(padded_planet_xs)
+        Planet_Vs = jnp.row_stack(padded_planet_vs)
+        Planet_As = jnp.row_stack(padded_planet_as)
+        Asteroid_Xs = jnp.row_stack(padded_asteroid_xs)
+        Planet_Xs_Warmup = jnp.row_stack(Planet_Xs_Warmup)
+        Asteroid_Xs_Warmup = jnp.row_stack(Asteroid_Xs_Warmup)
+        Dts_Warmup = jnp.row_stack(Dts_Warmup)
+        return (
+            Valid_Steps,
+            Planet_Xs,
+            Planet_Vs,
+            Planet_As,
+            Asteroid_Xs,
+            Planet_Xs_Warmup,
+            Asteroid_Xs_Warmup,
+            Dts_Warmup,
+        )
+
+    return (
+        Valid_Steps,
+        Planet_Xs,
+        Planet_Vs,
+        Planet_As,
+        Asteroid_Xs,
+        Planet_Xs_Warmup,
+        Asteroid_Xs_Warmup,
+        Dts_Warmup,
+        chunks,
+    )
