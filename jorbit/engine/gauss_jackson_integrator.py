@@ -831,6 +831,48 @@ def gj_integrate_multiple_ragged(
     asteroid_gms,
     use_GR,
 ):
+    """
+    An alternative to gj_integrate_multiple that works with ragged arrays.
+
+    gj_integrate_multiple requires that every integration between epochs is done in the
+    same number of steps, even if some are padded/dummy steps. This lets us use
+    jax.lax.scan, which enables is much faster to jit compile. However, it requires a
+    lot of memory to store those padded values, and is slower than it needs to be when
+    scanning over those. In this alternative version, inputs are given as lists of
+    varying length arrays. This takes *a long time to compile*, but ends up running ~2x
+    faster than gj_integrate multiple. Leaving this in for now since it might be useful
+    for intensive applications, but in most cases gj_integrate_multiple should be used.
+
+    Parameters:
+        x0 (jnp.ndarray(shape=(N, 3))):
+            Initial position of N particles in AU
+        v0 (jnp.ndarray(shape=(N, 3))):
+            Initial velocity of N particles in AU/day
+        gms (jnp.ndarray(shape=(N,))):
+            The GM values of the N particles in AU^3/day^2
+        t0 (float):
+            The initial time in TDB JD
+        chunks (List[Dict]):
+            A list of dictionaries, each of which contains the following keys:
+                "integrator order" (int):
+                    The order of the Gauss-Jackson integrator to use for this chunk
+                "times" (jnp.ndarray(shape=(S,))):
+                    The epochs to integrate to in TDB JD
+                "jumps per integration" (int):
+                    The number planet_xs, planet_vs, etc to pay attention to between
+                    each epoch. Unless dealing with padded arrays, this should be J +
+                    K/2, the same as the third axis of planet_xs. If dealing with
+                    padded arrays however, setting this to something lower will
+                    effectively mask out the padded values. See
+                    jorbit.engine.utils.prep_uneven_GJ_integrator for more
+        coeffs_dict (Dict):
+            A dictionary containing the "a_jk" and "b_jk" coefficients for the
+            different orders of the Gauss-Jackson integrator. The structure is:
+                {"a_jk" : {(str(order)): coeffs}, "b_jk" : {(str(order)): coeffs}}
+        planet_xs: (List[jnp.ndarray()]):
+
+
+    """
     Xs = jnp.zeros((x0.shape[0], len(chunks), 3))
     Vs = jnp.zeros((x0.shape[0], len(chunks), 3))
 

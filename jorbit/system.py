@@ -39,6 +39,9 @@ class System:
         particles,
         planets=all_planets,
         asteroids=large_asteroids,
+        integrator_type="gauss-jackson",
+        integrator_order=8,
+        force_common_epoch=True,
         fit_planet_gms=False,
         fit_asteroid_gms=False,
     ):

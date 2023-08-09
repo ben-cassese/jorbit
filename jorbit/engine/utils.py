@@ -18,6 +18,8 @@ from astropy.utils.data import download_file
 import pandas as pd
 from tqdm import tqdm
 
+# from tqdm.notebook import tqdm
+
 # jorbit imports:
 from jorbit.engine.ephemeris import planet_state
 
@@ -770,7 +772,7 @@ def prep_uneven_GJ_integrator(
     Dts_Warmup = []
 
     t = times[0]
-    for c in tqdm(chunks):
+    for c in tqdm(chunks, position=1, leave=False):
         z = c["jumps per integration"] + int(c["integrator order"]) / 2 + 1
         Valid_Steps.append(jnp.array([z] * len(c["times"])))
         c["valid steps"] = jnp.array([z] * len(c["times"]))
@@ -830,8 +832,6 @@ def prep_uneven_GJ_integrator(
                 padded.at[:, :, : Asteroid_Xs[i].shape[2], :].set(Asteroid_Xs[i])
             )
 
-        # jax.debug.print("{x}", x=Valid_Steps[0])
-        # jax.debug.print("{x}", x=Valid_Steps[1])
         Valid_Steps = jnp.concatenate(Valid_Steps)
         Planet_Xs = jnp.row_stack(padded_planet_xs)
         Planet_Vs = jnp.row_stack(padded_planet_vs)
@@ -862,3 +862,447 @@ def prep_uneven_GJ_integrator(
         Dts_Warmup,
         chunks,
     )
+
+
+########################################################################################
+import os
+
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=8"
+
+import jax
+
+jax.config.update("jax_debug_nans", True)
+import jax.numpy as jnp
+
+from astropy.time import Time
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+import pandas as pd
+
+# from tqdm.notebook import tqdm
+from tqdm import tqdm
+
+import jorbit
+from jorbit import Particle, Observations
+
+from jorbit.data.constants import (
+    GJ6_A,
+    GJ6_B,
+    GJ8_A,
+    GJ8_B,
+    GJ10_A,
+    GJ10_B,
+    GJ12_A,
+    GJ12_B,
+    GJ14_A,
+    GJ14_B,
+    GJ16_A,
+    GJ16_B,
+    Y4_C,
+    Y4_D,
+)
+from jorbit.data import (
+    STANDARD_PLANET_PARAMS,
+    STANDARD_ASTEROID_PARAMS,
+    STANDARD_PLANET_GMS,
+    STANDARD_ASTEROID_GMS,
+)
+from jorbit.engine.gauss_jackson_integrator import gj_integrate_multiple
+from jorbit.engine.utils import prep_uneven_GJ_integrator
+
+d = pd.read_csv(jorbit.DATADIR + "(12464)_manhattan_horizons_timeseries.txt")
+times = jnp.array(d["time"])
+s = SkyCoord(d["ra"], d["dec"], unit=u.rad)
+long_obs = Observations(
+    observed_coordinates=s,
+    times=times,
+    observatory_locations="kitt peak",
+    astrometric_uncertainties=0.1 * u.arcsec,
+    verbose_downloading=True,
+)
+Xs = jnp.array(d[["x", "y", "z"]])
+Vs = jnp.array(d[["vx", "vy", "vz"]])
+
+obs = Observations(
+    observed_coordinates=s[600:650],
+    times=times[600:650],
+    observatory_locations="kitt peak",
+    astrometric_uncertainties=0.1 * u.arcsec,
+    verbose_downloading=True,
+)
+p1 = Particle(
+    x=Xs[0],
+    v=Vs[0],
+    elements=None,
+    gm=0,
+    time=long_obs.times[500],
+    observations=obs,
+    earliest_time=Time("1980-01-01"),
+    latest_time=Time("2100-01-01"),
+    name="particle 1",
+    free_orbit=True,
+    free_gm=False,
+)
+
+obs = Observations(
+    observed_coordinates=s[1000:1050],
+    times=times[1000:1050],
+    observatory_locations="kitt peak",
+    astrometric_uncertainties=0.1 * u.arcsec,
+    verbose_downloading=True,
+)
+p2 = Particle(
+    x=Xs[1000],
+    v=Vs[1000],
+    elements=None,
+    gm=0,
+    time=long_obs.times[500],
+    observations=obs,
+    earliest_time=Time("1980-01-01"),
+    latest_time=Time("2100-01-01"),
+    name="particle 2",
+    free_orbit=False,
+    free_gm=True,
+)
+
+obs = Observations(
+    observed_coordinates=s[2000:2020],
+    times=times[2000:2020],
+    observatory_locations="kitt peak",
+    astrometric_uncertainties=0.1 * u.arcsec,
+    verbose_downloading=True,
+)
+
+p3 = Particle(
+    x=Xs[2000],
+    v=Vs[2000],
+    elements=None,
+    gm=0,
+    time=long_obs.times[500],
+    observations=obs,
+    earliest_time=Time("1980-01-01"),
+    latest_time=Time("2100-01-01"),
+    name="particle 3",
+    free_orbit=True,
+    free_gm=True,
+)
+
+obs = Observations(
+    observed_coordinates=s[123:456],
+    times=times[123:456],
+    observatory_locations="kitt peak",
+    astrometric_uncertainties=0.1 * u.arcsec,
+    verbose_downloading=True,
+)
+
+p4 = Particle(
+    x=Xs[2000],
+    v=Vs[2000],
+    elements=None,
+    gm=0,
+    time=long_obs.times[500],
+    observations=obs,
+    earliest_time=Time("1980-01-01"),
+    latest_time=Time("2100-01-01"),
+    name="particle 4",
+    free_orbit=False,
+    free_gm=False,
+)
+
+particles = [p1, p2, p3, p4]
+
+
+coeffs_dict = {
+    "a_jk": {
+        "6": GJ6_A,
+        "8": GJ8_A,
+        "10": GJ10_A,
+        "12": GJ12_A,
+        "14": GJ14_A,
+        "16": GJ16_A,
+    },
+    "b_jk": {
+        "6": GJ6_B,
+        "8": GJ8_B,
+        "10": GJ10_B,
+        "12": GJ12_B,
+        "14": GJ14_B,
+        "16": GJ16_B,
+    },
+}
+integrator_type = "gauss-jackson"
+integrator_order = 8
+targeted_timestep = 3.0
+
+
+# f for Free, r for Rigid
+tracer_fx_rm = {"x": [], "v": [], "gm": [], "obs": []}
+tracer_rx_rm = {"x": [], "v": [], "gm": [], "obs": []}
+massive_fx_rm = {"x": [], "v": [], "gm": [], "obs": []}
+massive_rx_fm = {"x": [], "v": [], "gm": [], "obs": []}
+massive_fx_fm = {"x": [], "v": [], "gm": [], "obs": []}
+massive_rx_rm = {"x": [], "v": [], "gm": [], "obs": []}
+
+for p in particles:
+    if p.free_orbit and p.free_gm:
+        massive_fx_fm["x"].append(p.x)
+        massive_fx_fm["v"].append(p.v)
+        massive_fx_fm["gm"].append(p.gm)
+        massive_fx_fm["obs"].append(p.observations)
+    elif p.free_orbit and not p.free_gm:
+        if p.gm == 0:
+            tracer_fx_rm["x"].append(p.x)
+            tracer_fx_rm["v"].append(p.v)
+            tracer_fx_rm["gm"].append(p.gm)
+            tracer_fx_rm["obs"].append(p.observations)
+        else:
+            massive_fx_rm["x"].append(p.x)
+            massive_fx_rm["v"].append(p.v)
+            massive_fx_rm["gm"].append(p.gm)
+            massive_fx_rm["obs"].append(p.observations)
+    elif not p.free_orbit and p.free_gm:
+        massive_rx_fm["x"].append(p.x)
+        massive_rx_fm["v"].append(p.v)
+        massive_rx_fm["gm"].append(p.gm)
+        massive_rx_fm["obs"].append(p.observations)
+    elif not p.free_orbit and not p.free_gm:
+        if p.gm == 0:
+            tracer_rx_rm["x"].append(p.x)
+            tracer_rx_rm["v"].append(p.v)
+            tracer_rx_rm["gm"].append(p.gm)
+            tracer_rx_rm["obs"].append(p.observations)
+        else:
+            massive_rx_rm["x"].append(p.x)
+            massive_rx_rm["v"].append(p.v)
+            massive_rx_rm["gm"].append(p.gm)
+            massive_rx_rm["obs"].append(p.observations)
+
+fixed_params = {}
+
+fixed_params["tracer_fx_rm__gm"] = jnp.array(tracer_fx_rm["gm"])
+
+fixed_params["tracer_rx_rm__x"] = jnp.array(tracer_rx_rm["x"])
+fixed_params["tracer_rx_rm__v"] = jnp.array(tracer_rx_rm["v"])
+fixed_params["tracer_rx_rm__gm"] = jnp.array(tracer_rx_rm["gm"])
+
+fixed_params["massive_fx_rm__gm"] = jnp.array(massive_fx_rm["gm"])
+
+fixed_params["massive_rx_fm__x"] = jnp.array(massive_rx_fm["x"])
+fixed_params["massive_rx_fm__v"] = jnp.array(massive_rx_fm["v"])
+
+fixed_params["massive_rx_rm__x"] = jnp.array(massive_rx_rm["x"])
+fixed_params["massive_rx_rm__v"] = jnp.array(massive_rx_rm["v"])
+fixed_params["massive_rx_rm__gm"] = jnp.array(massive_rx_rm["gm"])
+
+
+free_params = {}
+if len(tracer_fx_rm["x"]) > 0:
+    free_params["tracer_fx_rm__x"] = jnp.array(tracer_fx_rm["x"])
+    free_params["tracer_fx_rm__v"] = jnp.array(tracer_fx_rm["v"])
+else:
+    fixed_params["tracer_fx_rm__x"] = jnp.array(tracer_fx_rm["x"])
+    fixed_params["tracer_fx_rm__v"] = jnp.array(tracer_fx_rm["v"])
+
+if len(massive_fx_rm["x"]) > 0:
+    free_params["massive_fx_rm__x"] = jnp.array(massive_fx_rm["x"])
+    free_params["massive_fx_rm__v"] = jnp.array(massive_fx_rm["v"])
+else:
+    fixed_params["massive_fx_rm__x"] = jnp.array(massive_fx_rm["x"])
+    fixed_params["massive_fx_rm__v"] = jnp.array(massive_fx_rm["v"])
+
+if len(massive_rx_fm["x"]) > 0:
+    free_params["massive_rx_fm__gm"] = jnp.array(massive_rx_fm["gm"])
+else:
+    fixed_params["massive_rx_fm__gm"] = jnp.array(massive_rx_fm["gm"])
+
+if len(massive_fx_fm["x"]) > 0:
+    free_params["massive_fx_fm__x"] = jnp.array(massive_fx_fm["x"])
+    free_params["massive_fx_fm__v"] = jnp.array(massive_fx_fm["v"])
+    free_params["massive_fx_fm__gm"] = jnp.array(massive_fx_fm["gm"])
+else:
+    fixed_params["massive_fx_fm__x"] = jnp.array(massive_fx_fm["x"])
+    fixed_params["massive_fx_fm__v"] = jnp.array(massive_fx_fm["v"])
+    fixed_params["massive_fx_fm__gm"] = jnp.array(massive_fx_fm["gm"])
+
+
+ordered_tracer_obs = tracer_fx_rm["obs"] + tracer_rx_rm["obs"]
+ordered_massive_obs = (
+    +massive_fx_rm["obs"]
+    + massive_rx_fm["obs"]
+    + massive_fx_fm["obs"]
+    + massive_rx_rm["obs"]
+)
+
+
+def _prep_system_GJ_integrator(ordered_obs):
+    individual_integrator_prep = []
+    for o in tqdm(ordered_obs, desc="Pre-computing perturber positions", position=0):
+        z = prep_uneven_GJ_integrator(
+            times=o.times,
+            low_order=integrator_order,
+            high_order=integrator_order,
+            low_order_cutoff=1e-6,
+            targeted_low_order_timestep=targeted_timestep,
+            targeted_high_order_timestep=targeted_timestep,
+            coeffs_dict=coeffs_dict,
+            ragged=False,
+        )
+        individual_integrator_prep.append(z)
+
+    most_epochs = 0
+    most_steps_per_epoch = 0
+    for p in individual_integrator_prep:
+        p = p[1]
+        if p.shape[0] > most_epochs:
+            most_epochs = p.shape[0]
+        if p.shape[2] > most_steps_per_epoch:
+            most_steps_per_epoch = p.shape[2]
+
+    Valid_Steps = []
+    Planet_Xs = []
+    Planet_Vs = []
+    Planet_As = []
+    Asteroid_Xs = []
+    Planet_Xs_Warmup = []
+    Asteroid_Xs_Warmup = []
+    Dts_Warmup = []
+    for p in individual_integrator_prep:
+        Valid_Steps.append(
+            jnp.pad(
+                p[0],
+                (0, most_epochs - p[0].shape[0]),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Planet_Xs.append(
+            jnp.pad(
+                p[1],
+                (
+                    (0, most_epochs - p[1].shape[0]),
+                    (0, 0),
+                    (0, most_steps_per_epoch - p[1].shape[2]),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Planet_Vs.append(
+            jnp.pad(
+                p[2],
+                (
+                    (0, most_epochs - p[2].shape[0]),
+                    (0, 0),
+                    (0, most_steps_per_epoch - p[2].shape[2]),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Planet_As.append(
+            jnp.pad(
+                p[3],
+                (
+                    (0, most_epochs - p[3].shape[0]),
+                    (0, 0),
+                    (0, most_steps_per_epoch - p[3].shape[2]),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Asteroid_Xs.append(
+            jnp.pad(
+                p[4],
+                (
+                    (0, most_epochs - p[4].shape[0]),
+                    (0, 0),
+                    (0, most_steps_per_epoch - p[4].shape[2]),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Planet_Xs_Warmup.append(
+            jnp.pad(
+                p[5],
+                (
+                    (0, most_epochs - p[5].shape[0]),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Asteroid_Xs_Warmup.append(
+            jnp.pad(
+                p[6],
+                (
+                    (0, most_epochs - p[6].shape[0]),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                    (0, 0),
+                ),
+                mode="constant",
+                constant_values=999,
+            )
+        )
+        Dts_Warmup.append(
+            jnp.pad(
+                p[7],
+                ((0, most_epochs - p[7].shape[0]), (0, 0), (0, 0)),
+            )
+        )
+
+    Valid_Steps = jnp.stack(Valid_Steps)
+    Planet_Xs = jnp.stack(Planet_Xs)
+    Planet_Vs = jnp.stack(Planet_Vs)
+    Planet_As = jnp.stack(Planet_As)
+    Asteroid_Xs = jnp.stack(Asteroid_Xs)
+    Planet_Xs_Warmup = jnp.stack(Planet_Xs_Warmup)
+    Asteroid_Xs_Warmup = jnp.stack(Asteroid_Xs_Warmup)
+    Dts_Warmup = jnp.stack(Dts_Warmup)
+
+    return (
+        Valid_Steps,
+        Planet_Xs,
+        Planet_Vs,
+        Planet_As,
+        Asteroid_Xs,
+        Planet_Xs_Warmup,
+        Asteroid_Xs_Warmup,
+        Dts_Warmup,
+    )
+
+
+# if integrator_type == "gauss-jackson":
+(
+    tracer_Valid_Steps,
+    tracer_Planet_Xs,
+    tracer_Planet_Vs,
+    tracer_Planet_As,
+    tracer_Asteroid_Xs,
+    tracer_Planet_Xs_Warmup,
+    tracer_Asteroid_Xs_Warmup,
+    tracer_Dts_Warmup,
+) = _prep_system_GJ_integrator(ordered_tracer_obs)
+(
+    massive_Valid_Steps,
+    massive_Planet_Xs,
+    massive_Planet_Vs,
+    massive_Planet_As,
+    massive_Asteroid_Xs,
+    massive_Planet_Xs_Warmup,
+    massive_Asteroid_Xs_Warmup,
+    massive_Dts_Warmup,
+) = _prep_system_GJ_integrator(ordered_massive_obs)
