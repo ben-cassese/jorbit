@@ -7,6 +7,8 @@ from jorbit.particle import Particle
 from jorbit.observations import Observations
 from jorbit.system import System
 
+os.environ["JAX_ENABLE_X64"] = "True"
+
 _root = os.path.dirname(__file__)
 DATADIR = os.path.join(_root, "data/")
 

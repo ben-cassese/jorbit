@@ -40,8 +40,8 @@ class Particle:
             self._time = time.tdb.jd
         elif isinstance(time, float):
             self._time = time
-        elif type(time) == type(jnp.array([1.0])) and len(time) == 1:
-            self._time = time[0]
+        elif type(time) == type(jnp.array([1.0])):
+            self._time = float(time)
         else:
             raise ValueError(
                 "time must be either astropy.time.Time or float (interpreted as JD in"
@@ -157,12 +157,12 @@ class Particle:
         return self._free_gm
 
     def __repr__(self):
-        a = f"Particle: {self.name}."
+        a = f"Particle: '{self.name}'"
         b = (
             f"Current state:\n--------------\n {self._x} AU\n {self._v} AU/day\n"
             f" {self._time} JD\n"
         )
         c = f"Current Elements:\n-----------------\n" + str(self.elements).replace(
-            "), ", "\n"
+            "), ", "\n\n"
         )
         return a + "\n" + b + "\n" + c
