@@ -3,12 +3,9 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit, lax
-import pickle
+
 
 from jorbit.data import (
-    STANDARD_PLANET_PARAMS,
-    STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
     STANDARD_SUN_PARAMS,
@@ -19,159 +16,111 @@ from jorbit.data.constants import (
     INV_SPEED_OF_LIGHT,
     ICRS_TO_BARY_ROT_MAT,
     BARY_TO_ICRS_ROT_MAT,
+    Y4_C,
+    Y4_D,
 )
 
 from jorbit.engine.ephemeris import planet_state
-from jorbit.engine.slapshot_integrator import single_step
+from jorbit.engine.yoshida_integrator import yoshida_integrate
 
 
 def on_sky(
     xs,
     vs,
     gms,
-    times,
     observer_positions,
-    planet_params=STANDARD_PLANET_PARAMS,
-    asteroid_params=STANDARD_ASTEROID_PARAMS,
-    planet_gms=STANDARD_PLANET_GMS,
-    asteroid_gms=STANDARD_ASTEROID_GMS,
+    planet_xs,
+    asteroid_xs,
+    planet_gms,
+    asteroid_gms,
 ):
-    """on_sky(xs,vs,gms,times,observer_positions,planet_params=STANDARD_PLANET_PARAMS,asteroid_params=STANDARD_ASTEROID_PARAMS,planet_gms=STANDARD_PLANET_GMS,asteroid_gms=STANDARD_ASTEROID_GMS)
-    Calculate the RAs and Decs of a system of particles.
-
-    This computes the on-sky position of several particles at several times. Each time
-    is associated with one observer position. This function does not account for
-    relativistic effects/bending, but does correct for light travel time delay. It
-    uses single_step for that, which means this function should not be vmapped for the
-    reasons described in single_step's docstring. It does not include the GR corrections
-    when moving the particle backwards slightly to account for light travel time.
-
-    This handles particles and times slightly differently than the integration
-    functions. Now, everything is flattened so that there is one time for each particle.
-    This is because it does not do any long integrations, only ~hours long steps for
-    light travel time, so you have to do the integrations elsewhere then feed it the
-    results. For example, to get the position of a single object at 5 different times,
-    you should use integrate_multiple to get 5 different positions, velocities, and
-    epochs, then feed those to on_sky as if they were 5 independent particles.
+    """
 
     Parameters:
         xs (jnp.ndarray(shape=(N, 3))):
-            The initial 3D positions of N particles in AU
+            The 3D positions of N particles in AU. Often will be the same particle seen
+            at different epochs
         vs (jnp.ndarray(shape=(N, 3))):
-            The initial 3D velocities of N particles in AU/day
+            The velocities of N objects in AU/day
         gms (jnp.ndarray(shape=(N,))):
-            The GM values of N particles in AU^3/day^2
-        times (jnp.ndarray(shape=(N,))):
-            The times to calculate the on-sky positions in TDB JD
-        observer_positions (jnp.ndarray(shape=(N, 3))):
-            The 3D positions of the observers at each observation time in AU
-        planet_params (Tuple[jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,)), jnp.ndarray(shape=(P,Q,3,R))], default=STANDARD_PLANET_PARAMS from jorbit.construct_perturbers):
-            The ephemeris describing P massive objects in the solar system. The first
-            element is the initial time of the ephemeris in seconds since J2000 TDB. The
-            second element is the length of the interval covered by each piecewise chunk of
-            the ephemeris in seconds (for DE44x planets, this is 16 days, and for
-            asteroids, it's 32 days). The third element contains the Q coefficients of the
-            R piecewise chunks of Chebyshev polynomials that make up the ephemeris, in 3
-            x,y,z dimensions.
-        asteroid_params (Tuple[jnp.ndarray(shape=(W,)), jnp.ndarray(shape=(W,)), jnp.ndarray(shape=(W,Z,3,K))], default=STANDARD_ASTEROID_PARAMS from jorbit.construct_perturbers):
-            Same as planet_params but for W asteroids. They are separated only in case
-            use_GR=True, in which case the planet perturbations are calculated using the
-            PPN formalism while the asteroids are still just Newtonian.
-        planet_gms (jnp.ndarray(shape=(G,)), default=STANDARD_PLANET_GMS from jorbit.construct_perturbers):
-            The GM values of the included planets in AU^3/day^2. If sum(planet_gms) == 0,
-            the planets are ignored. If sum(planet_gms) > 0 but G != P, there will be
-            problems. To ignore planets, set planet_gms to jnp.array([0.]).
-        asteroid_gms (jnp.ndarray(shape=(H,)), default=STANDARD_ASTEROID_GMS from jorbit.construct_perturbers):
-            Same as planet_gms but for the asteroids. If sum(asteroid_gms) != 0, then
-            H must equal W. To ignore asteroids, set asteroid_gms to jnp.array([0.]).
-
-
-    Returns:
-        Tuple(jnp.ndarray(shape=(N,)), jnp.ndarray(shape=(N,))):
-            The RAs and Decs of each particle in radians
-
-    Examples:
-        >>> from jorbit.engine import on_sky
-        >>> import jax.numpy as jnp
-        >>> from astropy.time import Time
-        >>> on_sky(
-        ...     xs=jnp.array(
-        ...         [[0.73291537, -1.85503972, -0.55163327], [0.73291537, -1.85503972, -0.55163327]]
-        ...     ),
-        ...     vs=jnp.array(
-        ...         [[0.0115149, 0.00509674, 0.00161224], [0.0115149, 0.00509674, 0.00161224]]
-        ...     ),
-        ...     gms=jnp.array([0.0]),
-        ...     times=jnp.array([Time("2023-01-01").tdb.jd, Time("2023-01-01").tdb.jd]),
-        ...     observer_positions=jnp.array(
-        ...         [[-0.17928936, 0.88858155, 0.38544855], [-0.17928936, 0.88858155, 0.38544855]]
-        ...     ),
-        ... )
+            The gravitational masses of the N objects in AU^3/day^2
+        observer_positions (jnp.ndarray(shape=(N, 3,))):
+            The 3D positions each of the particles were observed from in AU
+        planet_xs (jnp.ndarray(shape=(P, N, 3))):
+            The 3D positions of P planets in AU at each of the N epochs/particles.
+            Standard output of `jorbit.engine.ephemeris.planet_state`
+        asteroid_xs (jnp.ndarray(shape=(A, N, 3))):
+            The 3D positions of A asteroids in AU at each of the N epochs/particles
+            Standard output of `jorbit.engine.ephemeris.planet_state`
+        planet_gms (jnp.ndarray(shape=(P,))):
+            The gravitational masses of the P planets in AU^3/day^2
+        asteroid_gms (jnp.ndarray(shape=(A,))):
+            The gravitational masses of the A asteroids in AU^3/day^2
     """
 
     def _on_sky(
         x,
         v,
         gm,
-        time,
         observer_position,
-        planet_params,
-        asteroid_params,
+        planet_xs,
+        asteroid_xs,
         planet_gms,
         asteroid_gms,
     ):
-        # x, v are both just (3,). Need to scan over particles 1 at a time
-        # since the corrections for light travel time will be different for each
-        # time is a float, jd in tdb scale
-        # observer_position is (3,), ICRS just like the particles
+        # Assume the planet/asteroids don't move over the ~hours of light travel time
+        def true_func():
+            def scan_func(carry, scan_over):
+                xz = carry
+                earth_distance = jnp.linalg.norm(xz - observer_position)
+                light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
+                # emitted_time = time - light_travel_time
+                # nudge = emitted_time - time
+                (
+                    xz,
+                    _,
+                ) = yoshida_integrate(
+                    x0=x[None, :],
+                    v0=v[None, :],
+                    dt=-light_travel_time,
+                    gms=gm,
+                    planet_xs=planet_xs[:, None, :],
+                    asteroid_xs=asteroid_xs[:, None, :],
+                    planet_gms=planet_gms,
+                    asteroid_gms=asteroid_gms,
+                    C=Y4_C,
+                    D=Y4_D,
+                )
+                return xz[0], None
 
-        def scan_func(carry, scan_over):
-            xz = carry
-            earth_distance = jnp.linalg.norm(xz - observer_position)
-            light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
-            emitted_time = time - light_travel_time
-            nudge = emitted_time - time
-            # Warning- really this should be integrate, not single_step
-            # this assumes the light travel time delay is smaller than the acceptable timestep
-            Q = single_step(
-                x0=x[None, :],
-                v0=v[None, :],
-                gms=gm,
-                dt=nudge,
-                t=time,
-                planet_params=planet_params,
-                asteroid_params=asteroid_params,
-                planet_gms=planet_gms,
-                asteroid_gms=asteroid_gms,
-                use_GR=True,
-            )
+            xz = jax.lax.scan(scan_func, x, None, length=3)[0]
 
-            xz = Q[0][0]
-            return xz, None
+            X = xz - observer_position
+            calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
+            calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X, axis=0))
+            return calc_ra, calc_dec
 
-        xz = jax.lax.scan(scan_func, x, jnp.arange(3))[0]
+        def false_func():
+            return jnp.array(0.0), jnp.array(0.0)
 
-        X = xz - observer_position
-        calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
-        calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X, axis=0))
-        return calc_ra, calc_dec
+        # I don't think this actually saves any time though since we're
+        # vmapping over this inner function, which will turn the cond into
+        # a select, which evaluates both branches
+        # but, at least it gives a standard output for a padded input
+        return jax.lax.cond(planet_xs[0, 0] != 999, true_func, false_func)
 
-    def scan_func(carry, scan_over):
-        x, v, gm, time, observer_position = scan_over
-        calc_ra, calc_dec = _on_sky(
-            x=x,
-            v=v,
-            gm=gm,
-            time=time,
-            observer_position=observer_position,
-            planet_params=planet_params,
-            asteroid_params=asteroid_params,
-            planet_gms=planet_gms,
-            asteroid_gms=asteroid_gms,
-        )
-        return None, (calc_ra, calc_dec)
-
-    return jax.lax.scan(scan_func, None, (xs, vs, gms, times, observer_positions))[1]
+    # I assumed I shouldn't be vmapping b/c of all the lax.conds in acceleration,
+    # but this version is faster than the scan version.
+    return jax.vmap(_on_sky, in_axes=(0, 0, 0, 0, 1, 1, None, None))(
+        xs,
+        vs,
+        gms,
+        observer_positions,
+        planet_xs,
+        asteroid_xs,
+        planet_gms,
+        asteroid_gms,
+    )
 
 
 def sky_error(calc_ra, calc_dec, true_ra, true_dec):
