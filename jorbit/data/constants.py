@@ -17,12 +17,12 @@ EPSILON = jnp.finfo(float).eps * 2.0
 # Hard coded strings/dicts
 ################################################################################
 
-planet_ephemeris = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
-asteroid_ephemeris = (
+PLANET_EPHEMERIS_URL = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
+ASTEROID_EPHEMERIS_URL = (
     "https://ssd.jpl.nasa.gov/ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
 )
 
-all_planets = [
+ALL_PLANETS = [
     "mercury",
     "venus",
     "earth",
@@ -35,7 +35,7 @@ all_planets = [
 ]
 
 
-large_asteroids = [
+LARGE_ASTEROIDS = [
     "ceres",
     "pallas",
     "juno",
@@ -79,7 +79,7 @@ EXAMPLE_VF = jnp.array(
 # Pluto is still included in the main "de" ephemeris series, no other dwarf planets
 # JOKES these are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
 # which lists Earth as apparently 1% different from its de440 and de441 value??
-all_planet_gms = {
+ALL_PLANET_GMS = {
     "mercury": 4.9125001948893175e-11,
     "venus": 7.2434523326441177e-10,
     "earth": 8.9970113929473456e-10,
@@ -92,7 +92,7 @@ all_planet_gms = {
     "sun": 2.9591220828411951e-04,
 }
 
-large_asteroid_gms = {
+LARGE_ASTEROID_GMS = {
     "ceres": 1.3964518123081067e-13,
     "pallas": 3.0471146330043194e-14,
     "juno": 4.2823439677995e-15,
@@ -111,7 +111,7 @@ large_asteroid_gms = {
     "interamnia": 6.311034342087888e-15,
 }
 
-all_planet_nums = {
+ALL_PLANET_NUMS = {
     "mercury": 1,
     "venus": 2,
     "earth": 3,
@@ -124,7 +124,7 @@ all_planet_nums = {
     "sun": 10,
 }
 
-large_asteroid_nums = {
+LARGE_ASTEROID_NUMS = {
     "ceres": 2000001,
     "pallas": 2000002,
     "juno": 2000003,
