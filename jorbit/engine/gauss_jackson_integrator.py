@@ -768,29 +768,44 @@ def gj_integrate_multiple(
     """
 
     def scan_func(carry, scan_over):
-        x, v = gj_integrate(
-            x0=carry[0],
-            v0=carry[1],
-            gms=gms,
-            b_jk=b_jk,
-            a_jk=a_jk,
-            t0=carry[2],
-            tf=scan_over[0],
-            valid_steps=scan_over[1],
-            planet_xs=scan_over[2],
-            planet_vs=scan_over[3],
-            planet_as=scan_over[4],
-            asteroid_xs=scan_over[5],
-            planet_xs_warmup=scan_over[6],
-            asteroid_xs_warmup=scan_over[7],
-            dts_warmup=scan_over[8],
-            warmup_C=warmup_C,
-            warmup_D=warmup_D,
-            planet_gms=planet_gms,
-            asteroid_gms=asteroid_gms,
-            use_GR=use_GR,
+        def true(X):
+            carry, scan_over = X
+            x, v = gj_integrate(
+                x0=carry[0],
+                v0=carry[1],
+                gms=gms,
+                b_jk=b_jk,
+                a_jk=a_jk,
+                t0=carry[2],
+                tf=scan_over[0],
+                valid_steps=scan_over[1],
+                planet_xs=scan_over[2],
+                planet_vs=scan_over[3],
+                planet_as=scan_over[4],
+                asteroid_xs=scan_over[5],
+                planet_xs_warmup=scan_over[6],
+                asteroid_xs_warmup=scan_over[7],
+                dts_warmup=scan_over[8],
+                warmup_C=warmup_C,
+                warmup_D=warmup_D,
+                planet_gms=planet_gms,
+                asteroid_gms=asteroid_gms,
+                use_GR=use_GR,
+            )
+            return (x, v, scan_over[0]), (x, v)
+
+        def false(X):
+            carry, scan_over = X
+            x = carry[0]
+            v = carry[1]
+            return (x, v, scan_over[0]), (x, v)
+
+        return jax.lax.cond(
+            scan_over[1] != 999,
+            true,
+            false,
+            (carry, scan_over),
         )
-        return (x, v, scan_over[0]), (x, v)
 
     x, v = jax.lax.scan(
         scan_func,

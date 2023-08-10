@@ -98,7 +98,7 @@ class Particle:
 
         self._x = x
         self._v = v
-        self._gm = gm
+        self._gm = float(gm)
 
         self.observations = observations
         if type(observations) != type(None):
