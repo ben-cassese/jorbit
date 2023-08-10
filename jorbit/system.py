@@ -7,15 +7,15 @@ from jax import jit
 import numpy as np
 from scipy.optimize import minimize
 import warnings
-import time
 
 warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
 import astropy.units as u
+from tqdm import tqdm
 
 from jorbit import Observations, Particle
-from jorbit.data.constants import all_planets, large_asteroids
+from jorbit.data.constants import ALL_PLANETS, LARGE_ASTEROIDS
 from jorbit.engine.utils import construct_perturbers
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
@@ -24,38 +24,90 @@ from jorbit.data import (
     STANDARD_ASTEROID_GMS,
 )
 from jorbit.engine import (
-    j_integrate_multiple,
+    on_sky,
+    sky_error,
     j_on_sky,
-    j_prepare_loglike_input,
-    j_system_negative_loglike,
-    j_system_negative_loglike_grad,
-    j_residuals,
 )
+
+
+from jorbit.data.constants import (
+    GJ6_A,
+    GJ6_B,
+    GJ8_A,
+    GJ8_B,
+    GJ10_A,
+    GJ10_B,
+    GJ12_A,
+    GJ12_B,
+    GJ14_A,
+    GJ14_B,
+    GJ16_A,
+    GJ16_B,
+    Y4_C,
+    Y4_D,
+)
+from jorbit.data import (
+    STANDARD_PLANET_PARAMS,
+    STANDARD_ASTEROID_PARAMS,
+    STANDARD_PLANET_GMS,
+    STANDARD_ASTEROID_GMS,
+)
+from jorbit.engine.gauss_jackson_integrator import gj_integrate_multiple
+from jorbit.engine.utils import prep_uneven_GJ_integrator
+from jorbit.engine.ephemeris import planet_state
 
 
 class System:
     def __init__(
         self,
         particles,
-        planets=all_planets,
-        asteroids=large_asteroids,
-        integrator_type="gauss-jackson",
+        planets=ALL_PLANETS,
+        asteroids=LARGE_ASTEROIDS,
         integrator_order=8,
+        likelihood_timestep=4.0,
         force_common_epoch=True,
         fit_planet_gms=False,
         fit_asteroid_gms=False,
     ):
+        self._particles = particles  # need to re-order though, saved to compare times
         self._planets = planets
         self._asteroids = asteroids
         self._fit_planet_gms = fit_planet_gms
         self._fit_asteroid_gms = fit_asteroid_gms
-        self._initialize_particles(
-            particles=particles,
-            planets=planets,
-            asteroids=asteroids,
-            fit_planet_gms=fit_planet_gms,
-            fit_asteroid_gms=fit_asteroid_gms,
-        )
+        self._integrator_order = integrator_order
+        self._likelihood_timestep = likelihood_timestep
+
+        (
+            self._earliest_time,
+            self._latest_time,
+            self._planet_params,
+            self._asteroid_params,
+            self._planet_gms,
+            self._asteroid_gms,
+        ) = self._initialize_planets()
+
+        (
+            self._free_params,
+            self._fixed_params,
+            self._ordered_tracer_obs,
+            self._ordered_massive_obs,
+            self._particles,
+        ) = self._create_free_fixed_params()
+
+        self._padded_supporting_data = self._prep_system_GJ_integrator()
+
+        self._residual_func, self._likelihood_func = self._generate_likelihood_funcs()
+
+        xs = []
+        vs = []
+        gms = []
+        for p in self._particles:
+            xs.append(p.x)
+            vs.append(p.v)
+            gms.append(p.gm)
+        self._xs = jnp.array(xs)
+        self._vs = jnp.array(vs)
+        self._gms = jnp.array(gms)
 
     def __repr__(self):
         return f"System with {len(self._xs)} particles"
@@ -66,535 +118,916 @@ class System:
     ################################################################################
     # Misc general heler methods
     ################################################################################
-    def _initialize_particles(
-        self, particles, planets, asteroids, fit_planet_gms, fit_asteroid_gms
-    ):
-        # initial stuff we can save/check right away
-        self._time = particles[0].time
+    def _initialize_planets(self):
         earlys = []
         lates = []
 
-        self._particle_names = []
-        self._particle_observations = []
-        self._particle_free_orbit = []
-        self._particle_free_gm = []
-        for i, p in enumerate(particles):
+        for p in self._particles:
             earlys.append(p.earliest_time.tdb.jd)
             lates.append(p.latest_time.tdb.jd)
-            assert (
-                p.time == self._time
-            ), "All particles must be initalized to the same time"
 
-            if p.name == "":
-                self._particle_names.append(f"Particle {i}")
-            else:
-                self._particle_names.append(p.name)
+        earliest_time = jnp.min(jnp.array(earlys))
+        latest_time = jnp.max(jnp.array(lates))
 
-            num_unique_names = len(set(self._particle_names))
-            assert num_unique_names == i + 1, (
-                "2 or more identical names detected. If using custom names, make sure"
-                " they are each unique and not 'Particle (int < # of particles in the"
-                " system)'"
-            )
-
-            self._particle_observations.append(p.observations)
-            self._particle_free_orbit.append(p.free_orbit)
-            self._particle_free_gm.append(p.free_gm)
-
-        self._earliest_time = jnp.min(jnp.array(earlys))
-        self._latest_time = jnp.max(jnp.array(lates))
-
-        ########################################################################
-        # now we're going to loop through all of the particles and collect/sort
-        # their states, gms, and what parameters can be varied in a fit
-
-        # these lists (soon to be arrays) will contain info about every particle
-        xs = []  # will be (n_particles, 3)
-        vs = []  # will be (n_particles, 3)
-        gms = []  # will be (n_particles,)
-
-        # This is a mask which, when applied to xs, vs, or gms, tells you which
-        # particles are tracers, and which could have non-zero gms
-        TRACERS = []  # will be (n_particles,)
-
-        # these lists (soon to be arrays) will *not* be as long as the # of particles.
-        # instead, each will be as long as either TRACERS.sum() or (~TRACERS).sum()
-        # they exist to show which tracers/massive particles have free/fixed states/gms
-        # free_xx_mask will say "of the (tracers)/(massive) particles, which
-        # have (states)/)gms) that can vary in a fit?"
-        # F = [free state,(gm=0 & fit_gm=False)]
-        # S = [free state,gm>0|fit_gm=True]
-        free_tracer_state_mask = []  # will be (n_particles with F)
-        fixed_tracer_xs = []  # will be ((n_particles - n_particles with F), 3)
-        free_tracer_xs = []  # will be (n_particles with F, 3)
-        fixed_tracer_vs = []  # will be ((n_particles - n_particles with F), 3)
-        free_tracer_vs = []  # will be (n_particles with F, 3)
-        free_massive_state_mask = []  # will be (n_particles with S)
-        fixed_massive_xs = []  # will be ((n_particles - n_particles with S), 3)
-        free_massive_xs = []  # will be (n_particles with S, 3)
-        fixed_massive_vs = []  # will be ((n_particles - n_particles with S), 3)
-        free_massive_vs = []  # will be (n_particles with S, 3)
-        free_massive_gm_mask = []  # will be (n_particles with S)
-        fixed_massive_gms = []  # will be ((n_particles - n_particles with S),)
-        free_massive_gms = []  # will be (n_particles with S,)
-
-        for p in particles:
-            # if the particle has no initial state, (just observations),
-            # randomly initialize it
-            if type(p.x) == type(None):
-                xs.append(np.random.uniform(-10, 10, size=3))
-                vs.append(np.random.uniform(-0.1, 0.1, size=3))
-            else:
-                xs.append(p.x)
-                vs.append(p.v)
-            gms.append(p.gm)
-
-            # set up the masks for which particles have free positions/velocities
-            if p.free_orbit:  # if you want to fit the particle's state...
-                if (
-                    p.gm > 0.0
-                ) | p.free_gm:  # if it's definitely a massive particle, or could be...
-                    free_massive_state_mask.append(True)
-                    free_massive_xs.append(p.x)
-                    free_massive_vs.append(p.v)
-                    TRACERS.append(False)
-                else:  # if it's definitely a tracer particle
-                    free_tracer_state_mask.append(True)
-                    free_tracer_xs.append(p.x)
-                    free_tracer_vs.append(p.v)
-                    TRACERS.append(True)
-            else:
-                if (
-                    p.gm > 0.0
-                ) | p.free_gm:  # if it's definitely a massive particle, or could be...
-                    free_massive_state_mask.append(False)
-                    fixed_massive_xs.append(p.x)
-                    fixed_massive_vs.append(p.v)
-                    TRACERS.append(False)
-                else:  # if it's definitely a tracer particle
-                    free_tracer_state_mask.append(False)
-                    fixed_tracer_xs.append(p.x)
-                    fixed_tracer_vs.append(p.v)
-                    TRACERS.append(True)
-
-            # set up the masks for which particles have free gms
-            if p.free_gm:
-                free_massive_gm_mask.append(True)
-                free_massive_gms.append(p.gm)
-            else:
-                if p.gm > 0:
-                    free_massive_gm_mask.append(False)
-                    fixed_massive_gms.append(p.gm)
-
-        # lock in the current states of all particles
-        self._xs = jnp.array(xs)
-        self._vs = jnp.array(vs)
-        self._gms = jnp.array(gms)
-
-        # turn all of the definitely unchanging parameters into arrays/class attributes
-        # the ones that can vary are left for now, will be collected into a dict later
-        self._free_tracer_state_mask = jnp.array(free_tracer_state_mask).astype(bool)
-        self._fixed_tracer_xs = jnp.array(fixed_tracer_xs)
-        self._fixed_tracer_vs = jnp.array(fixed_tracer_vs)
-        self._free_massive_state_mask = jnp.array(free_massive_state_mask).astype(bool)
-        self._fixed_massive_xs = jnp.array(fixed_massive_xs)
-        self._fixed_massive_vs = jnp.array(fixed_massive_vs)
-        self._free_massive_gm_mask = jnp.array(free_massive_gm_mask).astype(bool)
-        self._fixed_massive_gms = jnp.array(fixed_massive_gms)
-        self._TRACERS = jnp.array(TRACERS)
-
-        ########################################################################
-        # Set up the planets/asteroids. First get the gms/Chebyshev coefficients
-        # from the "construct_perturbers" module, if needed
-        self._planets = planets
-        self._asteroids = asteroids
         if (
-            (planets != all_planets)
-            | (asteroids != large_asteroids)
-            | (self._earliest_time != Time("1980-01-01").tdb.jd)
-            | (self._latest_time != Time("2100-01-01").tdb.jd)
+            (self._planets != ALL_PLANETS)
+            | (self._asteroids != LARGE_ASTEROIDS)
+            | (earliest_time != Time("1980-01-01").tdb.jd)
+            | (latest_time != Time("2100-01-01").tdb.jd)
         ):
             (
-                self._planet_params,
-                self._asteroid_params,
-                self._planet_gms,
-                self._asteroid_gms,
+                planet_params,
+                asteroid_params,
+                planet_gms,
+                asteroid_gms,
             ) = construct_perturbers(
-                planets=planets,
-                asteroids=asteroids,
-                earliest_time=Time(self._earliest_time, format="jd") - 10 * u.day,
-                latest_time=Time(self._latest_time, format="jd") + 10 * u.day,
+                planets=self._planets,
+                asteroids=self._asteroids,
+                earliest_time=Time(earliest_time, format="jd") - 10 * u.day,
+                latest_time=Time(latest_time, format="jd") + 10 * u.day,
             )
         else:
-            self._planet_params = STANDARD_PLANET_PARAMS
-            self._asteroid_params = STANDARD_ASTEROID_PARAMS
-            self._planet_gms = STANDARD_PLANET_GMS
-            self._asteroid_gms = STANDARD_ASTEROID_GMS
+            planet_params = STANDARD_PLANET_PARAMS
+            asteroid_params = STANDARD_ASTEROID_PARAMS
+            planet_gms = STANDARD_PLANET_GMS
+            asteroid_gms = STANDARD_ASTEROID_GMS
 
-        assert len(self._planet_params[0]) == len(self._planets) + 1, (
+        assert len(planet_params[0]) == len(self._planets) + 1, (
             "Ephemeris could not be generated for at least one requested perturbing"
             " planet"
         )
-        assert len(self._asteroid_params[0]) == len(self._asteroids), (
+        assert len(asteroid_params[0]) == len(self._asteroids), (
             "Ephemeris could not be generated for at least one requested perturbing"
             " asteroid"
         )
 
-        # in case you want to let the masses vary, you can set up free/fixed
-        # gms for the planets/asteroids just like we did for the particles
-        if type(fit_planet_gms) != bool:
-            assert len(fit_planet_gms) == len(planets), (
-                "If fitting any planet gms, must provide a list of booleans indicating"
-                " which to fit of length len(planets)"
-            )
-            self._free_planet_gm_mask = fit_planet_gms
-        else:
-            self._free_planet_gm_mask = jnp.array(
-                [False] * len(self._planet_gms)
-            ).astype(bool)
-        free_planet_gms = self._planet_gms[self._free_planet_gm_mask]
-        self._fixed_planet_gms = self._planet_gms[~self._free_planet_gm_mask]
-
-        if type(fit_asteroid_gms) != bool:
-            assert len(fit_asteroid_gms) == len(asteroids), (
-                "If fitting any asteroid gms, must provide a list of booleans"
-                " indicating which to fit of length len(asteroids)"
-            )
-            self._free_asteroid_gm_mask = fit_asteroid_gms
-        else:
-            self._free_asteroid_gm_mask = jnp.array([False] * len(asteroids)).astype(
-                bool
-            )
-
-        if len(asteroids) == 0:
-            self._free_asteroid_gm_mask = jnp.array([False])
-            free_asteroid_gms = jnp.array([])
-            self._fixed_asteroid_gms = self._asteroid_gms
-        else:
-            free_asteroid_gms = self._asteroid_gms[self._free_asteroid_gm_mask]
-            self._fixed_asteroid_gms = self._asteroid_gms[~self._free_asteroid_gm_mask]
-
-        ########################################################################
-        # this is somewhat inelegant, but- for the jax.scans to work, all of the
-        # particles need the same number of observations. so, we're going to
-        # pad the observation_times, ras, decs, observer_positions, and uncertainties
-        # so that the array isn't irregular
-        # I don't love this design choice, since loglike will then carry out a bunch
-        # of useless calculations. luckily you don't need to integrate the particle
-        # for all of the dummy indecies since the "times" of the fake observations
-        # are all the same, but you still go through the sky projection stuff
-        # and only get saved by the 1/inf=0.0 in the uncertainty calculation
-
-        # determine max # of observations
-        largest_coverage = 0
-        for p in particles:
-            if type(p.observations) == type(None):
-                continue
-            if len(p.observations.times) > largest_coverage:
-                largest_coverage = len(p.observations.times)
-
-        # create empty padded arrays
-        observation_times = jnp.ones((len(particles), largest_coverage))
-        observation_ras = jnp.zeros((len(particles), largest_coverage))
-        observation_decs = jnp.zeros((len(particles), largest_coverage))
-        observer_positions = jnp.ones((len(particles), largest_coverage, 3)) * 999
-        astrometric_uncertainties = (
-            jnp.ones((len(particles), largest_coverage)) * jnp.inf
+        return (
+            earliest_time,
+            latest_time,
+            planet_params,
+            asteroid_params,
+            planet_gms,
+            asteroid_gms,
         )
 
-        # fill in the padded arrays with the actual observations
-        for i, p in enumerate(particles):
-            if type(p.observations) == type(None):
-                continue
-            observation_times = observation_times.at[
-                i, : len(p.observations.times)
-            ].set(p.observations.times)
+    def _create_free_fixed_params(self):
+        # f for Free, r for Rigid
+        tracer_fx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        tracer_rx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        massive_fx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        massive_rx_fm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        massive_fx_fm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        massive_rx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
 
-            # set all of the padded values to the last actual time so you don't have to
-            # integrate
-            observation_times = observation_times.at[
-                i, len(p.observations.times) :
-            ].set(jnp.max(p.observations.times))
+        for p in self._particles:
+            if p.free_orbit and p.free_gm:
+                massive_fx_fm["x"].append(p.x)
+                massive_fx_fm["v"].append(p.v)
+                massive_fx_fm["gm"].append(p.gm)
+                massive_fx_fm["obs"].append(p.observations)
+                massive_fx_fm["particles"].append(p)
+            elif p.free_orbit and not p.free_gm:
+                if p.gm == 0:
+                    tracer_fx_rm["x"].append(p.x)
+                    tracer_fx_rm["v"].append(p.v)
+                    tracer_fx_rm["gm"].append(p.gm)
+                    tracer_fx_rm["obs"].append(p.observations)
+                    tracer_fx_rm["particles"].append(p)
+                else:
+                    massive_fx_rm["x"].append(p.x)
+                    massive_fx_rm["v"].append(p.v)
+                    massive_fx_rm["gm"].append(p.gm)
+                    massive_fx_rm["obs"].append(p.observations)
+                    massive_fx_rm["particles"].append(p)
+            elif not p.free_orbit and p.free_gm:
+                massive_rx_fm["x"].append(p.x)
+                massive_rx_fm["v"].append(p.v)
+                massive_rx_fm["gm"].append(p.gm)
+                massive_rx_fm["obs"].append(p.observations)
+                massive_rx_fm["particles"].append(p)
+            elif not p.free_orbit and not p.free_gm:
+                if p.gm == 0:
+                    tracer_rx_rm["x"].append(p.x)
+                    tracer_rx_rm["v"].append(p.v)
+                    tracer_rx_rm["gm"].append(p.gm)
+                    tracer_rx_rm["obs"].append(p.observations)
+                    tracer_rx_rm["particles"].append(p)
+                else:
+                    massive_rx_rm["x"].append(p.x)
+                    massive_rx_rm["v"].append(p.v)
+                    massive_rx_rm["gm"].append(p.gm)
+                    massive_rx_rm["obs"].append(p.observations)
+                    massive_rx_rm["particles"].append(p)
 
-            observation_ras = observation_ras.at[i, : len(p.observations.ra)].set(
-                p.observations.ra
-            )
-            observation_decs = observation_decs.at[i, : len(p.observations.dec)].set(
-                p.observations.dec
-            )
-            observer_positions = observer_positions.at[
-                i, : len(p.observations.observer_positions)
-            ].set(p.observations.observer_positions)
-            astrometric_uncertainties = astrometric_uncertainties.at[
-                i, : len(p.observations.astrometric_uncertainties)
-            ].set(p.observations.astrometric_uncertainties)
+        fixed_params = {}
+        # if len(tracer_fx_rm["x"]) > 0:
+        #     fixed_params["tracer_fx_rm__gm"] = jnp.array(tracer_fx_rm["gm"])
+        # else:
+        #     fixed_params["tracer_fx_rm__gm"] = jnp.empty((0,))
+        if len(tracer_rx_rm["x"]) > 0:
+            fixed_params["tracer_rx_rm__x"] = jnp.array(tracer_rx_rm["x"])
+            fixed_params["tracer_rx_rm__v"] = jnp.array(tracer_rx_rm["v"])
+            # fixed_params["tracer_rx_rm__gm"] = jnp.array(tracer_rx_rm["gm"])
+        else:
+            fixed_params["tracer_rx_rm__x"] = jnp.empty((0, 3))
+            fixed_params["tracer_rx_rm__v"] = jnp.empty((0, 3))
+            # fixed_params["tracer_rx_rm__gm"] = jnp.empty((0,))
+        if len(massive_fx_rm["x"]) > 0:
+            fixed_params["massive_fx_rm__gm"] = jnp.array(massive_fx_rm["gm"])
+        else:
+            fixed_params["massive_fx_rm__gm"] = jnp.empty((0,))
+        if len(massive_rx_fm["x"]) > 0:
+            fixed_params["massive_rx_fm__x"] = jnp.array(massive_rx_fm["x"])
+            fixed_params["massive_rx_fm__v"] = jnp.array(massive_rx_fm["v"])
+        else:
+            fixed_params["massive_rx_fm__x"] = jnp.empty((0, 3))
+            fixed_params["massive_rx_fm__v"] = jnp.empty((0, 3))
+        if len(massive_rx_rm["x"]) > 0:
+            fixed_params["massive_rx_rm__x"] = jnp.array(massive_rx_rm["x"])
+            fixed_params["massive_rx_rm__v"] = jnp.array(massive_rx_rm["v"])
+            fixed_params["massive_rx_rm__gm"] = jnp.array(massive_rx_rm["gm"])
+        else:
+            fixed_params["massive_rx_rm__x"] = jnp.empty((0, 3))
+            fixed_params["massive_rx_rm__v"] = jnp.empty((0, 3))
+            fixed_params["massive_rx_rm__gm"] = jnp.empty((0,))
 
-        # break up the padded arrays into the tracers and massive particles
-        # these will not vary during fits (for now- might be nice to marginalize
-        # over uncertainty in times for example), so we save them as class attributes
-        self._tracer_particle_times = observation_times[self._TRACERS]
-        self._tracer_particle_ras = observation_ras[self._TRACERS]
-        self._tracer_particle_decs = observation_decs[self._TRACERS]
-        self._tracer_particle_observer_positions = observer_positions[self._TRACERS]
-        self._tracer_particle_astrometric_uncertainties = astrometric_uncertainties[
-            self._TRACERS
-        ]
+        free_params = {}
+        if len(tracer_fx_rm["x"]) > 0:
+            free_params["tracer_fx_rm__x"] = jnp.array(tracer_fx_rm["x"])
+            free_params["tracer_fx_rm__v"] = jnp.array(tracer_fx_rm["v"])
+        else:
+            fixed_params["tracer_fx_rm__x"] = jnp.empty((0, 3))
+            fixed_params["tracer_fx_rm__v"] = jnp.empty((0, 3))
 
-        self._massive_particle_times = observation_times[~self._TRACERS]
-        self._massive_particle_ras = observation_ras[~self._TRACERS]
-        self._massive_particle_decs = observation_decs[~self._TRACERS]
-        self._massive_particle_observer_positions = observer_positions[~self._TRACERS]
-        self._massive_particle_astrometric_uncertainties = astrometric_uncertainties[
-            ~self._TRACERS
-        ]
+        if len(massive_fx_rm["x"]) > 0:
+            free_params["massive_fx_rm__x"] = jnp.array(massive_fx_rm["x"])
+            free_params["massive_fx_rm__v"] = jnp.array(massive_fx_rm["v"])
+        else:
+            fixed_params["massive_fx_rm__x"] = jnp.empty((0, 3))
+            fixed_params["massive_fx_rm__v"] = jnp.empty((0, 3))
 
-        ########################################################################
-        # here we'll group all of the parameters that can/can't vary in a fit
-        # into different dicts. these will be combined via "prepare_loglike_input"
-        # during actual fitting, which will produce a dict appropriate for "loglike"
+        if len(massive_rx_fm["x"]) > 0:
+            free_params["massive_rx_fm__gm"] = jnp.array(massive_rx_fm["gm"])
+        else:
+            fixed_params["massive_rx_fm__gm"] = jnp.empty((0,))
 
-        # these are the parameters that will definitely never change
-        self._fixed_params = {
-            "free_tracer_state_mask": self._free_tracer_state_mask,
-            "fixed_tracer_xs": self._fixed_tracer_xs,
-            "fixed_tracer_vs": self._fixed_tracer_vs,
-            "free_massive_state_mask": self._free_massive_state_mask,
-            "fixed_massive_xs": self._fixed_massive_xs,
-            "fixed_massive_vs": self._fixed_massive_vs,
-            "free_massive_gm_mask": self._free_massive_gm_mask,
-            "fixed_massive_gms": self._fixed_massive_gms,
-            "free_planet_gm_mask": self._free_planet_gm_mask,
-            "fixed_planet_gms": self._fixed_planet_gms,
-            "free_asteroid_gm_mask": self._free_asteroid_gm_mask,
-            "fixed_asteroid_gms": self._fixed_asteroid_gms,
-            "tracer_particle_times": self._tracer_particle_times,
-            "tracer_particle_ras": self._tracer_particle_ras,
-            "tracer_particle_decs": self._tracer_particle_decs,
-            "tracer_particle_observer_positions": (
-                self._tracer_particle_observer_positions
-            ),
-            "tracer_particle_astrometric_uncertainties": (
-                self._tracer_particle_astrometric_uncertainties
-            ),
-            "massive_particle_times": self._massive_particle_times,
-            "massive_particle_ras": self._massive_particle_ras,
-            "massive_particle_decs": self._massive_particle_decs,
-            "massive_particle_observer_positions": (
-                self._massive_particle_observer_positions
-            ),
-            "massive_particle_astrometric_uncertainties": (
-                self._massive_particle_astrometric_uncertainties
-            ),
-            "planet_params": self._planet_params,
-            "asteroid_params": self._asteroid_params,
+        if len(massive_fx_fm["x"]) > 0:
+            free_params["massive_fx_fm__x"] = jnp.array(massive_fx_fm["x"])
+            free_params["massive_fx_fm__v"] = jnp.array(massive_fx_fm["v"])
+            free_params["massive_fx_fm__gm"] = jnp.array(massive_fx_fm["gm"])
+        else:
+            fixed_params["massive_fx_fm__x"] = jnp.empty((0, 3))
+            fixed_params["massive_fx_fm__v"] = jnp.empty((0, 3))
+            fixed_params["massive_fx_fm__gm"] = jnp.empty((0,))
+
+        if self._fit_planet_gms:
+            free_params["planet_gms"] = self._planet_gms
+        else:
+            fixed_params["planet_gms"] = self._planet_gms
+
+        if self._fit_asteroid_gms:
+            free_params["asteroid_gms"] = self._asteroid_gms
+        else:
+            fixed_params["asteroid_gms"] = self._asteroid_gms
+
+        ordered_tracer_obs = tracer_fx_rm["obs"] + tracer_rx_rm["obs"]
+        ordered_massive_obs = (
+            massive_fx_rm["obs"]
+            + massive_rx_fm["obs"]
+            + massive_fx_fm["obs"]
+            + massive_rx_rm["obs"]
+        )
+
+        reordered_particles = (
+            tracer_fx_rm["particles"]
+            + tracer_rx_rm["particles"]
+            + massive_fx_rm["particles"]
+            + massive_rx_fm["particles"]
+            + massive_fx_fm["particles"]
+            + massive_rx_rm["particles"]
+        )
+
+        return (
+            free_params,
+            fixed_params,
+            ordered_tracer_obs,
+            ordered_massive_obs,
+            reordered_particles,
+        )
+
+    def _prep_system_GJ_integrator(
+        self,
+    ):
+        coeffs_dict = {
+            "a_jk": {
+                "6": GJ6_A,
+                "8": GJ8_A,
+                "10": GJ10_A,
+                "12": GJ12_A,
+                "14": GJ14_A,
+                "16": GJ16_A,
+            },
+            "b_jk": {
+                "6": GJ6_B,
+                "8": GJ8_B,
+                "10": GJ10_B,
+                "12": GJ12_B,
+                "14": GJ14_B,
+                "16": GJ16_B,
+            },
         }
 
-        # here are the parameters that in principle could change
-        # but, some of them are just empty arrays (i.e., if there are no particles
-        # we want to fit a mass for). it doesn't make sense to differentiate
-        # wrt those, so we'll add them to the fixed_params dict if they're empty
-        self._free_params = {}
-        if len(free_tracer_xs) == 0:
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_tracer_xs": jnp.empty((0, 3))},
-            }
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_tracer_vs": jnp.empty((0, 3))},
-            }
-        else:
-            self._free_params = {
-                **self._free_params,
-                **{"free_tracer_xs": jnp.array(free_tracer_xs)},
-            }
-            self._free_params = {
-                **self._free_params,
-                **{"free_tracer_vs": jnp.array(free_tracer_vs)},
-            }
+        def _inner_prep_system_GJ_integrator(ordered_obs, message):
+            # The the data needed to integrate each individual particle to the times it
+            # was observed. Each set of arrays for an individual particle is padded with 999s
+            # so that there is the same number of jumps between epochs, but then the number of
+            # epochs and the number of jumps per epoch will vary particle-to-particle
+            individual_integrator_prep = []
+            # times=jnp.concatenate((jnp.array([system_time]), o.times)),
+            for o in tqdm(ordered_obs, desc=message, position=0):
+                z = prep_uneven_GJ_integrator(
+                    times=o.times,
+                    low_order=self._integrator_order,
+                    high_order=self._integrator_order,
+                    low_order_cutoff=1e-6,
+                    targeted_low_order_timestep=self._likelihood_timestep,
+                    targeted_high_order_timestep=self._likelihood_timestep,
+                    coeffs_dict=coeffs_dict,
+                    ragged=False,
+                )
+                individual_integrator_prep.append(z)
 
-        if len(free_massive_xs) == 0:
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_massive_xs": jnp.empty((0, 3))},
-            }
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_massive_vs": jnp.empty((0, 3))},
-            }
-        else:
-            self._free_params = {
-                **self._free_params,
-                **{"free_massive_xs": jnp.array(free_massive_xs)},
-            }
-            self._free_params = {
-                **self._free_params,
-                **{"free_massive_vs": jnp.array(free_massive_vs)},
-            }
+            # Now pad those precomputed (and already padded) arrays so that every particle
+            # has the same number of epochs and the same number of jumps per epoch
+            most_jumps = 0
+            most_steps_per_epoch = 0
+            for p in individual_integrator_prep:
+                p = p[1]  # Planet_Xs. p[0] is Valid_Steps
+                if p.shape[0] > most_jumps:
+                    most_jumps = p.shape[0]
+                if p.shape[2] > most_steps_per_epoch:
+                    most_steps_per_epoch = p.shape[2]
+            Valid_Steps = []
+            Planet_Xs = []
+            Planet_Vs = []
+            Planet_As = []
+            Asteroid_Xs = []
+            Planet_Xs_Warmup = []
+            Asteroid_Xs_Warmup = []
+            Dts_Warmup = []
+            for p in individual_integrator_prep:
+                Valid_Steps.append(
+                    jnp.pad(
+                        p[0],
+                        (0, most_jumps - p[0].shape[0]),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Planet_Xs.append(
+                    jnp.pad(
+                        p[1],
+                        (
+                            (0, most_jumps - p[1].shape[0]),
+                            (0, 0),
+                            (0, most_steps_per_epoch - p[1].shape[2]),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Planet_Vs.append(
+                    jnp.pad(
+                        p[2],
+                        (
+                            (0, most_jumps - p[2].shape[0]),
+                            (0, 0),
+                            (0, most_steps_per_epoch - p[2].shape[2]),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Planet_As.append(
+                    jnp.pad(
+                        p[3],
+                        (
+                            (0, most_jumps - p[3].shape[0]),
+                            (0, 0),
+                            (0, most_steps_per_epoch - p[3].shape[2]),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Asteroid_Xs.append(
+                    jnp.pad(
+                        p[4],
+                        (
+                            (0, most_jumps - p[4].shape[0]),
+                            (0, 0),
+                            (0, most_steps_per_epoch - p[4].shape[2]),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Planet_Xs_Warmup.append(
+                    jnp.pad(
+                        p[5],
+                        (
+                            (0, most_jumps - p[5].shape[0]),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Asteroid_Xs_Warmup.append(
+                    jnp.pad(
+                        p[6],
+                        (
+                            (0, most_jumps - p[6].shape[0]),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                            (0, 0),
+                        ),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                Dts_Warmup.append(
+                    jnp.pad(
+                        p[7],
+                        ((0, most_jumps - p[7].shape[0]), (0, 0), (0, 0)),
+                    )
+                )
+            if len(Valid_Steps) > 0:
+                Valid_Steps = jnp.stack(Valid_Steps)
+                Planet_Xs = jnp.stack(Planet_Xs)
+                Planet_Vs = jnp.stack(Planet_Vs)
+                Planet_As = jnp.stack(Planet_As)
+                Asteroid_Xs = jnp.stack(Asteroid_Xs)
+                Planet_Xs_Warmup = jnp.stack(Planet_Xs_Warmup)
+                Asteroid_Xs_Warmup = jnp.stack(Asteroid_Xs_Warmup)
+                Dts_Warmup = jnp.stack(Dts_Warmup)
+            else:
+                Valid_Steps = jnp.empty((0, 0))
+                Planet_Xs = jnp.empty((0, 0, 0, 0, 0))
+                Planet_Vs = jnp.empty((0, 0, 0, 0, 0))
+                Planet_As = jnp.empty((0, 0, 0, 0, 0))
+                Asteroid_Xs = jnp.empty((0, 0, 0, 0, 0))
+                Planet_Xs_Warmup = jnp.empty((0, 0, 0, 0, 0, 0))
+                Asteroid_Xs_Warmup = jnp.empty((0, 0, 0, 0, 0, 0))
+                Dts_Warmup = jnp.empty((0, 0, 0))
 
-        if len(free_massive_gms) == 0:
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_massive_gms": jnp.empty((0))},
-            }
-        else:
-            self._free_params = {
-                **self._free_params,
-                **{"free_massive_gms": jnp.array(free_massive_gms)},
-            }
+            # unrelated, we need the initial times, jump times, RAs, Decs, astrometric
+            # uncertainties, and location from which each observation was taken for each
+            # particle. Every but the initial times need to be padded to match the number of
+            # epochs, which is now the same for all particles
+            init_times = []
+            jump_times = []
+            ras = []
+            decs = []
+            astrometric_uncertainties = []
+            observer_positions = []
+            observed_planet_xs = []
+            observed_asteroid_xs = []
+            for o in ordered_obs:
+                init_times.append(o.times[0])
+                jump_times.append(
+                    jnp.pad(
+                        o.times[1:],
+                        (0, most_jumps - len(o.times) + 1),
+                        mode="constant",
+                        constant_values=999,
+                    )
+                )
+                ras.append(
+                    jnp.pad(
+                        o.ra,
+                        (0, most_jumps - len(o.times) + 1),
+                        mode="constant",
+                        constant_values=999,
+                    ),
+                )
+                decs.append(
+                    jnp.pad(
+                        o.dec,
+                        (0, most_jumps - len(o.times) + 1),
+                        mode="constant",
+                        constant_values=999,
+                    ),
+                )
+                astrometric_uncertainties.append(
+                    jnp.pad(
+                        o.astrometric_uncertainties,
+                        (0, most_jumps - len(o.times) + 1),
+                        mode="constant",
+                        constant_values=jnp.inf,
+                    ),
+                )
+                observer_positions.append(
+                    jnp.pad(
+                        o.observer_positions,
+                        ((0, most_jumps - len(o.times) + 1), (0, 0)),
+                        mode="constant",
+                        constant_values=999,
+                    ),
+                )
+                planetxs, _, _ = planet_state(
+                    planet_params=self._planet_params,
+                    times=o.times,
+                    velocity=False,
+                    acceleration=False,
+                )
+                asteroidxs, _, _ = planet_state(
+                    planet_params=self._asteroid_params,
+                    times=o.times,
+                    velocity=False,
+                    acceleration=False,
+                )
+                observed_planet_xs.append(
+                    jnp.pad(
+                        planetxs,
+                        ((0, 0), (0, most_jumps - len(o.times) + 1), (0, 0)),
+                        mode="constant",
+                        constant_values=999,
+                    ),
+                )
+                observed_asteroid_xs.append(
+                    jnp.pad(
+                        asteroidxs,
+                        ((0, 0), (0, most_jumps - len(o.times) + 1), (0, 0)),
+                        mode="constant",
+                        constant_values=999,
+                    ),
+                )
 
-        if len(free_planet_gms) == 0:
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_planet_gms": jnp.empty((0))},
-            }
-        else:
-            self._free_params = {
-                **self._free_params,
-                **{"free_planet_gms": jnp.array(free_planet_gms)},
-            }
+            if len(init_times) > 0:
+                init_times = jnp.array(init_times)
+                jump_times = jnp.stack(jump_times)
+                ras = jnp.stack(ras)
+                decs = jnp.stack(decs)
+                astrometric_uncertainties = jnp.stack(astrometric_uncertainties)
+                observer_positions = jnp.stack(observer_positions)
+                observed_planet_xs = jnp.stack(observed_planet_xs)
+                observed_asteroid_xs = jnp.stack(observed_asteroid_xs)
+            else:
+                # init_times = jnp.empty((0,))
+                # jump_times = jnp.empty((0, 0))
+                # ras = jnp.empty((0, 0))
+                # decs = jnp.empty((0, 0))
+                # astrometric_uncertainties = jnp.empty((0, 0))
+                # observer_positions = jnp.empty((0, 0, 0))
+                # observed_planet_xs = jnp.empty((0, 0, 0, 0))
+                # observed_asteroid_xs = jnp.empty((0, 0, 0, 0))
+                init_times = jnp.empty((0,))
+                jump_times = jnp.empty((0, 0))
+                ras = jnp.empty((0, 0))
+                decs = jnp.empty((0, 0))
+                astrometric_uncertainties = jnp.empty((0, 0))
+                observer_positions = jnp.empty((0, 0, 0))
+                observed_planet_xs = jnp.empty((0, 0, 0, 0))
+                observed_asteroid_xs = jnp.empty((0, 0, 0, 0))
 
-        if len(free_asteroid_gms) == 0:
-            self._fixed_params = {
-                **self._fixed_params,
-                **{"free_asteroid_gms": jnp.empty((0))},
-            }
-        else:
-            self._free_params = {
-                **self._free_params,
-                **{"free_asteroid_gms": jnp.array(free_asteroid_gms)},
-            }
-
-        largest = 0
-        for p in jnp.concatenate(
-            (self._tracer_particle_times, self._massive_particle_times)
-        ):
-            times = p[p != 2458849]
-            if times.shape == (0,):
-                continue
-            d = self._set_max_steps(times, obey_large_step_limits=False)
-            largest = jnp.where(len(d) > largest, len(d), largest)
-        self._loglike_max_steps = jnp.arange(largest)
-
-        ########################################################################
-        # check that everything just worked
-        assert len(self._xs) == len(self._vs) == len(self._gms)
-        assert len(self._fixed_params) + len(self._free_params) == 31
-        assert len(self._TRACERS) == len(self._xs)
-
-        assert jnp.sum(self._TRACERS) == len(self._free_tracer_state_mask)
-        assert jnp.sum(self._free_tracer_state_mask) == len(free_tracer_xs)
-        assert jnp.sum(self._free_tracer_state_mask) == len(free_tracer_vs)
-        assert jnp.sum(~self._free_tracer_state_mask) == len(self._fixed_tracer_xs)
-        assert jnp.sum(~self._free_tracer_state_mask) == len(self._fixed_tracer_vs)
-
-        assert jnp.sum(~self._TRACERS) == len(self._free_massive_state_mask)
-        assert jnp.sum(self._free_massive_state_mask) == len(free_massive_xs)
-        assert jnp.sum(self._free_massive_state_mask) == len(free_massive_vs)
-        assert jnp.sum(~self._free_massive_state_mask) == len(self._fixed_massive_xs)
-        assert jnp.sum(~self._free_massive_state_mask) == len(self._fixed_massive_vs)
-
-        assert jnp.sum(~self._TRACERS) == len(self._free_massive_gm_mask)
-        assert jnp.sum(self._free_massive_gm_mask) == len(free_massive_gms)
-        assert jnp.sum(~self._free_massive_gm_mask) == len(self._fixed_massive_gms)
-
-        assert len(self._planet_gms) == len(self._free_planet_gm_mask)
-        assert jnp.sum(self._free_planet_gm_mask) == len(free_planet_gms)
-        assert jnp.sum(~self._free_planet_gm_mask) == len(self._fixed_planet_gms)
-
-        assert len(self._asteroid_gms) == len(self._free_asteroid_gm_mask)
-        assert jnp.sum(self._free_asteroid_gm_mask) == len(free_asteroid_gms)
-        assert jnp.sum(~self._free_asteroid_gm_mask) == len(self._fixed_asteroid_gms)
-
-        assert (
-            len(self._tracer_particle_times)
-            == len(self._tracer_particle_ras)
-            == len(self._tracer_particle_decs)
-            == len(self._tracer_particle_observer_positions)
-            == len(self._tracer_particle_astrometric_uncertainties)
-        )
-
-        assert (
-            len(self._massive_particle_times)
-            == len(self._massive_particle_ras)
-            == len(self._massive_particle_decs)
-            == len(self._massive_particle_observer_positions)
-            == len(self._massive_particle_astrometric_uncertainties)
-        )
-
-    def _set_max_steps(self, times, obey_large_step_limits=True):
-        largest = 0
-
-        jumps = jnp.abs(jnp.diff(times))
-        if jumps.shape != (0,):
-            largest_jump = jnp.max(jumps)
-        else:
-            largest_jump = 0
-        first_jump = jnp.abs(self._time - times[0])
-        largest_jump = jnp.where(first_jump > largest_jump, first_jump, largest_jump)
-        largest = jnp.where(largest_jump > largest, largest_jump, largest)
-
-        if obey_large_step_limits:
-            assert largest_jump <= 7305, (
-                "Requested propagation includes at least one step that is too large-"
-                " max default is 20 years. Shrink the jumps, or set"
-                " obey_large_step_limits to False."
+            return (
+                Valid_Steps,
+                Planet_Xs,
+                Planet_Vs,
+                Planet_As,
+                Asteroid_Xs,
+                Planet_Xs_Warmup,
+                Asteroid_Xs_Warmup,
+                Dts_Warmup,
+                init_times,
+                jump_times,
+                ras,
+                decs,
+                astrometric_uncertainties,
+                observer_positions,
+                observed_planet_xs,
+                observed_asteroid_xs,
             )
-        if largest_jump < 1000:
-            max_steps = jnp.arange(100)
-        else:
-            max_steps = jnp.arange(1000)
 
-        if not obey_large_step_limits and largest_jump > 1000:
-            max_steps = jnp.arange((largest_jump * 1.25 / 12).astype(int))
+        (
+            tracer_Valid_Steps,
+            tracer_Planet_Xs,
+            tracer_Planet_Vs,
+            tracer_Planet_As,
+            tracer_Asteroid_Xs,
+            tracer_Planet_Xs_Warmup,
+            tracer_Asteroid_Xs_Warmup,
+            tracer_Dts_Warmup,
+            tracer_Init_Times,
+            tracer_Jump_Times,
+            tracer_RAs,
+            tracer_Decs,
+            tracer_Astrometric_Uncertainties,
+            tracer_Observer_Positions,
+            tracer_Observed_Planet_Xs,
+            tracer_Observed_Asteroid_Xs,
+        ) = _inner_prep_system_GJ_integrator(
+            self._ordered_tracer_obs,
+            "Pre-computing perturber positions for each tracer particle",
+        )
+        (
+            massive_Valid_Steps,
+            massive_Planet_Xs,
+            massive_Planet_Vs,
+            massive_Planet_As,
+            massive_Asteroid_Xs,
+            massive_Planet_Xs_Warmup,
+            massive_Asteroid_Xs_Warmup,
+            massive_Dts_Warmup,
+            massive_Init_Times,
+            massive_Jump_Times,
+            massive_RAs,
+            massive_Decs,
+            massive_Astrometric_Uncertainties,
+            massive_Observer_Positions,
+            massive_Observed_Planet_Xs,
+            massive_Observed_Asteroid_Xs,
+        ) = _inner_prep_system_GJ_integrator(
+            self._ordered_massive_obs,
+            "Pre-computing perturber positions for each massive particle",
+        )
 
-        return max_steps
+        padded_supporting_data = {
+            "tracer_Valid_Steps": tracer_Valid_Steps,
+            "tracer_Planet_Xs": tracer_Planet_Xs,
+            "tracer_Planet_Vs": tracer_Planet_Vs,
+            "tracer_Planet_As": tracer_Planet_As,
+            "tracer_Asteroid_Xs": tracer_Asteroid_Xs,
+            "tracer_Planet_Xs_Warmup": tracer_Planet_Xs_Warmup,
+            "tracer_Asteroid_Xs_Warmup": tracer_Asteroid_Xs_Warmup,
+            "tracer_Dts_Warmup": tracer_Dts_Warmup,
+            "tracer_Init_Times": tracer_Init_Times,
+            "tracer_Jump_Times": tracer_Jump_Times,
+            "tracer_RAs": tracer_RAs,
+            "tracer_Decs": tracer_Decs,
+            "tracer_Astrometric_Uncertainties": tracer_Astrometric_Uncertainties,
+            "tracer_Observer_Positions": tracer_Observer_Positions,
+            "tracer_Observed_Planet_Xs": tracer_Observed_Planet_Xs,
+            "tracer_Observed_Asteroid_Xs": tracer_Observed_Asteroid_Xs,
+            "massive_Valid_Steps": massive_Valid_Steps,
+            "massive_Planet_Xs": massive_Planet_Xs,
+            "massive_Planet_Vs": massive_Planet_Vs,
+            "massive_Planet_As": massive_Planet_As,
+            "massive_Asteroid_Xs": massive_Asteroid_Xs,
+            "massive_Planet_Xs_Warmup": massive_Planet_Xs_Warmup,
+            "massive_Asteroid_Xs_Warmup": massive_Asteroid_Xs_Warmup,
+            "massive_Dts_Warmup": massive_Dts_Warmup,
+            "massive_Init_Times": massive_Init_Times,
+            "massive_Jump_Times": massive_Jump_Times,
+            "massive_RAs": massive_RAs,
+            "massive_Decs": massive_Decs,
+            "massive_Astrometric_Uncertainties": massive_Astrometric_Uncertainties,
+            "massive_Observer_Positions": massive_Observer_Positions,
+            "massive_Observed_Planet_Xs": massive_Observed_Planet_Xs,
+            "massive_Observed_Asteroid_Xs": massive_Observed_Asteroid_Xs,
+        }
+
+        return padded_supporting_data
+
+    def _generate_likelihood_funcs(self):
+        def _resids(
+            tracer_fx_rm__x,
+            tracer_fx_rm__v,
+            tracer_rx_rm__x,
+            tracer_rx_rm__v,
+            massive_fx_rm__x,
+            massive_fx_rm__v,
+            massive_fx_rm__gm,
+            massive_rx_fm__x,
+            massive_rx_fm__v,
+            massive_rx_fm__gm,
+            massive_fx_fm__x,
+            massive_fx_fm__v,
+            massive_fx_fm__gm,
+            massive_rx_rm__x,
+            massive_rx_rm__v,
+            massive_rx_rm__gm,
+            tracer_Valid_Steps,
+            tracer_Planet_Xs,
+            tracer_Planet_Vs,
+            tracer_Planet_As,
+            tracer_Asteroid_Xs,
+            tracer_Planet_Xs_Warmup,
+            tracer_Asteroid_Xs_Warmup,
+            tracer_Dts_Warmup,
+            tracer_Init_Times,
+            tracer_Jump_Times,
+            tracer_RAs,
+            tracer_Decs,
+            tracer_Astrometric_Uncertainties,
+            tracer_Observer_Positions,
+            tracer_Observed_Planet_Xs,
+            tracer_Observed_Asteroid_Xs,
+            massive_Valid_Steps,
+            massive_Planet_Xs,
+            massive_Planet_Vs,
+            massive_Planet_As,
+            massive_Asteroid_Xs,
+            massive_Planet_Xs_Warmup,
+            massive_Asteroid_Xs_Warmup,
+            massive_Dts_Warmup,
+            massive_Init_Times,
+            massive_Jump_Times,
+            massive_RAs,
+            massive_Decs,
+            massive_Astrometric_Uncertainties,
+            massive_Observer_Positions,
+            massive_Observed_Planet_Xs,
+            massive_Observed_Asteroid_Xs,
+            planet_gms,
+            asteroid_gms,
+        ):
+            tracer_x0s = jnp.concatenate((tracer_fx_rm__x, tracer_rx_rm__x))
+            tracer_v0s = jnp.concatenate((tracer_fx_rm__v, tracer_rx_rm__v))
+            massive_x0s = jnp.concatenate(
+                (massive_fx_rm__x, massive_rx_fm__x, massive_fx_fm__x, massive_rx_rm__x)
+            )
+            massive_v0s = jnp.concatenate(
+                (massive_fx_rm__v, massive_rx_fm__v, massive_fx_fm__v, massive_rx_rm__v)
+            )
+            massive_gms = jnp.concatenate(
+                (
+                    massive_fx_rm__gm,
+                    massive_rx_fm__gm,
+                    massive_fx_fm__gm,
+                    massive_rx_rm__gm,
+                )
+            )
+
+            def tracer_contribution():
+                def _tracer_scan_func(carry, scan_over):
+                    (
+                        x0,
+                        v0,
+                        init_time,
+                        jump_times,
+                        valid_steps,
+                        planet_xs,
+                        planet_vs,
+                        planet_as,
+                        asteroid_xs,
+                        planet_xs_warmup,
+                        asteroid_xs_warmup,
+                        dts_warmup,
+                        observer_positions,
+                        ras,
+                        decs,
+                        observed_planet_xs,
+                        observed_asteroid_xs,
+                    ) = scan_over
+
+                    x0 = jnp.concatenate((jnp.array([x0]), massive_x0s))
+                    v0 = jnp.concatenate((jnp.array([v0]), massive_v0s))
+                    gms = jnp.concatenate((jnp.array([0.0]), massive_gms))
+
+                    x, v = gj_integrate_multiple(
+                        x0=x0,
+                        v0=v0,
+                        gms=gms,
+                        valid_steps=valid_steps,
+                        b_jk=GJ8_B,
+                        a_jk=GJ8_A,
+                        t0=init_time,
+                        times=jump_times,
+                        planet_xs=planet_xs,
+                        planet_vs=planet_vs,
+                        planet_as=planet_as,
+                        asteroid_xs=asteroid_xs,
+                        planet_xs_warmup=planet_xs_warmup,
+                        asteroid_xs_warmup=asteroid_xs_warmup,
+                        dts_warmup=dts_warmup,
+                        warmup_C=Y4_C,
+                        warmup_D=Y4_D,
+                        planet_gms=STANDARD_PLANET_GMS,
+                        asteroid_gms=STANDARD_ASTEROID_GMS,
+                        use_GR=True,
+                    )
+
+                    # we only care about the first particle, the tracer
+                    # add the first position back in
+                    x = jnp.concatenate((x0[0][None], x[0, :, :]))
+                    v = jnp.concatenate((v0[0][None], v[0, :, :]))
+
+                    calc_ra, calc_dec = on_sky(
+                        xs=x,
+                        vs=v,
+                        gms=jnp.zeros(x.shape[0]),
+                        observer_positions=observer_positions,
+                        planet_xs=observed_planet_xs,
+                        asteroid_xs=observed_asteroid_xs,
+                        planet_gms=planet_gms,
+                        asteroid_gms=asteroid_gms,
+                    )
+
+                    resids = sky_error(
+                        calc_ra=calc_ra,
+                        calc_dec=calc_dec,
+                        true_ra=ras,
+                        true_dec=decs,
+                    )
+
+                    return None, (x, v, calc_ra, calc_dec, resids)
+
+                tmp = jax.lax.scan(
+                    _tracer_scan_func,
+                    None,
+                    (
+                        tracer_x0s,
+                        tracer_v0s,
+                        tracer_Init_Times,
+                        tracer_Jump_Times,
+                        tracer_Valid_Steps,
+                        tracer_Planet_Xs,
+                        tracer_Planet_Vs,
+                        tracer_Planet_As,
+                        tracer_Asteroid_Xs,
+                        tracer_Planet_Xs_Warmup,
+                        tracer_Asteroid_Xs_Warmup,
+                        tracer_Dts_Warmup,
+                        tracer_Observer_Positions,
+                        tracer_RAs,
+                        tracer_Decs,
+                        tracer_Observed_Planet_Xs,
+                        tracer_Observed_Asteroid_Xs,
+                    ),
+                )[1]
+                tracer_xs = tmp[0]
+                tracer_vs = tmp[1]
+                tracer_ras = tmp[2]
+                tracer_decs = tmp[3]
+                tracer_resids = tmp[4]
+                return tracer_xs, tracer_vs, tracer_ras, tracer_decs, tracer_resids
+
+            def massive_contribution():
+                def _massive_scan_func(carry, scan_over):
+                    ind = scan_over
+                    x, v = gj_integrate_multiple(
+                        x0=massive_x0s,
+                        v0=massive_v0s,
+                        gms=massive_gms,
+                        valid_steps=massive_Valid_Steps[ind],
+                        b_jk=GJ8_B,
+                        a_jk=GJ8_A,
+                        t0=massive_Init_Times[ind],
+                        times=massive_Jump_Times[ind],
+                        planet_xs=massive_Planet_Xs[ind],
+                        planet_vs=massive_Planet_Vs[ind],
+                        planet_as=massive_Planet_As[ind],
+                        asteroid_xs=massive_Asteroid_Xs[ind],
+                        planet_xs_warmup=massive_Planet_Xs_Warmup[ind],
+                        asteroid_xs_warmup=massive_Asteroid_Xs_Warmup[ind],
+                        dts_warmup=massive_Dts_Warmup[ind],
+                        warmup_C=Y4_C,
+                        warmup_D=Y4_D,
+                        planet_gms=STANDARD_PLANET_GMS,
+                        asteroid_gms=STANDARD_ASTEROID_GMS,
+                        use_GR=True,
+                    )
+
+                    # add the first position back in
+                    x = jnp.concatenate((massive_x0s[ind][None, :], x[ind, :, :]))
+                    v = jnp.concatenate((massive_v0s[ind][None, :], v[ind, :, :]))
+
+                    calc_ra, calc_dec = on_sky(
+                        xs=x,
+                        vs=v,
+                        gms=jnp.ones(x.shape[0]) * massive_gms[ind],
+                        observer_positions=massive_Observer_Positions[ind],
+                        planet_xs=massive_Observed_Planet_Xs[ind],
+                        asteroid_xs=massive_Observed_Asteroid_Xs[ind],
+                        planet_gms=planet_gms,
+                        asteroid_gms=asteroid_gms,
+                    )
+
+                    resids = sky_error(
+                        calc_ra=calc_ra,
+                        calc_dec=calc_dec,
+                        true_ra=massive_RAs[ind],
+                        true_dec=massive_Decs[ind],
+                    )
+
+                    return None, (x, v, calc_ra, calc_dec, resids)
+
+                tmp = jax.lax.scan(
+                    _massive_scan_func,
+                    None,
+                    jnp.arange(massive_x0s.shape[0]),
+                )[1]
+                massive_xs = tmp[0]
+                massive_vs = tmp[1]
+                massive_calc_RAs = tmp[2]
+                massive_calc_Decs = tmp[3]
+                massive_resids = tmp[4]
+                return (
+                    massive_xs,
+                    massive_vs,
+                    massive_calc_RAs,
+                    massive_calc_Decs,
+                    massive_resids,
+                )
+
+            loglike = 0
+            # can get away with if/else b/c the condition relies only on shape of the inputs
+            if len(tracer_x0s) > 0 & len(massive_x0s) > 0:
+                _, _, tracer_ras, tracer_decs, tracer_resids = tracer_contribution()
+                _, _, massive_ras, massive_decs, massive_resids = massive_contribution()
+                sigma2 = tracer_Astrometric_Uncertainties**2
+                loglike += -0.5 * jnp.sum(tracer_resids**2 / sigma2)
+                sigma2 = massive_Astrometric_Uncertainties**2
+                loglike += -0.5 * jnp.sum(massive_resids**2 / sigma2)
+                return (
+                    jnp.concatenate((tracer_ras, massive_ras)),
+                    jnp.concatenate((tracer_decs, massive_decs)),
+                    jnp.concatenate((tracer_resids, massive_resids)),
+                    loglike,
+                )
+            elif len(tracer_x0s) > 0:
+                _, _, tracer_ra, tracer_dec, tracer_resids = tracer_contribution()
+                sigma2 = tracer_Astrometric_Uncertainties**2
+                loglike += -0.5 * jnp.sum(tracer_resids**2 / sigma2)
+                return tracer_ra, tracer_dec, tracer_resids, loglike
+            elif len(massive_x0s) > 0:
+                _, _, massive_ra, massive_dec, massive_resids = massive_contribution()
+                sigma2 = massive_Astrometric_Uncertainties**2
+                loglike += -0.5 * jnp.sum(massive_resids**2 / sigma2)
+                return massive_ra, massive_dec, massive_resids, loglike
+
+        def resids_function(free_params, fixed_params, padded_supporting_data):
+            tmp = _resids(**free_params, **fixed_params, **padded_supporting_data)
+            return tmp[0], tmp[1], tmp[2]
+
+        resids_function = jax.jit(
+            jax.tree_util.Partial(
+                resids_function,
+                fixed_params=self._fixed_params,
+                padded_supporting_data=self._padded_supporting_data,
+            )
+        )
+
+        def loglike_function(free_params, fixed_params, padded_supporting_data):
+            tmp = _resids(**free_params, **fixed_params, **padded_supporting_data)
+            return tmp[3]
+
+        loglike_function = jax.jit(
+            jax.tree_util.Partial(
+                loglike_function,
+                fixed_params=self._fixed_params,
+                padded_supporting_data=self._padded_supporting_data,
+            )
+        )
+
+        return resids_function, loglike_function
+
+    #     # initial stuff we can save/check right away
+    #     self._time = particles[0].time
+    #     earlys = []
+    #     lates = []
+
+    #     self._particle_names = []
+    #     self._particle_observations = []
+    #     self._particle_free_orbit = []
+    #     self._particle_free_gm = []
+    #     for i, p in enumerate(particles):
+    #         earlys.append(p.earliest_time.tdb.jd)
+    #         lates.append(p.latest_time.tdb.jd)
+    #         assert (
+    #             p.time == self._time
+    #         ), "All particles must be initalized to the same time"
+
+    #         if p.name == "":
+    #             self._particle_names.append(f"Particle {i}")
+    #         else:
+    #             self._particle_names.append(p.name)
+
+    #         num_unique_names = len(set(self._particle_names))
+    #         assert num_unique_names == i + 1, (
+    #             "2 or more identical names detected. If using custom names, make sure"
+    #             " they are each unique and not 'Particle (int < # of particles in the"
+    #             " system)'"
+    #         )
+
+    #         self._particle_observations.append(p.observations)
+    #         self._particle_free_orbit.append(p.free_orbit)
+    #         self._particle_free_gm.append(p.free_gm)
 
     def _collapse_dicts(self, free_params):
-        d = j_prepare_loglike_input(
-            **free_params,
-            **self._fixed_params,
-            use_GR=True,  # doesn't matter, not reported
-            max_steps=jnp.arange(100),
-        )
-
-        xs = []
-        vs = []
-        gms = []
-        for is_tracer in self._TRACERS:
-            if is_tracer:
-                xs.append(d["tracer_particle_xs"][0])
-                d["tracer_particle_xs"] = d["tracer_particle_xs"][1:]
-                vs.append(d["tracer_particle_vs"][0])
-                d["tracer_particle_vs"] = d["tracer_particle_vs"][1:]
-                gms.append(0.0)
-            else:
-                xs.append(d["massive_particle_xs"][0])
-                d["massive_particle_xs"] = d["massive_particle_xs"][1:]
-                vs.append(d["massive_particle_vs"][0])
-                d["massive_particle_vs"] = d["massive_particle_vs"][1:]
-                gms.append(d["massive_particle_gms"][0])
-                d["massive_particle_gms"] = d["massive_particle_gms"][1:]
-        planet_gms = d["planet_gms"]
-        asteroid_gms = d["asteroid_gms"]
-
-        return xs, vs, gms, planet_gms, asteroid_gms
-
-    def _loglike_objective(self, free_params):
-        return j_system_negative_loglike(
-            free_params=free_params,
-            fixed_params=self._fixed_params,
-            use_GR=True,
-            max_steps=self._loglike_max_steps,
-        )
-
-    def _loglike_objective_grad(self, free_params):
-        return j_system_negative_loglike_grad(
-            free_params,
-            fixed_params=self._fixed_params,
-            use_GR=True,
-            max_steps=self._loglike_max_steps,
-        )
+        pass
 
     ####################################################################################
     # User methods
@@ -604,139 +1037,7 @@ class System:
         self, threshold=3 * u.arcsec, max_attempts=5, verbose=True, method="BFGS"
     ):
         threshold = threshold.to(u.arcsec).value
-
-        keys = []
-        shapes = []
-        for key in self._free_params:
-            keys.append(key)
-            shapes.append(self._free_params[key].shape)
-
-        def dict_to_array(params):
-            vals = []
-            for key in keys:
-                vals += list(params[key].flatten())
-            return jnp.array(vals)
-
-        def array_to_dict(arr):
-            ind = 0
-            chunked = []
-            for chunk in shapes:
-                chunked.append(arr[ind : np.prod(chunk) + ind].reshape(chunk))
-                ind += np.prod(chunk)
-            return dict(zip(keys, chunked))
-
-        def scipy_obj(arr):
-            return jnp.array(self._loglike_objective(array_to_dict(arr)))
-
-        def scipy_jac(arr):
-            g = self._loglike_objective_grad(array_to_dict(arr))
-            return jnp.array(dict_to_array(g))
-
-        if verbose:
-            print("Compling likelihood and its gradient, if not cached...")
-        test = scipy_obj(dict_to_array(self._free_params))
-        test = scipy_jac(dict_to_array(self._free_params))
-
-        if verbose:
-            t = time.time()
-            test = scipy_obj(dict_to_array(self._free_params)).block_until_ready()
-            print(f"Time to evaluate loglike: {(time.time() - t)*1000:.2f} ms")
-            t = time.time()
-            test = scipy_jac(dict_to_array(self._free_params)).block_until_ready()
-            print(f"Time to evaluate loglike gradient: {(time.time() - t)*1000:.2f} ms")
-
-        def inner():
-            vals = []
-            for i, k in enumerate(keys):
-                if "xs" in k:
-                    vals.append(np.random.uniform(-10, 10, size=shapes[i]))
-                elif "vs" in k:
-                    vals.append(np.random.uniform(-0.1, 0.1, size=shapes[i]))
-                elif "gm" in k:
-                    vals.append(10 ** np.random.uniform(-16, -12, size=shapes[i]))
-                else:
-                    raise ValueError("unknown key")
-
-            guess = dict(zip(keys, vals))
-            x0 = dict_to_array(guess)
-            res = minimize(scipy_obj, x0, jac=scipy_jac, method=method)
-
-            new_free_params = array_to_dict(res.x)
-            loglike_inputs = j_prepare_loglike_input(
-                **new_free_params,
-                **self._fixed_params,
-                use_GR=True,
-                max_steps=self._loglike_max_steps,
-            )
-
-            tracer_resids, massive_resids = j_residuals(**loglike_inputs)
-
-            return new_free_params, tracer_resids, massive_resids
-
-        good = False
-        for i in range(max_attempts):
-            new_free_params, tracer_resids, massive_resids = inner()
-
-            if tracer_resids.shape != ():
-                tracer_resids = jnp.where(
-                    self._tracer_particle_astrometric_uncertainties != jnp.inf,
-                    tracer_resids,
-                    0,
-                )
-            else:
-                tracer_resids = jnp.zeros(1)
-            if massive_resids.shape != ():
-                massive_resids = jnp.where(
-                    self._massive_particle_astrometric_uncertainties != jnp.inf,
-                    massive_resids,
-                    0,
-                )
-            else:
-                massive_resids = jnp.zeros(1)
-
-            if (jnp.max(tracer_resids) < threshold) & (
-                jnp.max(massive_resids) < threshold
-            ):
-                good = True
-                break
-            else:
-                if verbose:
-                    print(
-                        f"Failed {i+1} times(s), will make up to"
-                        f" {max_attempts} attempts"
-                    )
-
-        results = {}
-        for i in range(len(self._xs)):
-            name = self._particle_names[i]
-            if self._particle_observations is None:
-                continue
-            observation_times = self._particle_observations[i].times
-            resids = tracer_resids[i][: len(observation_times)]
-            results = dict(
-                results,
-                **{
-                    f"{name}": {
-                        "Residuals (arcsec)": resids,
-                        "Observation Times (JD)": observation_times,
-                    }
-                },
-            )
-
-        if good:
-            self._xs, self._vs, self._gms, self._planet_gms, self._asteroid_gms = (
-                self._collapse_dicts(new_free_params)
-            )
-
-            return {
-                "Status": "Success",
-                "Observation Residuals": results,
-            }
-        else:
-            return {
-                "Status": "Failure",
-                "Observation Residuals": results,
-            }
+        pass
 
     def propagate(
         self,
@@ -764,69 +1065,48 @@ class System:
             " considered in the ephemeris for this particle. Consider initially setting"
             " a broader time range for the ephemeris."
         )
+        pass
 
-        max_steps = self._set_max_steps(times, obey_large_step_limits)
+        # move them
 
-        xs, vs, final_times, success = j_integrate_multiple(
-            xs=self._xs,
-            vs=self._vs,
-            gms=self._gms,
-            initial_time=self._time,
-            final_times=times,
-            planet_params=self._planet_params,
-            asteroid_params=self._asteroid_params,
-            planet_gms=self._planet_gms,
-            asteroid_gms=self._asteroid_gms,
-            max_steps=max_steps,
-            use_GR=use_GR,
-        )
+    #     self._xs = xs
+    #     self._vs = vs
+    #     self._time = final_times[-1]
 
-        self._xs = xs
-        self._vs = vs
-        self._time = final_times[-1]
+    #     if sky_positions:
+    #         if observatory_locations == []:
+    #             raise ValueError(
+    #                 "Must provide observatory locations if sky_positions=True. See"
+    #                 " Observations docstring for more info."
+    #             )
+    #         pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
+    #         obs = Observations(
+    #             positions=pos,
+    #             times=times,
+    #             observatory_locations=observatory_locations,
+    #             astrometric_uncertainties=[10 * u.mas] * len(times),
+    #         )
 
-        if sky_positions:
-            if observatory_locations == []:
-                raise ValueError(
-                    "Must provide observatory locations if sky_positions=True. See"
-                    " Observations docstring for more info."
-                )
-            pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
-            obs = Observations(
-                positions=pos,
-                times=times,
-                observatory_locations=observatory_locations,
-                astrometric_uncertainties=[10 * u.mas] * len(times),
-            )
+    #         ras, decs = j_on_sky(
+    #             xs=xs.reshape(-1, xs.shape[-1]),
+    #             vs=vs.reshape(-1, vs.shape[-1]),
+    #             gms=jnp.tile(self._gms, len(times)),
+    #             times=jnp.tile(times, len(xs)),
+    #             observer_positions=jnp.array(list(obs.observer_positions) * len(xs)),
+    #             planet_params=self._planet_params,
+    #             asteroid_params=self._asteroid_params,
+    #             planet_gms=self._planet_gms,
+    #             asteroid_gms=self._asteroid_gms,
+    #         )
 
-            ras, decs = j_on_sky(
-                xs=xs.reshape(-1, xs.shape[-1]),
-                vs=vs.reshape(-1, vs.shape[-1]),
-                gms=jnp.tile(self._gms, len(times)),
-                times=jnp.tile(times, len(xs)),
-                observer_positions=jnp.array(list(obs.observer_positions) * len(xs)),
-                planet_params=self._planet_params,
-                asteroid_params=self._asteroid_params,
-                planet_gms=self._planet_gms,
-                asteroid_gms=self._asteroid_gms,
-            )
+    #         s = SkyCoord(ra=ras * u.rad, dec=decs * u.rad)
+    #         if xs.shape[0] == 1:
+    #             return xs[0], vs[0], s
+    #         return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
 
-            s = SkyCoord(ra=ras * u.rad, dec=decs * u.rad)
-            if xs.shape[0] == 1:
-                return xs[0], vs[0], s
-            return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
-
-        if xs.shape[0] == 1:
-            return xs[0], vs[0]
-        return xs, vs
-
-    def add_particle(self, particle):
-        old_particles = self.particles
-        new_particles = old_particles + [particle]
-        try:
-            self._initialize_particles(new_particles)
-        except AssertionError:
-            self._initialize_particles(old_particles)
+    #     if xs.shape[0] == 1:
+    #         return xs[0], vs[0]
+    #     return xs, vs
 
     ################################################################################
     # Properties
@@ -872,23 +1152,23 @@ class System:
     def time(self):
         return self._time
 
-    @property
-    def particles(self):
-        particles = []
-        for i, n in enumerate(self._particle_names):
-            particles.append(
-                Particle(
-                    x=self._xs[i],
-                    v=self._vs[i],
-                    elements=None,
-                    gm=self._gms[i],
-                    time=float(self._time),
-                    observations=self._particle_observations[i],
-                    earliest_time=self._earliest_time,
-                    latest_time=self._latest_time,
-                    name=n,
-                    free_orbit=self._particle_free_orbit[i],
-                    free_gm=self._particle_free_gm[i],
-                )
-            )
-        return particles
+    # @property
+    # def particles(self):
+    #     particles = []
+    #     for i, n in enumerate(self._particle_names):
+    #         particles.append(
+    #             Particle(
+    #                 x=self._xs[i],
+    #                 v=self._vs[i],
+    #                 elements=None,
+    #                 gm=self._gms[i],
+    #                 time=float(self._time),
+    #                 observations=self._particle_observations[i],
+    #                 earliest_time=self._earliest_time,
+    #                 latest_time=self._latest_time,
+    #                 name=n,
+    #                 free_orbit=self._particle_free_orbit[i],
+    #                 free_gm=self._particle_free_gm[i],
+    #             )
+    #         )
+    #     return particles

@@ -12,7 +12,6 @@ warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 
 from jorbit.data import STANDARD_SUN_PARAMS
-from jorbit.data.constants import all_planets, large_asteroids
 from jorbit.engine.utils import construct_perturbers
 from jorbit.engine import (
     j_cart_to_elements,

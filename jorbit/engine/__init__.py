@@ -41,7 +41,6 @@ from jax import jit, lax
 
 from jorbit.engine.accelerations import *
 from jorbit.engine.ephemeris import *
-from jorbit.engine.slapshot_integrator import *
 from jorbit.engine.likelihood import *
 from jorbit.engine.sky_projection import *
 
@@ -52,21 +51,8 @@ j_gr = jax.jit(gr)
 j_newtonian_helper = jax.jit(newtonian_helper)
 j_newtonian = jax.jit(newtonian)
 j_acceleration = jax.jit(acceleration)
-j_inferred_xs = jax.jit(inferred_xs)
-j_final_x_prediction = jax.jit(final_x_prediction)
-j_inferred_vs = jax.jit(inferred_vs)
-j_final_v_prediction = jax.jit(final_v_prediction)
-j_b6 = jax.jit(b6)
-j_single_step = jax.jit(single_step)
-j_integrate = jax.jit(integrate)
-j_integrate_multiple = jax.jit(integrate_multiple)
 j_on_sky = jax.jit(on_sky)
 j_sky_error = jax.jit(sky_error)
-j_weave_free_and_fixed = jax.jit(weave_free_and_fixed)
-j_prepare_loglike_input = jax.jit(prepare_loglike_input)
-j_residuals = jax.jit(residuals)
-j_loglike = jax.jit(loglike)
-j_system_negative_loglike = jax.jit(system_negative_loglike)
 j_barycentricmeanecliptic_to_icrs = jax.jit(barycentricmeanecliptic_to_icrs)
 j_icrs_to_barycentricmeanecliptic = jax.jit(icrs_to_barycentricmeanecliptic)
 j_cart_to_elements = jax.jit(cart_to_elements)

@@ -11,7 +11,6 @@ from jorbit.data import (
     STANDARD_ASTEROID_GMS,
 )
 
-from jorbit.engine.slapshot_integrator import integrate_multiple
 from jorbit.engine.sky_projection import on_sky, sky_error
 
 
