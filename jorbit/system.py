@@ -696,6 +696,9 @@ class System:
             "massive_Observer_Positions": massive_Observer_Positions,
             "massive_Observed_Planet_Xs": massive_Observed_Planet_Xs,
             "massive_Observed_Asteroid_Xs": massive_Observed_Asteroid_Xs,
+            "jax_local_device_count": jnp.arange(
+                jax.local_device_count()
+            ),  # make it arange to encode in shape, not value
         }
 
         return padded_supporting_data
@@ -752,7 +755,9 @@ class System:
             massive_Observed_Asteroid_Xs,
             planet_gms,
             asteroid_gms,
+            jax_local_device_count,
         ):
+            jax_local_device_count = jax_local_device_count.shape[0]
             tracer_x0s = jnp.concatenate((tracer_fx_rm__x, tracer_rx_rm__x))
             tracer_v0s = jnp.concatenate((tracer_fx_rm__v, tracer_rx_rm__v))
             massive_x0s = jnp.concatenate(
@@ -770,7 +775,25 @@ class System:
                 )
             )
 
-            def tracer_contribution():
+            def tracer_contribution(
+                ptracer_x0s,
+                ptracer_v0s,
+                ptracer_Init_Times,
+                ptracer_Jump_Times,
+                ptracer_Valid_Steps,
+                ptracer_Planet_Xs,
+                ptracer_Planet_Vs,
+                ptracer_Planet_As,
+                ptracer_Asteroid_Xs,
+                ptracer_Planet_Xs_Warmup,
+                ptracer_Asteroid_Xs_Warmup,
+                ptracer_Dts_Warmup,
+                ptracer_Observer_Positions,
+                ptracer_RAs,
+                ptracer_Decs,
+                ptracer_Observed_Planet_Xs,
+                ptracer_Observed_Asteroid_Xs,
+            ):
                 def _tracer_scan_func(carry, scan_over):
                     (
                         x0,
@@ -848,23 +871,23 @@ class System:
                     _tracer_scan_func,
                     None,
                     (
-                        tracer_x0s,
-                        tracer_v0s,
-                        tracer_Init_Times,
-                        tracer_Jump_Times,
-                        tracer_Valid_Steps,
-                        tracer_Planet_Xs,
-                        tracer_Planet_Vs,
-                        tracer_Planet_As,
-                        tracer_Asteroid_Xs,
-                        tracer_Planet_Xs_Warmup,
-                        tracer_Asteroid_Xs_Warmup,
-                        tracer_Dts_Warmup,
-                        tracer_Observer_Positions,
-                        tracer_RAs,
-                        tracer_Decs,
-                        tracer_Observed_Planet_Xs,
-                        tracer_Observed_Asteroid_Xs,
+                        ptracer_x0s,
+                        ptracer_v0s,
+                        ptracer_Init_Times,
+                        ptracer_Jump_Times,
+                        ptracer_Valid_Steps,
+                        ptracer_Planet_Xs,
+                        ptracer_Planet_Vs,
+                        ptracer_Planet_As,
+                        ptracer_Asteroid_Xs,
+                        ptracer_Planet_Xs_Warmup,
+                        ptracer_Asteroid_Xs_Warmup,
+                        ptracer_Dts_Warmup,
+                        ptracer_Observer_Positions,
+                        ptracer_RAs,
+                        ptracer_Decs,
+                        ptracer_Observed_Planet_Xs,
+                        ptracer_Observed_Asteroid_Xs,
                     ),
                 )[1]
                 tracer_xs = tmp[0]
@@ -874,7 +897,7 @@ class System:
                 tracer_resids = tmp[4]
                 return tracer_xs, tracer_vs, tracer_ras, tracer_decs, tracer_resids
 
-            def massive_contribution():
+            def massive_contribution(scan_inds):
                 def _massive_scan_func(carry, scan_over):
                     ind = scan_over
                     x, v = gj_integrate_multiple(
@@ -927,7 +950,7 @@ class System:
                 tmp = jax.lax.scan(
                     _massive_scan_func,
                     None,
-                    jnp.arange(massive_x0s.shape[0]),
+                    jnp.arange(scan_inds),
                 )[1]
                 massive_xs = tmp[0]
                 massive_vs = tmp[1]
@@ -942,11 +965,141 @@ class System:
                     massive_resids,
                 )
 
-            loglike = 0
-            # can get away with if/else b/c the condition relies only on shape of the inputs
+            # can get away with if/else b/c the conditions rely only on shape of the inputs
+            # get the residuals
+            if jax_local_device_count == 1:
+                if len(tracer_x0s) > 0:
+                    _, _, tracer_ras, tracer_decs, tracer_resids = tracer_contribution(
+                        tracer_x0s,
+                        tracer_v0s,
+                        tracer_Init_Times,
+                        tracer_Jump_Times,
+                        tracer_Valid_Steps,
+                        tracer_Planet_Xs,
+                        tracer_Planet_Vs,
+                        tracer_Planet_As,
+                        tracer_Asteroid_Xs,
+                        tracer_Planet_Xs_Warmup,
+                        tracer_Asteroid_Xs_Warmup,
+                        tracer_Dts_Warmup,
+                        tracer_Observer_Positions,
+                        tracer_RAs,
+                        tracer_Decs,
+                        tracer_Observed_Planet_Xs,
+                        tracer_Observed_Asteroid_Xs,
+                    )
+                if len(massive_x0s) > 0:
+                    _, _, massive_ras, massive_decs, massive_resids = (
+                        massive_contribution(massive_x0s.shape[0])
+                    )
+            else:
+                # can reshape and pmap to parallelize if we have multiple devices
+                if len(tracer_x0s) > 0:
+                    num_particles = tracer_x0s.shape[0]
+                    # for some reason, this is fine to jit, but jnp.mod is not
+                    ex = tracer_x0s.shape[0] % jax_local_device_count
+                    a_ex = tracer_x0s[:ex]
+                    b_ex = tracer_v0s[:ex]
+                    c_ex = tracer_Init_Times[:ex]
+                    d_ex = tracer_Jump_Times[:ex]
+                    e_ex = tracer_Valid_Steps[:ex]
+                    f_ex = tracer_Planet_Xs[:ex]
+                    g_ex = tracer_Planet_Vs[:ex]
+                    h_ex = tracer_Planet_As[:ex]
+                    i_ex = tracer_Asteroid_Xs[:ex]
+                    j_ex = tracer_Planet_Xs_Warmup[:ex]
+                    k_ex = tracer_Asteroid_Xs_Warmup[:ex]
+                    l_ex = tracer_Dts_Warmup[:ex]
+                    m_ex = tracer_Observer_Positions[:ex]
+                    n_ex = tracer_RAs[:ex]
+                    o_ex = tracer_Decs[:ex]
+                    p_ex = tracer_Observed_Planet_Xs[:ex]
+                    q_ex = tracer_Observed_Asteroid_Xs[:ex]
+
+                    a = jnp.array(jnp.split(tracer_x0s[ex:], jax_local_device_count))
+                    b = jnp.array(jnp.split(tracer_v0s[ex:], jax_local_device_count))
+                    c = jnp.array(
+                        jnp.split(tracer_Init_Times[ex:], jax_local_device_count)
+                    )
+                    d = jnp.array(
+                        jnp.split(tracer_Jump_Times[ex:], jax_local_device_count)
+                    )
+                    e = jnp.array(
+                        jnp.split(tracer_Valid_Steps[ex:], jax_local_device_count)
+                    )
+                    f = jnp.array(
+                        jnp.split(tracer_Planet_Xs[ex:], jax_local_device_count)
+                    )
+                    g = jnp.array(
+                        jnp.split(tracer_Planet_Vs[ex:], jax_local_device_count)
+                    )
+                    h = jnp.array(
+                        jnp.split(tracer_Planet_As[ex:], jax_local_device_count)
+                    )
+                    i = jnp.array(
+                        jnp.split(tracer_Asteroid_Xs[ex:], jax_local_device_count)
+                    )
+                    j = jnp.array(
+                        jnp.split(tracer_Planet_Xs_Warmup[ex:], jax_local_device_count)
+                    )
+                    k = jnp.array(
+                        jnp.split(
+                            tracer_Asteroid_Xs_Warmup[ex:], jax_local_device_count
+                        )
+                    )
+                    l = jnp.array(
+                        jnp.split(tracer_Dts_Warmup[ex:], jax_local_device_count)
+                    )
+                    m = jnp.array(
+                        jnp.split(
+                            tracer_Observer_Positions[ex:], jax_local_device_count
+                        )
+                    )
+                    n = jnp.array(jnp.split(tracer_RAs[ex:], jax_local_device_count))
+                    o = jnp.array(jnp.split(tracer_Decs[ex:], jax_local_device_count))
+                    p = jnp.array(
+                        jnp.split(
+                            tracer_Observed_Planet_Xs[ex:], jax_local_device_count
+                        )
+                    )
+                    q = jnp.array(
+                        jnp.split(
+                            tracer_Observed_Asteroid_Xs[ex:], jax_local_device_count
+                        )
+                    )
+
+                    excess_results = tracer_contribution(
+                        a_ex,
+                        b_ex,
+                        c_ex,
+                        d_ex,
+                        e_ex,
+                        f_ex,
+                        g_ex,
+                        h_ex,
+                        i_ex,
+                        j_ex,
+                        k_ex,
+                        l_ex,
+                        m_ex,
+                        n_ex,
+                        o_ex,
+                        p_ex,
+                        q_ex,
+                    )
+
+                    pmapped_results = jax.pmap(tracer_contribution)(
+                        a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q
+                    )
+
+                    # tracer_ra, tracer_dec, tracer_resids
+                if len(massive_x0s) > 0:
+                    # massive_ra, massive_dec, massive_resids
+                    pass
+
+            # put together the likelihoods
+            loglike = 0.0
             if len(tracer_x0s) > 0 & len(massive_x0s) > 0:
-                _, _, tracer_ras, tracer_decs, tracer_resids = tracer_contribution()
-                _, _, massive_ras, massive_decs, massive_resids = massive_contribution()
                 sigma2 = tracer_Astrometric_Uncertainties**2
                 loglike += -0.5 * jnp.sum(tracer_resids**2 / sigma2)
                 sigma2 = massive_Astrometric_Uncertainties**2
@@ -958,16 +1111,15 @@ class System:
                     loglike,
                 )
             elif len(tracer_x0s) > 0:
-                _, _, tracer_ra, tracer_dec, tracer_resids = tracer_contribution()
                 sigma2 = tracer_Astrometric_Uncertainties**2
                 loglike += -0.5 * jnp.sum(tracer_resids**2 / sigma2)
                 return tracer_ra, tracer_dec, tracer_resids, loglike
             elif len(massive_x0s) > 0:
-                _, _, massive_ra, massive_dec, massive_resids = massive_contribution()
                 sigma2 = massive_Astrometric_Uncertainties**2
                 loglike += -0.5 * jnp.sum(massive_resids**2 / sigma2)
                 return massive_ra, massive_dec, massive_resids, loglike
 
+        # Collect all of that into Partial functions with all of the constants baked in
         def resids_function(free_params, fixed_params, padded_supporting_data):
             tmp = _resids(**free_params, **fixed_params, **padded_supporting_data)
             return tmp[0], tmp[1], tmp[2]
