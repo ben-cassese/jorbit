@@ -15,10 +15,7 @@ from jplephem.spk import SPK
 import astropy.units as u
 from astropy.time import Time
 from astropy.utils.data import download_file
-import pandas as pd
-from tqdm import tqdm
 
-# from tqdm.notebook import tqdm
 
 # jorbit imports:
 from jorbit.engine.ephemeris import planet_state
@@ -690,6 +687,8 @@ def prep_uneven_GJ_integrator(
     targeted_low_order_timestep,
     targeted_high_order_timestep,
     coeffs_dict,
+    planet_params=STANDARD_PLANET_PARAMS,
+    asteroid_params=STANDARD_ASTEROID_PARAMS,
     ragged=False,
 ):
     orders = []
@@ -761,6 +760,15 @@ def prep_uneven_GJ_integrator(
         current_size = Jumps[i]
         current_order = orders[i]
         ts = [times[i + 1]]
+    if len(chunks) == 0:
+        chunks.append(
+            {
+                "integrator order": str(int(current_order)),
+                "jumps per integration": current_size,
+                "times": jnp.array(ts),
+            }
+        )
+
     if chunks[-1]["times"][-1] != times[-1]:
         chunks.append(
             {
@@ -780,7 +788,7 @@ def prep_uneven_GJ_integrator(
     Dts_Warmup = []
 
     t = times[0]
-    for c in tqdm(chunks, position=1, desc="integration groups: "):
+    for c in chunks:
         z = c["jumps per integration"] + int(c["integrator order"]) / 2 + 1
         Valid_Steps.append(jnp.array([z] * len(c["times"])))
         c["valid steps"] = jnp.array([z] * len(c["times"]))
@@ -790,8 +798,8 @@ def prep_uneven_GJ_integrator(
             times=c["times"],
             jumps=c["jumps per integration"],
             a_jk=coeffs_dict["a_jk"][c["integrator order"]],
-            planet_params=STANDARD_PLANET_PARAMS,
-            asteroid_params=STANDARD_ASTEROID_PARAMS,
+            planet_params=planet_params,
+            asteroid_params=asteroid_params,
         )
         Planet_Xs.append(x[0])
         Planet_Vs.append(x[1])

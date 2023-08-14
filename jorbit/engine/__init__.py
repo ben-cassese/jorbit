@@ -57,5 +57,3 @@ j_barycentricmeanecliptic_to_icrs = jax.jit(barycentricmeanecliptic_to_icrs)
 j_icrs_to_barycentricmeanecliptic = jax.jit(icrs_to_barycentricmeanecliptic)
 j_cart_to_elements = jax.jit(cart_to_elements)
 j_elements_to_cart = jax.jit(elements_to_cart)
-
-j_system_negative_loglike_grad = jax.jit(jax.jacfwd(system_negative_loglike))
