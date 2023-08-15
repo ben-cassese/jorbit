@@ -3,9 +3,6 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit
-import numpy as np
-from scipy.optimize import minimize
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
@@ -102,6 +99,13 @@ class Particle:
         self.observations = observations
         if type(observations) != type(None):
             self._time = observations.times[0]
+        assert observations.times[0] >= earliest_time.jd, (
+            "Earliest observation is before the specified `earliest_time` of this"
+            " particle"
+        )
+        assert (
+            observations.times[-1] <= latest_time.jd
+        ), "Latest observation is after the specified `latest_time` of this particle"
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 
@@ -123,17 +127,33 @@ class Particle:
     def x(self):
         return self._x
 
+    @x.setter
+    def x(self, value):
+        self._x = value
+
     @property
     def v(self):
         return self._v
+
+    @v.setter
+    def v(self, value):
+        self._v = value
 
     @property
     def gm(self):
         return self._gm
 
+    @gm.setter
+    def gm(self, value):
+        self._gm = value
+
     @property
     def time(self):
         return self._time
+
+    @time.setter
+    def time(self, value):
+        self._time = value
 
     @property
     def earliest_time(self):

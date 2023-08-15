@@ -3,8 +3,6 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit
-import numpy as np
 from scipy.optimize import minimize
 import warnings
 
@@ -15,17 +13,21 @@ import astropy.units as u
 from tqdm import tqdm
 
 from jorbit import Observations, Particle
-from jorbit.data.constants import ALL_PLANETS, LARGE_ASTEROIDS
 from jorbit.engine.utils import construct_perturbers
+from jorbit.engine.utils import prep_gj_integrator_single, prep_uneven_GJ_integrator
+from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.likelihood import _tracer_likelihoods, _massive_likelihoods
+from jorbit.engine.gauss_jackson_integrator import gj_integrate
+
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
     STANDARD_ASTEROID_PARAMS,
     STANDARD_PLANET_GMS,
     STANDARD_ASTEROID_GMS,
 )
-
-
 from jorbit.data.constants import (
+    ALL_PLANETS,
+    LARGE_ASTEROIDS,
     GJ6_A,
     GJ6_B,
     GJ8_A,
@@ -45,15 +47,35 @@ from jorbit.data.constants import (
     Y8_C,
     Y8_D,
 )
-from jorbit.data import (
-    STANDARD_PLANET_PARAMS,
-    STANDARD_ASTEROID_PARAMS,
-    STANDARD_PLANET_GMS,
-    STANDARD_ASTEROID_GMS,
-)
-from jorbit.engine.utils import prep_uneven_GJ_integrator
-from jorbit.engine.ephemeris import planet_state
-from jorbit.engine.likelihood import _tracer_likelihoods, _massive_likelihoods
+
+coeffs_dict = {
+    "a_jk": {
+        "6": GJ6_A,
+        "8": GJ8_A,
+        "10": GJ10_A,
+        "12": GJ12_A,
+        "14": GJ14_A,
+        "16": GJ16_A,
+    },
+    "b_jk": {
+        "6": GJ6_B,
+        "8": GJ8_B,
+        "10": GJ10_B,
+        "12": GJ12_B,
+        "14": GJ14_B,
+        "16": GJ16_B,
+    },
+    "yc": {
+        "4": Y4_C,
+        "6": Y6_C,
+        "8": Y8_C,
+    },
+    "yd": {
+        "4": Y4_D,
+        "6": Y6_D,
+        "8": Y8_D,
+    },
+}
 
 
 class System:
@@ -73,12 +95,13 @@ class System:
         self._particles = particles  # need to re-order though, saved to compare times
         self._planets = planets
         self._asteroids = asteroids
-        self._fit_planet_gms = fit_planet_gms
-        self._fit_asteroid_gms = fit_asteroid_gms
         self._integrator_order = integrator_order
         self._warmup_order = warmup_order
         self._likelihood_timestep = likelihood_timestep
+        self._force_common_epoch = force_common_epoch
         self._parallelize = parallelize
+        self._fit_planet_gms = fit_planet_gms
+        self._fit_asteroid_gms = fit_asteroid_gms
 
         self._input_checks()
 
@@ -90,6 +113,8 @@ class System:
             self._planet_gms,
             self._asteroid_gms,
         ) = self._initialize_planets()
+
+        self._particles, self._time = self._initialize_particles(self._particles)
 
         (
             self._free_params,
@@ -110,16 +135,9 @@ class System:
                 self._generate_single_device_likelihood_funcs()
             )
 
-        # xs = []
-        # vs = []
-        # gms = []
-        # for p in self._particles:
-        #     xs.append(p.x)
-        #     vs.append(p.v)
-        #     gms.append(p.gm)
-        # self._xs = jnp.array(xs)
-        # self._vs = jnp.array(vs)
-        # self._gms = jnp.array(gms)
+        self._xs = jnp.array([p.x for p in self._particles])
+        self._vs = jnp.array([p.v for p in self._particles])
+        self._gms = jnp.array([p.gm for p in self._particles])
 
     def __repr__(self):
         return f"System with {len(self._xs)} particles"
@@ -150,7 +168,16 @@ class System:
             14,
             16,
         ], "Integrator order must be 6, 8, 10, 12, 14, or 16"
+
         assert self._warmup_order in [4, 6, 8], "Warmup order must be 4, 6, or 8"
+
+        if not self._force_common_epoch:
+            t = self._particles[0].time
+            for p in self.particles:
+                assert p.time == t, (
+                    "If not forcing common epoch, all particles must"
+                    " be initialized at the same time"
+                )
 
     def _initialize_planets(self):
         earlys = []
@@ -203,6 +230,105 @@ class System:
             planet_gms,
             asteroid_gms,
         )
+
+    def _initialize_particles(self, particles):
+        if not self._force_common_epoch:
+            # find the mean epoch of all observations, weighted by the precision of those
+            # observations. There might be a better way to do this.
+            # Also, right now I'm forcing the whole system to have a common epoch. In theory
+            # the tracer particles could all have their own optimial epochs
+            times = []
+            weights = []
+            for p in particles:
+                if p.observations != None:
+                    times.append(p.observations.times)
+                    weights.append(1 / p.observations.astrometric_uncertainties**2)
+            times = jnp.concatenate(times)
+            weights = jnp.concatenate(weights)
+            epoch = times * weights / jnp.sum(weights)
+        # _input_checks already verified all particles have same epoch
+        else:
+            epoch = particles[0].time
+
+        # move each particles to the mean epoch. To do this, we neglect the influence of
+        # massive particles and evolve each particle only under the influence of fixed
+        # solar system perturbers
+        blank_obs = Observations(
+            observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
+            times=epoch,
+            observatory_locations=jnp.array([[999.0, 999, 999]]),
+            astrometric_uncertainties=jnp.inf * u.arcsec,
+            verbose_downloading=False,
+            mpc_file=None,
+        )
+        modified_particles = []
+        for p in particles:
+            if p.time != epoch:
+                (
+                    planet_xs,
+                    planet_vs,
+                    planet_as,
+                    asteroid_xs,
+                    planet_xs_warmup,
+                    asteroid_xs_warmup,
+                    dts_warmup,
+                ) = prep_gj_integrator_single(
+                    t0=p.time,
+                    tf=epoch,
+                    jumps=jnp.ceil((p.time - epoch) / self._likelihood_timestep),
+                    a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
+                    planet_params=self._planet_params,
+                    asteroid_params=self._asteroid_params,
+                )
+                x, v = gj_integrate(
+                    x0=jnp.array([p.x]),
+                    v0=jnp.array([p.v]),
+                    gms=jnp.array([p.gm]),
+                    b_jk=coeffs_dict["b_jk"][str(self._integrator_order)],
+                    a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
+                    t0=p.time,
+                    tf=epoch,
+                    valid_steps=planet_xs.shape[1],
+                    planet_xs=planet_xs,
+                    planet_vs=planet_vs,
+                    planet_as=planet_as,
+                    asteroid_xs=asteroid_xs,
+                    planet_xs_warmup=planet_xs_warmup,
+                    asteroid_xs_warmup=asteroid_xs_warmup,
+                    dts_warmup=dts_warmup,
+                    warmup_C=coeffs_dict["yc"][str(self._warmup_order)],
+                    warmup_D=coeffs_dict["yd"][str(self._warmup_order)],
+                    planet_gms=self._planet_gms,
+                    asteroid_gms=self._asteroid_gms,
+                    use_GR=True,
+                )
+                x = x[0, 0]
+                v = v[0, 0]
+            else:
+                x = p.x
+                v = p.v
+
+            if p.observations != None:
+                obs = p.observations + blank_obs
+            else:
+                obs = None
+
+            new_particle = Particle(
+                x=x,
+                v=v,
+                elements=None,
+                gm=p.gm,
+                time=epoch,
+                observations=obs,
+                earliest_time=p.earliest_time,
+                latest_time=p.latest_time,
+                name=p.name,
+                free_orbit=p.free_orbit,
+                free_gm=p.free_gm,
+            )
+            modified_particles.append(new_particle)
+
+        return particles, epoch
 
     def _create_free_fixed_params(self):
         # f for Free, r for Rigid
@@ -352,35 +478,6 @@ class System:
     def _prep_system_GJ_integrator(
         self,
     ):
-        coeffs_dict = {
-            "a_jk": {
-                "6": GJ6_A,
-                "8": GJ8_A,
-                "10": GJ10_A,
-                "12": GJ12_A,
-                "14": GJ14_A,
-                "16": GJ16_A,
-            },
-            "b_jk": {
-                "6": GJ6_B,
-                "8": GJ8_B,
-                "10": GJ10_B,
-                "12": GJ12_B,
-                "14": GJ14_B,
-                "16": GJ16_B,
-            },
-            "yc": {
-                "4": Y4_C,
-                "6": Y6_C,
-                "8": Y8_C,
-            },
-            "yd": {
-                "4": Y4_D,
-                "6": Y6_D,
-                "8": Y8_D,
-            },
-        }
-
         def _inner_prep_system_GJ_integrator(ordered_obs, message):
             # The the data needed to integrate each individual particle to the times it
             # was observed. Each set of arrays for an individual particle is padded with 999s
