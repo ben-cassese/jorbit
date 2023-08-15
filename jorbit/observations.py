@@ -9,26 +9,16 @@ warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 import astropy.units as u
 from astropy.coordinates import SkyCoord, ICRS
-import astropy.units as u
-from astroquery.jplhorizons import Horizons
 
-import matplotlib.pyplot as plt
-import pickle
 import requests
 import pandas as pd
 import io
 import os
-import pkg_resources
 from tqdm import tqdm
 
-from jorbit.engine.utils import construct_perturbers
 
 from jorbit.data import (
     observatory_codes,
-    STANDARD_PLANET_PARAMS,
-    STANDARD_ASTEROID_PARAMS,
-    STANDARD_PLANET_GMS,
-    STANDARD_ASTEROID_GMS,
 )
 
 
@@ -42,14 +32,95 @@ class Observations:
         verbose_downloading=False,
         mpc_file=None,
     ):
-        self.verbose_downloading = verbose_downloading
+        self._observed_coordinates = observed_coordinates
+        self._times = times
+        self._observatory_locations = observatory_locations
+        self._astrometric_uncertainties = astrometric_uncertainties
+        self._verbose_downloading = verbose_downloading
+        self._mpc_file = mpc_file
 
-        if mpc_file is None:
+        self._input_checks()
+
+        (
+            self._ra,
+            self._dec,
+            self._times,
+            self._observatory_locations,
+            self._astrometric_uncertainties,
+            self._observer_positions,
+        ) = self._parse_astrometry()
+
+        self._final_init_checks()
+
+    def __repr__(self):
+        return f"Observations with {len(self._ra)} set(s) of observations"
+
+    def __len__(self):
+        return len(self._ra)
+
+    def __add__(self, newobs):
+        old_times = [t for t in self._times]
+        old_ra = [r for r in self._ra]
+        old_dec = [d for d in self._dec]
+        old_obs_precision = [p for p in self.astrometric_uncertainties]
+        old_observer_positions = [o for o in self.observer_positions]
+
+        new_times = [t for t in newobs.times]
+        new_ra = [r for r in newobs.ra]
+        new_dec = [d for d in newobs.dec]
+        new_obs_precision = [p for p in newobs.astrometric_uncertainties]
+        new_observer_positions = [o for o in newobs.observer_positions]
+
+        times = []
+        ras = []
+        decs = []
+        obs_precision = []
+        observer_positions = []
+        for i in range(len(old_times) + len(new_times) - 1):
+            if old_times[0] < new_times[0]:
+                times.append(old_times.pop(0))
+                ras.append(old_ra.pop(0))
+                decs.append(old_dec.pop(0))
+                obs_precision.append(old_obs_precision.pop(0))
+                observer_positions.append(old_observer_positions.pop(0))
+            else:
+                times.append(new_times.pop(0))
+                ras.append(new_ra.pop(0))
+                decs.append(new_dec.pop(0))
+                obs_precision.append(new_obs_precision.pop(0))
+                observer_positions.append(new_observer_positions.pop(0))
+        if len(old_times) > 0:
+            times.append(old_times.pop(0))
+            ras.append(old_ra.pop(0))
+            decs.append(old_dec.pop(0))
+            obs_precision.append(old_obs_precision.pop(0))
+            observer_positions.append(old_observer_positions.pop(0))
+        else:
+            times.append(new_times.pop(0))
+            ras.append(new_ra.pop(0))
+            decs.append(new_dec.pop(0))
+            obs_precision.append(new_obs_precision.pop(0))
+            observer_positions.append(new_observer_positions.pop(0))
+
+        s = SkyCoord(ra=ras, dec=decs, unit=u.rad)
+        return Observations(
+            observed_coordinates=s,
+            times=jnp.array(times),
+            observatory_locations=jnp.array(observer_positions),
+            astrometric_uncertainties=jnp.array(obs_precision),
+            verbose_downloading=self._verbose_downloading,
+            mpc_file=None,
+        )
+
+    ####################################################################################
+    # Initialization helpers
+    def _input_checks(self):
+        if self._mpc_file is None:
             assert (
-                (observed_coordinates is not None)
-                and (times is not None)
-                and (observatory_locations is not None)
-                and (astrometric_uncertainties is not None)
+                (self._observed_coordinates is not None)
+                and (self._times is not None)
+                and (self._observatory_locations is not None)
+                and (self._astrometric_uncertainties is not None)
             ), (
                 "If no MPC file is provided, observed_coordinates, times,"
                 " observatory_locations, and astrometric_uncertainties must be given"
@@ -57,14 +128,46 @@ class Observations:
             )
         else:
             assert (
-                (observed_coordinates is None)
-                and (times is None)
-                and (observatory_locations is None)
-                and (astrometric_uncertainties is None)
+                (self._observed_coordinates is None)
+                and (self._times is None)
+                and (self._observatory_locations is None)
+                and (self._astrometric_uncertainties is None)
             ), (
                 "If an MPC file is provided, observed_coordinates, times,"
                 " observatory_locations, and astrometric_uncertainties must be None."
             )
+
+        if (
+            not isinstance(self._times, type(Time("2023-01-01")))
+            and not isinstance(self._times, list)
+            and not isinstance(self._times, jnp.ndarray)
+        ):
+            raise ValueError(
+                "times must be either astropy.time.Time, list of astropy.time.Time, or"
+                " jax.numpy.ndarray (interpreted as JD in TDB)"
+            )
+
+        assert (
+            isinstance(self._observatory_locations, str)
+            or isinstance(self._observatory_locations, list)
+            or isinstance(self._observatory_locations, jnp.ndarray)
+        ), (
+            "observatory_locations must be either a string (interpreted as an MPC"
+            " observatory code), a list of observatory codes, or a jax.numpy.ndarray"
+        )
+        if isinstance(self._observatory_locations, list):
+            assert len(self._observatory_locations) == len(self._times), (
+                "If observatory_locations is a list, it must be the same length as"
+                " the number of observations."
+            )
+        elif isinstance(self._observatory_locations, jnp.ndarray):
+            assert len(self._observatory_locations) == len(self._times), (
+                "If observatory_locations is a jax.numpy.ndarray, it must be the same"
+                " length as the number of observations."
+            )
+
+    def _parse_astrometry(self):
+        def read_mpc_file(mpc_file):
             cols = [
                 (0, 5),
                 (5, 12),
@@ -116,14 +219,40 @@ class Observations:
             astrometric_uncertainties = list(
                 map(parse_uncertainty, data["Observed Decl. (J2000.0)"])
             )
+            return (
+                observed_coordinates,
+                times,
+                observatory_locations,
+                astrometric_uncertainties,
+            )
+
+        if self._mpc_file is None:
+            (
+                observed_coordinates,
+                times,
+                observatory_locations,
+                astrometric_uncertainties,
+            ) = (
+                self._observed_coordinates,
+                self._times,
+                self._observatory_locations,
+                self._astrometric_uncertainties,
+            )
+
+        else:
+            (
+                observed_coordinates,
+                times,
+                observatory_locations,
+                astrometric_uncertainties,
+            ) = read_mpc_file(self._mpc_file)
 
         # POSITIONS
         if isinstance(observed_coordinates, type(SkyCoord(0 * u.deg, 0 * u.deg))):
-            s = observed_coordinates.transform_to(
-                ICRS
-            )  # in case they're barycentric, etc
-            self.ra = s.ra.rad
-            self.dec = s.dec.rad
+            # in case they're barycentric, etc
+            s = observed_coordinates.transform_to(ICRS)
+            ra = s.ra.rad
+            dec = s.dec.rad
         elif isinstance(observed_coordinates, list):
             ras = []
             decs = []
@@ -131,89 +260,69 @@ class Observations:
                 s = s.transform_to(ICRS)
                 ras.append(s.ra.rad)
                 decs.append(s.dec.rad)
-            self.ra = jnp.array(ras)
-            self.dec = jnp.array(decs)
-        if self.ra.shape == ():
-            self.ra = jnp.array([self.ra])
-            self.dec = jnp.array([self.dec])
+            ra = jnp.array(ras)
+            dec = jnp.array(decs)
+        if ra.shape == ():
+            ra = jnp.array([ra])
+            dec = jnp.array([dec])
 
         # TIMES
         if isinstance(times, type(Time("2023-01-01"))):
-            self.times = jnp.array(times.tdb.jd)
+            times = jnp.array(times.tdb.jd)
         elif isinstance(times, list):
-            self.times = jnp.array([t.tdb.jd for t in times])
-        elif isinstance(times, jnp.ndarray):
-            self.times = times
-        else:
-            raise ValueError(
-                "times must be either astropy.time.Time, list of astropy.time.Time, or"
-                " jax.numpy.ndarray (interpreted as JD in TDB)"
-            )
-        if self.times.shape == ():
-            self.times = jnp.array([self.times])
+            times = jnp.array([t.tdb.jd for t in times])
+        if times.shape == ():
+            times = jnp.array([times])
 
         # OBSERVER POSITIONS
         if isinstance(observatory_locations, str):
-            observatory_locations = [observatory_locations] * len(self.times)
+            observatory_locations = [observatory_locations] * len(times)
+        if isinstance(observatory_locations, list):
+            for i, loc in enumerate(observatory_locations):
+                loc = loc.lower()
+                if loc in observatory_codes.keys():
+                    observatory_locations[i] = observatory_codes[loc]
+                elif "@" in loc:
+                    pass
+                else:
+                    raise ValueError(
+                        "Observer location '{}' is not a recognized observatory. Please"
+                        " refer to"
+                        " https://minorplanetcenter.net/iau/lists/ObsCodesF.html"
+                        .format(loc)
+                    )
 
-        for i, loc in enumerate(observatory_locations):
-            loc = loc.lower()
-            if loc in observatory_codes.keys():
-                observatory_locations[i] = observatory_codes[loc]
-            elif "@" in loc:
-                pass
-            else:
-                raise ValueError(
-                    "Observer location '{}' is not a recognized observatory. Please"
-                    " refer to https://minorplanetcenter.net/iau/lists/ObsCodesF.html"
-                    .format(loc)
-                )
-
-        self.observatory_locations = observatory_locations
-        self.observer_positions = self.get_observer_positions(
-            times=Time(self.times, format="jd", scale="tdb"),
-            observatory_codes=observatory_locations,
-        )
+            observatory_locations = observatory_locations
+            observer_positions = self._get_observer_positions(
+                times=Time(times, format="jd", scale="tdb"),
+                observatory_codes=observatory_locations,
+            )
+        else:
+            observer_positions = observatory_locations
 
         # UNCERTAINTIES
         if isinstance(astrometric_uncertainties, type(u.Quantity(1 * u.arcsec))):
-            self.astrometric_uncertainties = (
-                jnp.ones(len(self.times)) * astrometric_uncertainties.to(u.arcsec).value
+            astrometric_uncertainties = (
+                jnp.ones(len(times)) * astrometric_uncertainties.to(u.arcsec).value
             )
         elif isinstance(astrometric_uncertainties, list):
-            self.astrometric_uncertainties = jnp.array(
+            astrometric_uncertainties = jnp.array(
                 [p.to(u.arcsec).value for p in astrometric_uncertainties]
             )
 
-        # This shouldn't be possible if only dealing with SkyCoords
-        assert (
-            len(self.ra)
-            == len(self.dec)
-            == len(self.times)
-            == len(self.observer_positions)
-            == len(self.astrometric_uncertainties)
-        ), (
-            "Inputs must have the same length. Currently: ra={}, dec={}, times={},"
-            " observer_positions={}, astrometric_uncertainties={}".format(
-                len(self.ra),
-                len(self.dec),
-                len(self.times),
-                len(self.observer_positions),
-                len(self.astrometric_uncertainties),
-            )
+        return (
+            ra,
+            dec,
+            times,
+            observatory_locations,
+            astrometric_uncertainties,
+            observer_positions,
         )
-        # assert len(self.ra) > 1, "Must include at least two observations"
 
-    def __repr__(self):
-        return f"Observations with {len(self.ra)} set(s) of observations"
-
-    def __len__(self):
-        return len(self.ra)
-
-    def get_observer_positions(self, times, observatory_codes):
+    def _get_observer_positions(self, times, observatory_codes):
         assert len(times) == len(observatory_codes)
 
-        if self.verbose_downloading:
+        if self._verbose_downloading:
             print("Downloading observer positions from Horizons...")
         emb_from_ssb = Observations.horizons_bulk_vector_query("3", "500@0", times)
         emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
@@ -225,34 +334,48 @@ class Observations:
             emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
 
         else:
+            # maybe switch this back to astroquery- equally slow with lots of requests,
+            # but astroquery will at least cache results
             emb_from_observer = jnp.zeros((len(times), 3))
-            if self.verbose_downloading:
+            if self._verbose_downloading:
                 iter = enumerate(tqdm(times))
             else:
                 iter = enumerate(times)
             for i, t in iter:
-                # might as well switch back to astroquery since the batch is too slow
-                # here, and at least astroquery caches the results
-
                 emb_from_observer = Observations.horizons_bulk_vector_query(
                     "3", observatory_codes[i], t
                 )
                 emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
 
-                # horizons_query = Horizons(
-                #     id="3", location=observatory_codes[i], epochs=[t.tdb.jd]
-                # )
-                # tmp = horizons_query.vectors(refplane="earth")
-                # emb_from_observer = emb_from_observer.at[i, :].set(
-                #     [
-                #         tmp["x"].value.data[0],
-                #         tmp["y"].value.data[0],
-                #         tmp["z"].value.data[0],
-                #     ]
-                # )
-
         postions = emb_from_ssb - emb_from_observer
         return postions
+
+    def _final_init_checks(self):
+        assert (
+            len(self._ra)
+            == len(self._dec)
+            == len(self._times)
+            == len(self.observer_positions)
+            == len(self.astrometric_uncertainties)
+        ), (
+            "Inputs must have the same length. Currently: ra={}, dec={}, times={},"
+            " observer_positions={}, astrometric_uncertainties={}".format(
+                len(self._ra),
+                len(self._dec),
+                len(self._times),
+                len(self.observer_positions),
+                len(self.astrometric_uncertainties),
+            )
+        )
+
+        t = self._times[0]
+        for i in range(1, len(self._times)):
+            assert (
+                self._times[i] > t
+            ), "Observations must be in ascending chronological order."
+            t = self._times[i]
+
+    ####################################################################################
 
     @staticmethod
     def horizons_bulk_vector_query(target, center, times):
@@ -375,3 +498,28 @@ class Observations:
                 "Some requested times were skipped, check skip_daylight flag"
             )
         return data
+
+    @property
+    def ra(self):
+        return self._ra
+
+    @property
+    def dec(self):
+        return self._dec
+
+    @property
+    def times(self):
+        # return Time(self._times, format='jd', scale='tdb').utc
+        return self._times
+
+    @property
+    def observer_positions(self):
+        return self._observer_positions
+
+    @property
+    def astrometric_uncertainties(self):
+        return self._astrometric_uncertainties
+
+    @property
+    def observatory_locations(self):
+        return self._observatory_locations
