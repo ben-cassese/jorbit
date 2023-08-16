@@ -97,8 +97,6 @@ class Particle:
         self._gm = float(gm)
 
         self.observations = observations
-        if type(observations) != type(None):
-            self._time = observations.times[0]
         assert observations.times[0] >= earliest_time.jd, (
             "Earliest observation is before the specified `earliest_time` of this"
             " particle"

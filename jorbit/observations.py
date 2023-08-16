@@ -76,8 +76,20 @@ class Observations:
         decs = []
         obs_precision = []
         observer_positions = []
-        for i in range(len(old_times) + len(new_times) - 1):
-            if old_times[0] < new_times[0]:
+        for i in range(len(old_times) + len(new_times)):
+            if len(old_times) == 0:
+                times.append(new_times.pop(0))
+                ras.append(new_ra.pop(0))
+                decs.append(new_dec.pop(0))
+                obs_precision.append(new_obs_precision.pop(0))
+                observer_positions.append(new_observer_positions.pop(0))
+            elif len(new_times) == 0:
+                times.append(old_times.pop(0))
+                ras.append(old_ra.pop(0))
+                decs.append(old_dec.pop(0))
+                obs_precision.append(old_obs_precision.pop(0))
+                observer_positions.append(old_observer_positions.pop(0))
+            elif old_times[0] < new_times[0]:
                 times.append(old_times.pop(0))
                 ras.append(old_ra.pop(0))
                 decs.append(old_dec.pop(0))
@@ -89,18 +101,6 @@ class Observations:
                 decs.append(new_dec.pop(0))
                 obs_precision.append(new_obs_precision.pop(0))
                 observer_positions.append(new_observer_positions.pop(0))
-        if len(old_times) > 0:
-            times.append(old_times.pop(0))
-            ras.append(old_ra.pop(0))
-            decs.append(old_dec.pop(0))
-            obs_precision.append(old_obs_precision.pop(0))
-            observer_positions.append(old_observer_positions.pop(0))
-        else:
-            times.append(new_times.pop(0))
-            ras.append(new_ra.pop(0))
-            decs.append(new_dec.pop(0))
-            obs_precision.append(new_obs_precision.pop(0))
-            observer_positions.append(new_observer_positions.pop(0))
 
         s = SkyCoord(ra=ras, dec=decs, unit=u.rad)
         return Observations(

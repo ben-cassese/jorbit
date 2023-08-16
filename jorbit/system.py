@@ -14,10 +14,15 @@ from tqdm import tqdm
 
 from jorbit import Observations, Particle
 from jorbit.engine.utils import construct_perturbers
-from jorbit.engine.utils import prep_gj_integrator_single, prep_uneven_GJ_integrator
+from jorbit.engine.utils import (
+    prep_gj_integrator_single,
+    prep_gj_integrator_multiple,
+    prep_uneven_GJ_integrator,
+)
 from jorbit.engine.ephemeris import planet_state
-from jorbit.engine.likelihood import _tracer_likelihoods, _massive_likelihoods
-from jorbit.engine.gauss_jackson_integrator import gj_integrate
+from jorbit.engine.sky_projection import on_sky
+from jorbit.engine.likelihood import tracer_likelihoods, massive_likelihoods
+from jorbit.engine.gauss_jackson_integrator import gj_integrate, gj_integrate_multiple
 
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
@@ -122,6 +127,7 @@ class System:
             self._ordered_tracer_obs,
             self._ordered_massive_obs,
             self._particles,
+            self._particle_indecies,
         ) = self._create_free_fixed_params()
 
         self._padded_supporting_data = self._prep_system_GJ_integrator()
@@ -232,7 +238,7 @@ class System:
         )
 
     def _initialize_particles(self, particles):
-        if not self._force_common_epoch:
+        if self._force_common_epoch:
             # find the mean epoch of all observations, weighted by the precision of those
             # observations. There might be a better way to do this.
             # Also, right now I'm forcing the whole system to have a common epoch. In theory
@@ -245,7 +251,11 @@ class System:
                     weights.append(1 / p.observations.astrometric_uncertainties**2)
             times = jnp.concatenate(times)
             weights = jnp.concatenate(weights)
-            epoch = times * weights / jnp.sum(weights)
+            epoch = jnp.sum(times * weights) / jnp.sum(weights)
+
+            # TODO this is only until I figure out how to split particles into leading and trailing epochs
+            epoch = jnp.min(times) - 1e-8
+
         # _input_checks already verified all particles have same epoch
         else:
             epoch = particles[0].time
@@ -255,7 +265,7 @@ class System:
         # solar system perturbers
         blank_obs = Observations(
             observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
-            times=epoch,
+            times=jnp.array([epoch]),
             observatory_locations=jnp.array([[999.0, 999, 999]]),
             astrometric_uncertainties=jnp.inf * u.arcsec,
             verbose_downloading=False,
@@ -275,7 +285,16 @@ class System:
                 ) = prep_gj_integrator_single(
                     t0=p.time,
                     tf=epoch,
-                    jumps=jnp.ceil((p.time - epoch) / self._likelihood_timestep),
+                    jumps=max(
+                        (
+                            jnp.abs(
+                                jnp.ceil(
+                                    (p.time - epoch) / self._likelihood_timestep
+                                ).astype(int)
+                            ),
+                            self._integrator_order + 2,
+                        )
+                    ),
                     a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
                     planet_params=self._planet_params,
                     asteroid_params=self._asteroid_params,
@@ -302,8 +321,8 @@ class System:
                     asteroid_gms=self._asteroid_gms,
                     use_GR=True,
                 )
-                x = x[0, 0]
-                v = v[0, 0]
+                x = x[0]
+                v = v[0]
             else:
                 x = p.x
                 v = p.v
@@ -327,25 +346,53 @@ class System:
                 free_gm=p.free_gm,
             )
             modified_particles.append(new_particle)
-
-        return particles, epoch
+        return modified_particles, epoch
 
     def _create_free_fixed_params(self):
         # f for Free, r for Rigid
-        tracer_fx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
-        tracer_rx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
-        massive_fx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
-        massive_rx_fm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
-        massive_fx_fm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
-        massive_rx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": []}
+        tracer_fx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": [], "k": []}
+        tracer_rx_rm = {"x": [], "v": [], "gm": [], "obs": [], "particles": [], "k": []}
+        massive_fx_rm = {
+            "x": [],
+            "v": [],
+            "gm": [],
+            "obs": [],
+            "particles": [],
+            "k": [],
+        }
+        massive_rx_fm = {
+            "x": [],
+            "v": [],
+            "gm": [],
+            "obs": [],
+            "particles": [],
+            "k": [],
+        }
+        massive_fx_fm = {
+            "x": [],
+            "v": [],
+            "gm": [],
+            "obs": [],
+            "particles": [],
+            "k": [],
+        }
+        massive_rx_rm = {
+            "x": [],
+            "v": [],
+            "gm": [],
+            "obs": [],
+            "particles": [],
+            "k": [],
+        }
 
-        for p in self._particles:
+        for i, p in enumerate(self._particles):
             if p.free_orbit and p.free_gm:
                 massive_fx_fm["x"].append(p.x)
                 massive_fx_fm["v"].append(p.v)
                 massive_fx_fm["gm"].append(p.gm)
                 massive_fx_fm["obs"].append(p.observations)
                 massive_fx_fm["particles"].append(p)
+                massive_fx_fm["k"].append(i)
             elif p.free_orbit and not p.free_gm:
                 if p.gm == 0:
                     tracer_fx_rm["x"].append(p.x)
@@ -353,18 +400,21 @@ class System:
                     tracer_fx_rm["gm"].append(p.gm)
                     tracer_fx_rm["obs"].append(p.observations)
                     tracer_fx_rm["particles"].append(p)
+                    tracer_fx_rm["k"].append(i)
                 else:
                     massive_fx_rm["x"].append(p.x)
                     massive_fx_rm["v"].append(p.v)
                     massive_fx_rm["gm"].append(p.gm)
                     massive_fx_rm["obs"].append(p.observations)
                     massive_fx_rm["particles"].append(p)
+                    massive_fx_rm["k"].append(i)
             elif not p.free_orbit and p.free_gm:
                 massive_rx_fm["x"].append(p.x)
                 massive_rx_fm["v"].append(p.v)
                 massive_rx_fm["gm"].append(p.gm)
                 massive_rx_fm["obs"].append(p.observations)
                 massive_rx_fm["particles"].append(p)
+                massive_rx_fm["k"].append(i)
             elif not p.free_orbit and not p.free_gm:
                 if p.gm == 0:
                     tracer_rx_rm["x"].append(p.x)
@@ -372,12 +422,14 @@ class System:
                     tracer_rx_rm["gm"].append(p.gm)
                     tracer_rx_rm["obs"].append(p.observations)
                     tracer_rx_rm["particles"].append(p)
+                    tracer_rx_rm["k"].append(i)
                 else:
                     massive_rx_rm["x"].append(p.x)
                     massive_rx_rm["v"].append(p.v)
                     massive_rx_rm["gm"].append(p.gm)
                     massive_rx_rm["obs"].append(p.observations)
                     massive_rx_rm["particles"].append(p)
+                    massive_rx_rm["k"].append(i)
 
         fixed_params = {}
         # if len(tracer_fx_rm["x"]) > 0:
@@ -467,17 +519,25 @@ class System:
             + massive_rx_rm["particles"]
         )
 
+        unscramble_key = (
+            tracer_fx_rm["k"]
+            + tracer_rx_rm["k"]
+            + massive_fx_rm["k"]
+            + massive_rx_fm["k"]
+            + massive_fx_fm["k"]
+            + massive_rx_rm["k"]
+        )
+
         return (
             free_params,
             fixed_params,
             ordered_tracer_obs,
             ordered_massive_obs,
             reordered_particles,
+            unscramble_key,
         )
 
-    def _prep_system_GJ_integrator(
-        self,
-    ):
+    def _prep_system_GJ_integrator(self):
         def _inner_prep_system_GJ_integrator(ordered_obs, message):
             # The the data needed to integrate each individual particle to the times it
             # was observed. Each set of arrays for an individual particle is padded with 999s
@@ -998,7 +1058,7 @@ class System:
 
             if tracer_x0s.shape[0] > 0:
                 tracer_ras, tracer_decs, tracer_resids, tracer_loglike = (
-                    _tracer_likelihoods(
+                    tracer_likelihoods(
                         tracer_x0s,
                         tracer_v0s,
                         tracer_Init_Times,
@@ -1037,7 +1097,7 @@ class System:
             if massive_x0s.shape[0] > 0:
                 scan_inds = jnp.arange(massive_x0s.shape[0])
                 massive_ras, massive_decs, massive_resids, massive_loglike = (
-                    _massive_likelihoods(
+                    massive_likelihoods(
                         scan_inds,
                         massive_x0s,
                         massive_v0s,
@@ -1204,7 +1264,7 @@ class System:
                     overhanging_decs,
                     overhanging_resids,
                     overhanging_loglike,
-                ) = jax.pmap(_tracer_likelihoods, in_axes=axes)(
+                ) = jax.pmap(tracer_likelihoods, in_axes=axes)(
                     tracer_x0s[:ex][:, None, :],
                     tracer_v0s[:ex][:, None, :],
                     tracer_Init_Times[0],
@@ -1243,7 +1303,7 @@ class System:
                 overhanging_loglike = jnp.array(0.0)
             if tracer_Init_Times[1].shape[0] > 1:
                 even_ras, even_decs, even_resids, even_loglike = jax.pmap(
-                    _tracer_likelihoods, in_axes=axes
+                    tracer_likelihoods, in_axes=axes
                 )(
                     tracer_x0s[ex:].reshape([num_devices, -1, tracer_x0s.shape[-1]]),
                     tracer_v0s[ex:].reshape([num_devices, -1, tracer_v0s.shape[-1]]),
@@ -1316,7 +1376,7 @@ class System:
                     overhanging_decs,
                     overhanging_resids,
                     overhanging_loglike,
-                ) = jax.pmap(_massive_likelihoods, in_axes=axes)(
+                ) = jax.pmap(massive_likelihoods, in_axes=axes)(
                     massive_pmap_inds[0], *fixed_massive_inputs
                 )
                 overhanging_ras = overhanging_ras.reshape(
@@ -1344,7 +1404,7 @@ class System:
                 )
             if massive_pmap_inds[1].shape[0] > 0:
                 even_ras, even_decs, even_resids, even_loglike = jax.pmap(
-                    _massive_likelihoods, in_axes=axes
+                    massive_likelihoods, in_axes=axes
                 )(massive_pmap_inds[1], *fixed_massive_inputs)
                 even_ras = even_ras.reshape((-1, even_ras.shape[-1]))
                 even_decs = even_decs.reshape((-1, even_decs.shape[-1]))
@@ -1439,8 +1499,8 @@ class System:
     def propagate(
         self,
         times,
-        use_GR=False,
-        obey_large_step_limits=True,
+        target_step_size=3.0,
+        use_GR=True,
         sky_positions=False,
         observatory_locations=[],
     ):
@@ -1462,48 +1522,127 @@ class System:
             " considered in the ephemeris for this particle. Consider initially setting"
             " a broader time range for the ephemeris."
         )
-        pass
+
+        assert (
+            jnp.abs(jnp.sum(jnp.sign(jnp.diff(times)))) == len(times) - 1
+        ), "Requested propagation times must be monotonically increasing or decreasing"
+
+        if sky_positions and observatory_locations == []:
+            raise ValueError(
+                "Must provide observatory locations if sky_positions=True. See"
+                " Observations docstring for more info."
+            )
+
+        tmp = jnp.sort(jnp.concatenate((jnp.array([self._time]), times)))
+        largest_jump = jnp.max(jnp.abs(jnp.diff(tmp)))
+        jumps = int(
+            max(
+                jnp.ceil(largest_jump / target_step_size).astype(int),
+                self._integrator_order + 2,
+            )
+        )  # can't let this be a Jax traced type, won't play nicely with prep function
+
+        (
+            Planet_xs,
+            Planet_vs,
+            Planet_as,
+            Asteroid_xs,
+            Planet_xs_warmup,
+            Asteroid_xs_warmup,
+            Dts_warmup,
+        ) = prep_gj_integrator_multiple(
+            t0=self._time,
+            times=times,
+            jumps=jumps,
+            a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
+            planet_params=self._planet_params,
+            asteroid_params=self._asteroid_params,
+        )
+
+        # jax.debug.print("{x}", x=Planet_xs.shape)
+        # jax.debug.print("{x}", x=jumps)
+        # valid_steps=jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0]),
+        W = jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0])
+        jax.debug.print("**{x}", x=W)
+
+        # TODO this is giving the wrong positions
+        xs, vs = gj_integrate_multiple(
+            x0=self._xs,
+            v0=self._vs,
+            gms=self._gms,
+            b_jk=coeffs_dict["b_jk"][str(self._integrator_order)],
+            a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
+            t0=self._time,
+            times=times,
+            valid_steps=jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0]),
+            planet_xs=Planet_xs,
+            planet_vs=Planet_vs,
+            planet_as=Planet_as,
+            asteroid_xs=Asteroid_xs,
+            planet_xs_warmup=Planet_xs_warmup,
+            asteroid_xs_warmup=Asteroid_xs_warmup,
+            dts_warmup=Dts_warmup,
+            warmup_C=coeffs_dict["yc"][str(self._warmup_order)],
+            warmup_D=coeffs_dict["yd"][str(self._warmup_order)],
+            planet_gms=self._planet_gms,
+            asteroid_gms=self._asteroid_gms,
+            use_GR=use_GR,
+        )
 
         # move them
+        jax.debug.print("{x}", x=xs)
+        self._xs = xs[:, -1, :]
+        self._vs = vs[:, -1, :]
+        self._time = times[-1]
 
-    #     self._xs = xs
-    #     self._vs = vs
-    #     self._time = final_times[-1]
+        if sky_positions:
+            if observatory_locations == []:
+                raise ValueError(
+                    "Must provide observatory locations if sky_positions=True. See"
+                    " Observations docstring for more info."
+                )
+            pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
+            obs = Observations(
+                observed_coordinates=pos,
+                times=times,
+                observatory_locations=observatory_locations,
+                astrometric_uncertainties=1 * u.arcsec,
+                verbose_downloading=False,
+                mpc_file=None,
+            )
 
-    #     if sky_positions:
-    #         if observatory_locations == []:
-    #             raise ValueError(
-    #                 "Must provide observatory locations if sky_positions=True. See"
-    #                 " Observations docstring for more info."
-    #             )
-    #         pos = [SkyCoord(0 * u.deg, 0 * u.deg)] * len(times)
-    #         obs = Observations(
-    #             positions=pos,
-    #             times=times,
-    #             observatory_locations=observatory_locations,
-    #             astrometric_uncertainties=[10 * u.mas] * len(times),
-    #         )
+            observed_planet_xs, _, _ = planet_state(
+                planet_params=self._planet_params,
+                times=jnp.tile(times, xs.shape[0]),
+                velocity=False,
+                acceleration=False,
+            )
+            observed_asteroid_xs, _, _ = planet_state(
+                planet_params=self._asteroid_params,
+                times=jnp.tile(times, xs.shape[0]),
+                velocity=False,
+                acceleration=False,
+            )
 
-    #         ras, decs = j_on_sky(
-    #             xs=xs.reshape(-1, xs.shape[-1]),
-    #             vs=vs.reshape(-1, vs.shape[-1]),
-    #             gms=jnp.tile(self._gms, len(times)),
-    #             times=jnp.tile(times, len(xs)),
-    #             observer_positions=jnp.array(list(obs.observer_positions) * len(xs)),
-    #             planet_params=self._planet_params,
-    #             asteroid_params=self._asteroid_params,
-    #             planet_gms=self._planet_gms,
-    #             asteroid_gms=self._asteroid_gms,
-    #         )
+            ras, decs = on_sky(
+                xs=xs.reshape((-1, 3)),
+                vs=vs.reshape((-1, 3)),
+                gms=jnp.zeros(xs.shape[0] * xs.shape[1]),
+                observer_positions=obs.observer_positions,
+                planet_xs=observed_planet_xs,
+                asteroid_xs=observed_asteroid_xs,
+                planet_gms=self._planet_gms,
+                asteroid_gms=self._asteroid_gms,
+            )
 
-    #         s = SkyCoord(ra=ras * u.rad, dec=decs * u.rad)
-    #         if xs.shape[0] == 1:
-    #             return xs[0], vs[0], s
-    #         return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
+            s = SkyCoord(ra=ras * u.rad, dec=decs * u.rad)
+            if xs.shape[0] == 1:
+                return xs[0], vs[0], s
+            return xs, vs, s.reshape((xs.shape[0], xs.shape[1]))
 
-    #     if xs.shape[0] == 1:
-    #         return xs[0], vs[0]
-    #     return xs, vs
+        if xs.shape[0] == 1:
+            return xs[0], vs[0]
+        return xs, vs
 
     ################################################################################
     # Properties
@@ -1549,23 +1688,23 @@ class System:
     def time(self):
         return self._time
 
-    # @property
-    # def particles(self):
-    #     particles = []
-    #     for i, n in enumerate(self._particle_names):
-    #         particles.append(
-    #             Particle(
-    #                 x=self._xs[i],
-    #                 v=self._vs[i],
-    #                 elements=None,
-    #                 gm=self._gms[i],
-    #                 time=float(self._time),
-    #                 observations=self._particle_observations[i],
-    #                 earliest_time=self._earliest_time,
-    #                 latest_time=self._latest_time,
-    #                 name=n,
-    #                 free_orbit=self._particle_free_orbit[i],
-    #                 free_gm=self._particle_free_gm[i],
-    #             )
-    #         )
-    #     return particles
+    @property
+    def particles(self):
+        particles = []
+        for i, p in enumerate(self._particles):
+            particles.append(
+                Particle(
+                    x=self._xs[i],
+                    v=self._vs[i],
+                    elements=None,
+                    gm=self._gms[i],
+                    time=float(self._time),
+                    observations=p.observations,
+                    earliest_time=p.earliest_time,
+                    latest_time=p.latest_time,
+                    name=p.name,
+                    free_orbit=p.free_orbit,
+                    free_gm=p.free_gm,
+                )
+            )
+        return [particles[i] for i in self._particle_indecies]
