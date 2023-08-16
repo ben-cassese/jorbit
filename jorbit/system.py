@@ -185,6 +185,16 @@ class System:
                     " be initialized at the same time"
                 )
 
+        names = []
+        for p in self._particles:
+            names.append(p.name)
+        num_unique_names = len(set(names))
+        assert num_unique_names == len(self._particles), (
+            "2 or more identical names detected. If using custom names, make sure"
+            " they are each unique and not 'Particle (int < # of particles in the"
+            " system)'"
+        )
+
     def _initialize_planets(self):
         earlys = []
         lates = []
@@ -1456,33 +1466,6 @@ class System:
 
         return resids_function, loglike_function
 
-    #     self._particle_names = []
-    #     self._particle_observations = []
-    #     self._particle_free_orbit = []
-    #     self._particle_free_gm = []
-    #     for i, p in enumerate(particles):
-    #         earlys.append(p.earliest_time.tdb.jd)
-    #         lates.append(p.latest_time.tdb.jd)
-    #         assert (
-    #             p.time == self._time
-    #         ), "All particles must be initalized to the same time"
-
-    #         if p.name == "":
-    #             self._particle_names.append(f"Particle {i}")
-    #         else:
-    #             self._particle_names.append(p.name)
-
-    #         num_unique_names = len(set(self._particle_names))
-    #         assert num_unique_names == i + 1, (
-    #             "2 or more identical names detected. If using custom names, make sure"
-    #             " they are each unique and not 'Particle (int < # of particles in the"
-    #             " system)'"
-    #         )
-
-    #         self._particle_observations.append(p.observations)
-    #         self._particle_free_orbit.append(p.free_orbit)
-    #         self._particle_free_gm.append(p.free_gm)
-
     def _collapse_dicts(self, free_params):
         pass
 
@@ -1504,6 +1487,93 @@ class System:
         sky_positions=False,
         observatory_locations=[],
     ):
+        """
+        Integrate the system to one or more user-specified times.
+
+        Parameters:
+            times (astropy.time.Time, or list of astropy.time.Time, or array-like)
+                The times to propagate the system to. If given as a float or array of
+                floats, they are interpreted as JD TDB times
+            target_step_size (float, default=3.0):
+                The target step size for the integrator in days. The integrator will
+                never take steps larger than this, but will often take smaller steps
+            use_GR (bool, default=True):
+                Whether to correct for GR effects during the integration using the
+                Parameterized Post-Newtonian [1]_ framework
+            sky_positions (bool, default=False):
+                Whether to return the sky positions of the particles in addition to
+                their cartesian positions
+            observatory_locations (str, or list of str with len = len(times), or jnp.ndarray(shape=(len(times), 3). default=[]):
+                The observatories to use for computing the sky positions. The strings
+                can be names of observatories or MPC observatory codes. If given as an
+                array, components are understood to be in (x, y, z) cartesian
+                coordinates of the observatory in AU. If given as a single string, the
+                same observatory is used for all times
+
+        Returns:
+            Tuple[jnp.ndarray(shape=len(times), 3), jnp.ndarray(shape=len(times), 3)] or Tuple[jnp.ndarray(shape=len(times), 3), jnp.ndarray(shape=len(times), 3), astropy.coordinates.SkyCoord]:
+            xs (jnp.ndarray(shape=(N, len(times), 3)) or jnp.ndarray(shape=(len(times), 3))):
+                The cartesian positions of the N particles at the requested times. Units
+                are AU. If the system has only one particle, the first dimension is
+                dropped
+            vs (jnp.ndarray(shape=(N, len(times), 3)) or jnp.ndarray(shape=(len(times), 3))):
+                The cartesian velocities of the N particles at the requested times.
+                Units are AU / day. If the system has only one particle, the first
+                dimension is dropped
+            sky_positions (astropy.coordinates.SkyCoord):
+                The sky positions of the particles at the requested times. Only returned
+                if sky_positions=True
+
+        Examples:
+
+            >>> import jorbit
+            >>> from jorbit import Observations, Particle, System
+            >>> import jax.numpy as jnp
+            >>> import pandas as pd
+            >>> import astropy.units as u
+            >>> from astropy.coordinates import SkyCoord
+            >>> from astropy.time import Time
+            >>> d = pd.read_csv(jorbit.DATADIR + "(274301)_wikipedia_horizons_timeseries.txt")
+            >>> times = jnp.array(d["time"])
+            >>> o = SkyCoord(d["ra"], d["dec"], unit=u.rad)
+            >>> all_obs = Observations(
+            ...     observed_coordinates=o,
+            ...     times=times,
+            ...     observatory_locations="kitt peak",
+            ...     astrometric_uncertainties=0.1 * u.arcsec,
+            ...     verbose_downloading=False,
+            ... )
+            >>> Xs = jnp.array(d[["x", "y", "z"]])
+            >>> Vs = jnp.array(d[["vx", "vy", "vz"]])
+            >>> subset_obs = Observations(
+            ...     observed_coordinates=o[100:110],
+            ...     times=times[100:110],
+            ...     observatory_locations="kitt peak",
+            ...     astrometric_uncertainties=0.1 * u.arcsec,
+            ...     verbose_downloading=True,
+            ... )
+            >>> asteroid = Particle(
+            ...     x=Xs[100],
+            ...     v=Vs[100],
+            ...     elements=None,
+            ...     gm=0,
+            ...     time=all_obs.times[100],
+            ...     observations=subset_obs,
+            ...     earliest_time=Time("1980-01-01"),
+            ...     latest_time=Time("2030-01-01"),
+            ...     name="(274301) Wikipedia",
+            ...     free_orbit=True,
+            ...     free_gm=True,
+            ... )
+            >>> system = System([asteroid])
+            >>> print(f"Length of Integration: {all_obs.times[200] - system.time} days")
+            >>> x, v, coord = system.propagate(
+            ...     all_obs.times[200], sky_positions=True, observatory_locations="Kitt Peak"
+            ... )
+            >>> print(f"Astrometric error: {coord.separation(o[200]).to(u.mas)}")
+            >>> print(f"Cartesian error: {jnp.linalg.norm(x - Xs[200])*u.au.to(u.m)} m")
+
+        """
         # get "times" into an array of (n_times,)
         if isinstance(times, type(Time("2023-01-01"))):
             times = jnp.array(times.tdb.jd)
@@ -1559,13 +1629,6 @@ class System:
             asteroid_params=self._asteroid_params,
         )
 
-        # jax.debug.print("{x}", x=Planet_xs.shape)
-        # jax.debug.print("{x}", x=jumps)
-        # valid_steps=jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0]),
-        W = jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0])
-        jax.debug.print("**{x}", x=W)
-
-        # TODO this is giving the wrong positions
         xs, vs = gj_integrate_multiple(
             x0=self._xs,
             v0=self._vs,
@@ -1574,7 +1637,7 @@ class System:
             a_jk=coeffs_dict["a_jk"][str(self._integrator_order)],
             t0=self._time,
             times=times,
-            valid_steps=jnp.array([Planet_xs.shape[1]] * Planet_xs.shape[0]),
+            valid_steps=jnp.array([Planet_xs.shape[2]] * Planet_xs.shape[0]),
             planet_xs=Planet_xs,
             planet_vs=Planet_vs,
             planet_as=Planet_as,
@@ -1590,7 +1653,6 @@ class System:
         )
 
         # move them
-        jax.debug.print("{x}", x=xs)
         self._xs = xs[:, -1, :]
         self._vs = vs[:, -1, :]
         self._time = times[-1]
