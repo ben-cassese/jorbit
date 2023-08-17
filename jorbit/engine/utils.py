@@ -760,6 +760,8 @@ def prep_uneven_GJ_integrator(
         current_size = Jumps[i]
         current_order = orders[i]
         ts = [times[i + 1]]
+    if len(times) - 1 == 0:
+        jax.debug.print("{x}")
     if len(chunks) == 0:
         chunks.append(
             {
