@@ -97,13 +97,15 @@ class Particle:
         self._gm = float(gm)
 
         self.observations = observations
-        assert observations.times[0] >= earliest_time.jd, (
-            "Earliest observation is before the specified `earliest_time` of this"
-            " particle"
-        )
-        assert (
-            observations.times[-1] <= latest_time.jd
-        ), "Latest observation is after the specified `latest_time` of this particle"
+        if observations is not None:
+            assert observations.times[0] >= earliest_time.jd, (
+                "Earliest observation is before the specified `earliest_time` of this"
+                " particle"
+            )
+            assert observations.times[-1] <= latest_time.jd, (
+                "Latest observation is after the specified `latest_time` of this"
+                " particle"
+            )
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 

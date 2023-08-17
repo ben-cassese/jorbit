@@ -89,24 +89,26 @@ class System:
         particles,
         planets=ALL_PLANETS,
         asteroids=LARGE_ASTEROIDS,
+        fit_planet_gms=False,
+        fit_asteroid_gms=False,
         integrator_order=8,
         warmup_order=4,
         likelihood_timestep=4.0,
         force_common_epoch=True,
         parallelize=False,
-        fit_planet_gms=False,
-        fit_asteroid_gms=False,
+        verbose=True,
     ):
         self._particles = particles  # need to re-order though, saved to compare times
         self._planets = planets
         self._asteroids = asteroids
+        self._fit_planet_gms = fit_planet_gms
+        self._fit_asteroid_gms = fit_asteroid_gms
         self._integrator_order = integrator_order
         self._warmup_order = warmup_order
         self._likelihood_timestep = likelihood_timestep
         self._force_common_epoch = force_common_epoch
         self._parallelize = parallelize
-        self._fit_planet_gms = fit_planet_gms
-        self._fit_asteroid_gms = fit_asteroid_gms
+        self._verbose = verbose
 
         self._input_checks()
 
@@ -121,25 +123,41 @@ class System:
 
         self._particles, self._time = self._initialize_particles(self._particles)
 
-        (
-            self._free_params,
-            self._fixed_params,
-            self._ordered_tracer_obs,
-            self._ordered_massive_obs,
-            self._particles,
-            self._particle_indecies,
-        ) = self._create_free_fixed_params()
+        obs_present = False
+        for p in self._particles:
+            if p.observations is not None:
+                obs_present = True
+                break
+        if obs_present:
+            (
+                self._free_params,
+                self._fixed_params,
+                self._ordered_tracer_obs,
+                self._ordered_massive_obs,
+                self._particles,
+                self._particle_indecies,
+            ) = self._create_free_fixed_params()
 
-        self._padded_supporting_data = self._prep_system_GJ_integrator()
+            if len(self._free_params.keys()) == 0 and self._verbose:
+                print("No free parameters given, not creating likelihood functions")
+                skip = True
+            else:
+                skip = False
 
-        if self._parallelize:
-            self._residual_func, self._likelihood_func = (
-                self._generate_parallelized_likelihood_funcs()
-            )
+            if not skip:
+                self._padded_supporting_data = self._prep_system_GJ_integrator()
+
+                if self._parallelize:
+                    self._residual_func, self._likelihood_func = (
+                        self._generate_parallelized_likelihood_funcs()
+                    )
+                else:
+                    self._residual_func, self._likelihood_func = (
+                        self._generate_single_device_likelihood_funcs()
+                    )
         else:
-            self._residual_func, self._likelihood_func = (
-                self._generate_single_device_likelihood_funcs()
-            )
+            if self._verbose:
+                print("No observations present, not creating likelihood functions")
 
         self._xs = jnp.array([p.x for p in self._particles])
         self._vs = jnp.array([p.v for p in self._particles])
@@ -259,12 +277,15 @@ class System:
                 if p.observations != None:
                     times.append(p.observations.times)
                     weights.append(1 / p.observations.astrometric_uncertainties**2)
-            times = jnp.concatenate(times)
-            weights = jnp.concatenate(weights)
-            epoch = jnp.sum(times * weights) / jnp.sum(weights)
+            if len(times) > 0:
+                times = jnp.concatenate(times)
+                weights = jnp.concatenate(weights)
+                epoch = jnp.sum(times * weights) / jnp.sum(weights)
 
-            # TODO this is only until I figure out how to split particles into leading and trailing epochs
-            epoch = jnp.min(times) - 1e-8
+                # TODO this is only until I figure out how to split particles into leading and trailing epochs
+                epoch = jnp.min(times) - 1e-8
+            else:
+                epoch = particles[0].time
 
         # _input_checks already verified all particles have same epoch
         else:
@@ -277,6 +298,14 @@ class System:
             observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
             times=jnp.array([epoch]),
             observatory_locations=jnp.array([[999.0, 999, 999]]),
+            astrometric_uncertainties=jnp.inf * u.arcsec,
+            verbose_downloading=False,
+            mpc_file=None,
+        )
+        blank_obs2 = Observations(
+            observed_coordinates=SkyCoord([0, 0] * u.deg, [0, 0] * u.deg),
+            times=jnp.array([epoch, epoch + 0.1]),
+            observatory_locations=jnp.array([[999.0, 999, 999], [999, 999, 999]]),
             astrometric_uncertainties=jnp.inf * u.arcsec,
             verbose_downloading=False,
             mpc_file=None,
@@ -340,7 +369,7 @@ class System:
             if p.observations != None:
                 obs = p.observations + blank_obs
             else:
-                obs = None
+                obs = blank_obs2
 
             new_particle = Particle(
                 x=x,
@@ -554,8 +583,12 @@ class System:
             # so that there is the same number of jumps between epochs, but then the number of
             # epochs and the number of jumps per epoch will vary particle-to-particle
             individual_integrator_prep = []
-            # times=jnp.concatenate((jnp.array([system_time]), o.times)),
-            for o in tqdm(ordered_obs, desc=message, position=0):
+
+            for o in (
+                tqdm(ordered_obs, desc=message, position=0)
+                if self._verbose
+                else ordered_obs
+            ):
                 z = prep_uneven_GJ_integrator(
                     times=o.times,
                     low_order=self._integrator_order,
@@ -568,6 +601,18 @@ class System:
                     asteroid_params=self._asteroid_params,
                     ragged=False,
                 )
+                # this is hacky and I don't like it, but- if there were no observations
+                # of a particle, in _initialize_particles we gave it two dummy
+                # observations. So, here we just check if the observations we just did
+                # perturber computations for were actually dummy obs, and if so
+                # overwrite the precomputed arrays with arrays of 999s. This means we
+                # waste a little bit of time doing the perturber computations, but after
+                # too long trying to hard code the padded arrays, I surrender for now
+
+                # every particle should have inf for entry 0, but only ones with no obs
+                # should have inf for entry 1
+                if o.astrometric_uncertainties[1] == jnp.inf:
+                    z = tuple([t / t * 999 for t in z])
                 individual_integrator_prep.append(z)
 
             # Now pad those precomputed (and already padded) arrays so that every particle
@@ -717,6 +762,16 @@ class System:
             observed_planet_xs = []
             observed_asteroid_xs = []
             for o in ordered_obs:
+                # if o is None:
+                #     init_times.append(999)
+                #     jump_times.append(jnp.ones((most_jumps))*999)
+                #     ras.append(jnp.ones(most_jumps + 1)*999)
+                #     decs.append(jnp.ones(most_jumps + 1)*999)
+                #     astrometric_uncertainties.append(jnp.ones(most_jumps + 1)*jnp.inf)
+                #     observer_positions.append(jnp.ones((most_jumps+1, 3))*999)
+                #     observed_planet_xs.append(jnp.ones((self._planet_params[0].shape[0], most_jumps+1, 3))*999)
+                #     observed_asteroid_xs.append(jnp.ones((self._asteroid_params[0].shape[0], most_jumps+1, 3))*999)
+                # else:
                 init_times.append(o.times[0])
                 jump_times.append(
                     jnp.pad(
@@ -807,7 +862,7 @@ class System:
                 observed_asteroid_xs = jnp.empty((0, 0, 0, 0))
 
             return (
-                Valid_Steps,
+                Valid_Steps.astype(int),
                 Planet_Xs,
                 Planet_Vs,
                 Planet_As,
@@ -1690,7 +1745,7 @@ class System:
                 xs=xs.reshape((-1, 3)),
                 vs=vs.reshape((-1, 3)),
                 gms=jnp.zeros(xs.shape[0] * xs.shape[1]),
-                observer_positions=obs.observer_positions,
+                observer_positions=jnp.repeat(obs.observer_positions, len(xs), axis=0),
                 planet_xs=observed_planet_xs,
                 asteroid_xs=observed_asteroid_xs,
                 planet_gms=self._planet_gms,
