@@ -3,7 +3,6 @@ from jax.config import config
 
 config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import jit, lax
 
 from jorbit.data.constants import SPEED_OF_LIGHT
 
@@ -494,7 +493,7 @@ def acceleration(
 
     def true_func():
         ts = jnp.moveaxis(xs, 0, 1)  # (n_times, n_particles, 3)
-        tmp = lax.scan(scan_func, None, ts)[1]
+        tmp = jax.lax.scan(scan_func, None, ts)[1]
         return jnp.moveaxis(tmp, 0, 1)
 
     def false_func():

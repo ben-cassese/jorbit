@@ -258,7 +258,6 @@ def massive_likelihoods(
                 asteroid_gms=asteroid_gms,
                 use_GR=True,
             )
-            jax.debug.print("{x}", x=x.shape)
 
             # add the first position back in
             x = jnp.concatenate((massive_x0s[ind][None, :], x[ind, :, :]))
