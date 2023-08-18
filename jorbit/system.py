@@ -239,8 +239,8 @@ class System:
                 epoch = jnp.sum(times * weights) / jnp.sum(weights)
 
                 # TODO remove this, just testing issues with trailing observations
-                # epoch = jnp.min(times) - 1e-8
-                epoch = jnp.max(times) + 1e-8
+                # epoch = jnp.min(times) - 1e-2
+                # epoch = jnp.max(times) + 1e-2
 
             else:
                 epoch = particles[0].time
@@ -252,24 +252,10 @@ class System:
         # move each particles to the mean epoch. To do this, we neglect the influence of
         # massive particles and evolve each particle only under the influence of fixed
         # solar system perturbers
-        blank_obs = Observations(
-            observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
-            times=jnp.array([epoch]),
-            observatory_locations=jnp.array([[999.0, 999, 999]]),
-            astrometric_uncertainties=jnp.inf * u.arcsec,
-            verbose_downloading=False,
-            mpc_file=None,
-        )
-        blank_obs2 = Observations(
-            observed_coordinates=SkyCoord([0, 0] * u.deg, [0, 0] * u.deg),
-            times=jnp.array([epoch, epoch + 0.1]),
-            observatory_locations=jnp.array([[999.0, 999, 999], [999, 999, 999]]),
-            astrometric_uncertainties=jnp.inf * u.arcsec,
-            verbose_downloading=False,
-            mpc_file=None,
-        )
         modified_particles = []
         dummy_obs_mask = []
+        if self._verbose:
+            print("Moving particles to common epoch")
         for p in particles:
             if p.time != epoch:
                 (
@@ -326,10 +312,10 @@ class System:
                 v = p.v
 
             if p.observations != None:
-                obs = p.observations + blank_obs
+                # obs = p.observations + blank_obs
                 dummy_obs_mask.append(False)
             else:
-                obs = blank_obs2
+                # obs = blank_obs2
                 dummy_obs_mask.append(True)
 
             new_particle = Particle(
@@ -338,7 +324,7 @@ class System:
                 elements=None,
                 gm=p.gm,
                 time=epoch,
-                observations=obs,
+                observations=p.observations,
                 earliest_time=p.earliest_time,
                 latest_time=p.latest_time,
                 name=p.name,
@@ -543,7 +529,7 @@ class System:
         )
 
     def _prep_system_GJ_integrator(self):
-        def _inner_prep_system_GJ_integrator(ordered_obs, message):
+        def _inner_prep_system_GJ_integrator(ordered_obs, message, leading):
             # The the data needed to integrate each individual particle to the times it
             # was observed. Each set of arrays for an individual particle is padded with 999s
             # so that there is the same number of jumps between epochs, but then the number of
@@ -554,8 +540,11 @@ class System:
                 if self._verbose
                 else ordered_obs
             ):
+                sorted_time_inds = jnp.argsort(o.times)
+                if not leading:
+                    sorted_time_inds = sorted_time_inds[::-1]
                 z = prep_uneven_GJ_integrator(
-                    times=o.times,
+                    times=o.times[sorted_time_inds],
                     low_order=self._integrator_order,
                     high_order=self._integrator_order,
                     low_order_cutoff=1e-6,
@@ -576,7 +565,7 @@ class System:
 
                 # every particle should have inf for entry 0, but only ones with no obs
                 # should have inf for entry 1
-                if o.astrometric_uncertainties[1] == jnp.inf:
+                if o.astrometric_uncertainties[sorted_time_inds][1] == jnp.inf:
                     z = tuple([t / t * 999 for t in z])
                 individual_integrator_prep.append(z)
 
@@ -727,20 +716,13 @@ class System:
             observed_planet_xs = []
             observed_asteroid_xs = []
             for o in ordered_obs:
-                # if o is None:
-                #     init_times.append(999)
-                #     jump_times.append(jnp.ones((most_jumps))*999)
-                #     ras.append(jnp.ones(most_jumps + 1)*999)
-                #     decs.append(jnp.ones(most_jumps + 1)*999)
-                #     astrometric_uncertainties.append(jnp.ones(most_jumps + 1)*jnp.inf)
-                #     observer_positions.append(jnp.ones((most_jumps+1, 3))*999)
-                #     observed_planet_xs.append(jnp.ones((self._planet_params[0].shape[0], most_jumps+1, 3))*999)
-                #     observed_asteroid_xs.append(jnp.ones((self._asteroid_params[0].shape[0], most_jumps+1, 3))*999)
-                # else:
-                init_times.append(o.times[0])
+                sorted_time_inds = jnp.argsort(o.times)
+                if not leading:
+                    sorted_time_inds = sorted_time_inds[::-1]
+                init_times.append(o.times[sorted_time_inds][0])
                 jump_times.append(
                     jnp.pad(
-                        o.times[1:],
+                        o.times[sorted_time_inds][1:],
                         (0, most_jumps - len(o.times) + 1),
                         mode="constant",
                         constant_values=999,
@@ -748,7 +730,7 @@ class System:
                 )
                 ras.append(
                     jnp.pad(
-                        o.ra,
+                        o.ra[sorted_time_inds],
                         (0, most_jumps - len(o.times) + 1),
                         mode="constant",
                         constant_values=999,
@@ -756,7 +738,7 @@ class System:
                 )
                 decs.append(
                     jnp.pad(
-                        o.dec,
+                        o.dec[sorted_time_inds],
                         (0, most_jumps - len(o.times) + 1),
                         mode="constant",
                         constant_values=999,
@@ -764,7 +746,7 @@ class System:
                 )
                 astrometric_uncertainties.append(
                     jnp.pad(
-                        o.astrometric_uncertainties,
+                        o.astrometric_uncertainties[sorted_time_inds],
                         (0, most_jumps - len(o.times) + 1),
                         mode="constant",
                         constant_values=jnp.inf,
@@ -772,7 +754,7 @@ class System:
                 )
                 observer_positions.append(
                     jnp.pad(
-                        o.observer_positions,
+                        o.observer_positions[sorted_time_inds],
                         ((0, most_jumps - len(o.times) + 1), (0, 0)),
                         mode="constant",
                         constant_values=999,
@@ -780,13 +762,13 @@ class System:
                 )
                 planetxs, _, _ = planet_state(
                     planet_params=self._planet_params,
-                    times=o.times,
+                    times=o.times[sorted_time_inds],
                     velocity=False,
                     acceleration=False,
                 )
                 asteroidxs, _, _ = planet_state(
                     planet_params=self._asteroid_params,
-                    times=o.times,
+                    times=o.times[sorted_time_inds],
                     velocity=False,
                     acceleration=False,
                 )
@@ -846,24 +828,14 @@ class System:
             )
 
         ################################################################################
-        blank_leading_obs1 = Observations(
+        blank_obs = Observations(
             observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
-            times=jnp.array([self._time + 0.1]),
+            times=jnp.array([self._time]),
             observatory_locations=jnp.array([[999.0, 999, 999]]),
             astrometric_uncertainties=jnp.inf * u.arcsec,
             verbose_downloading=False,
             mpc_file=None,
         )
-
-        blank_trailing_obs1 = Observations(
-            observed_coordinates=SkyCoord(0 * u.deg, 0 * u.deg),
-            times=jnp.array([self._time - 0.1]),
-            observatory_locations=jnp.array([[999.0, 999, 999]]),
-            astrometric_uncertainties=jnp.inf * u.arcsec,
-            verbose_downloading=False,
-            mpc_file=None,
-        )
-
         blank_leading_obs2 = Observations(
             observed_coordinates=SkyCoord([0, 0] * u.deg, [0, 0] * u.deg),
             times=jnp.array([self._time, self._time + 0.1]),
@@ -880,10 +852,16 @@ class System:
             verbose_downloading=False,
             mpc_file=None,
         )
+
         leading_tracer_obs = []
         trailing_tracer_obs = []
         for o in self._ordered_tracer_obs:
-            if len(o.times[o.times >= self._time]) == 0:
+            if o is None:
+                leading_tracer_obs.append(blank_leading_obs2)
+                trailing_tracer_obs.append(blank_trailing_obs2)
+                continue
+
+            if len(o.times[o.times > self._time]) == 0:
                 leading_tracer_obs.append(blank_leading_obs2)
                 trailing_tracer_obs.append(o)
                 continue
@@ -892,7 +870,7 @@ class System:
                 trailing_tracer_obs.append(blank_trailing_obs2)
                 continue
 
-            cutoff_ind = jnp.argmax(o.times >= self._time)
+            cutoff_ind = jnp.argmax(o.times > self._time)
 
             leading_tracer_obs.append(
                 Observations(
@@ -905,6 +883,7 @@ class System:
                     verbose_downloading=False,
                     mpc_file=None,
                 )
+                + blank_obs
             )
             trailing_tracer_obs.append(
                 Observations(
@@ -917,14 +896,8 @@ class System:
                     verbose_downloading=False,
                     mpc_file=None,
                 )
+                + blank_obs
             )
-
-        for i in range(len(leading_tracer_obs)):
-            if len(leading_tracer_obs[i].times) == 1:
-                leading_tracer_obs[i] = leading_tracer_obs[i] + blank_leading_obs1
-        for i in range(len(trailing_tracer_obs)):
-            if len(trailing_tracer_obs[i].times) == 1:
-                trailing_tracer_obs[i] = trailing_tracer_obs[i] + blank_trailing_obs2
 
         (
             tracer_leading_Valid_Steps,
@@ -944,9 +917,12 @@ class System:
             tracer_leading_Observed_Planet_Xs,
             tracer_leading_Observed_Asteroid_Xs,
         ) = _inner_prep_system_GJ_integrator(
-            leading_tracer_obs,
-            "Pre-computing perturber positions for leading observations of each"
-            " tracer particle",
+            ordered_obs=leading_tracer_obs,
+            message=(
+                "Pre-computing perturber positions for leading observations of each"
+                " tracer particle"
+            ),
+            leading=True,
         )
 
         (
@@ -967,9 +943,12 @@ class System:
             tracer_trailing_Observed_Planet_Xs,
             tracer_trailing_Observed_Asteroid_Xs,
         ) = _inner_prep_system_GJ_integrator(
-            trailing_tracer_obs,
-            "Pre-computing perturber positions for trailing observations of each"
-            " tracer particle",
+            ordered_obs=trailing_tracer_obs,
+            message=(
+                "Pre-computing perturber positions for trailing observations of each"
+                " tracer particle"
+            ),
+            leading=False,
         )
 
         leading_massive_obs = []
@@ -1011,13 +990,6 @@ class System:
                 )
             )
 
-        for i in range(len(leading_massive_obs)):
-            if len(leading_massive_obs[i].times) == 1:
-                leading_massive_obs[i] = leading_massive_obs[i] + blank_leading_obs1
-        for i in range(len(trailing_massive_obs)):
-            if len(trailing_massive_obs[i].times) == 1:
-                trailing_massive_obs[i] = trailing_massive_obs[i] + blank_trailing_obs1
-
         (
             massive_leading_Valid_Steps,
             massive_leading_Planet_Xs,
@@ -1036,9 +1008,12 @@ class System:
             massive_leading_Observed_Planet_Xs,
             massive_leading_Observed_Asteroid_Xs,
         ) = _inner_prep_system_GJ_integrator(
-            leading_massive_obs,
-            "Pre-computing perturber positions for leading observations of each"
-            " massive particle",
+            ordered_obs=leading_massive_obs,
+            message=(
+                "Pre-computing perturber positions for leading observations of each"
+                " massive particle"
+            ),
+            leading=True,
         )
 
         (
@@ -1059,9 +1034,12 @@ class System:
             massive_trailing_Observed_Planet_Xs,
             massive_trailing_Observed_Asteroid_Xs,
         ) = _inner_prep_system_GJ_integrator(
-            trailing_massive_obs,
-            "Pre-computing perturber positions for trailing observations of each"
-            " massive particle",
+            ordered_obs=trailing_massive_obs,
+            message=(
+                "Pre-computing perturber positions for trailing observations of each"
+                " massive particle"
+            ),
+            leading=False,
         )
 
         if self._parallelize:
@@ -1336,38 +1314,45 @@ class System:
             )
 
             if tracer_x0s.shape[0] > 0:
-                tracer_ras, tracer_decs, tracer_resids, tracer_loglike = (
-                    tracer_likelihoods(
-                        tracer_x0s,
-                        tracer_v0s,
-                        tracer_Init_Times,
-                        tracer_Jump_Times,
-                        tracer_Valid_Steps,
-                        tracer_Planet_Xs,
-                        tracer_Planet_Vs,
-                        tracer_Planet_As,
-                        tracer_Asteroid_Xs,
-                        tracer_Planet_Xs_Warmup,
-                        tracer_Asteroid_Xs_Warmup,
-                        tracer_Dts_Warmup,
-                        tracer_Observer_Positions,
-                        tracer_RAs,
-                        tracer_Decs,
-                        tracer_Observed_Planet_Xs,
-                        tracer_Observed_Asteroid_Xs,
-                        tracer_Astrometric_Uncertainties,
-                        massive_x0s,
-                        massive_v0s,
-                        massive_gms,
-                        planet_gms,
-                        asteroid_gms,
-                        bjk,
-                        ajk,
-                        yc,
-                        yd,
-                    )
+                (
+                    tracer_xs,
+                    tracer_vs,
+                    tracer_ras,
+                    tracer_decs,
+                    tracer_resids,
+                    tracer_loglike,
+                ) = tracer_likelihoods(
+                    tracer_x0s,
+                    tracer_v0s,
+                    tracer_Init_Times,
+                    tracer_Jump_Times,
+                    tracer_Valid_Steps,
+                    tracer_Planet_Xs,
+                    tracer_Planet_Vs,
+                    tracer_Planet_As,
+                    tracer_Asteroid_Xs,
+                    tracer_Planet_Xs_Warmup,
+                    tracer_Asteroid_Xs_Warmup,
+                    tracer_Dts_Warmup,
+                    tracer_Observer_Positions,
+                    tracer_RAs,
+                    tracer_Decs,
+                    tracer_Observed_Planet_Xs,
+                    tracer_Observed_Asteroid_Xs,
+                    tracer_Astrometric_Uncertainties,
+                    massive_x0s,
+                    massive_v0s,
+                    massive_gms,
+                    planet_gms,
+                    asteroid_gms,
+                    bjk,
+                    ajk,
+                    yc,
+                    yd,
                 )
             else:
+                tracer_xs = jnp.empty((0, 0, 0))
+                tracer_vs = jnp.empty((0, 0, 0))
                 tracer_ras = jnp.empty((0, 0))
                 tracer_decs = jnp.empty((0, 0))
                 tracer_resids = jnp.empty((0, 0))
@@ -1375,43 +1360,52 @@ class System:
 
             if massive_x0s.shape[0] > 0:
                 scan_inds = jnp.arange(massive_x0s.shape[0])
-                massive_ras, massive_decs, massive_resids, massive_loglike = (
-                    massive_likelihoods(
-                        scan_inds,
-                        massive_x0s,
-                        massive_v0s,
-                        massive_gms,
-                        massive_Valid_Steps,
-                        massive_Init_Times,
-                        massive_Jump_Times,
-                        massive_Planet_Xs,
-                        massive_Planet_Vs,
-                        massive_Planet_As,
-                        massive_Asteroid_Xs,
-                        massive_Planet_Xs_Warmup,
-                        massive_Asteroid_Xs_Warmup,
-                        massive_Dts_Warmup,
-                        massive_Observer_Positions,
-                        massive_Observed_Planet_Xs,
-                        massive_Observed_Asteroid_Xs,
-                        massive_RAs,
-                        massive_Decs,
-                        massive_Astrometric_Uncertainties,
-                        bjk,
-                        ajk,
-                        yc,
-                        yd,
-                        planet_gms,
-                        asteroid_gms,
-                    )
+                (
+                    massive_xs,
+                    massive_vs,
+                    massive_ras,
+                    massive_decs,
+                    massive_resids,
+                    massive_loglike,
+                ) = massive_likelihoods(
+                    scan_inds,
+                    massive_x0s,
+                    massive_v0s,
+                    massive_gms,
+                    massive_Valid_Steps,
+                    massive_Init_Times,
+                    massive_Jump_Times,
+                    massive_Planet_Xs,
+                    massive_Planet_Vs,
+                    massive_Planet_As,
+                    massive_Asteroid_Xs,
+                    massive_Planet_Xs_Warmup,
+                    massive_Asteroid_Xs_Warmup,
+                    massive_Dts_Warmup,
+                    massive_Observer_Positions,
+                    massive_Observed_Planet_Xs,
+                    massive_Observed_Asteroid_Xs,
+                    massive_RAs,
+                    massive_Decs,
+                    massive_Astrometric_Uncertainties,
+                    bjk,
+                    ajk,
+                    yc,
+                    yd,
+                    planet_gms,
+                    asteroid_gms,
                 )
             else:
+                massive_xs = jnp.empty((0, 0, 0))
+                massive_vs = jnp.empty((0, 0, 0))
                 massive_ras = jnp.empty((0, 0))
                 massive_decs = jnp.empty((0, 0))
                 massive_resids = jnp.empty((0, 0))
                 massive_loglike = jnp.array(0.0)
 
             return (
+                (tracer_xs, massive_xs),
+                (tracer_vs, massive_vs),
                 (tracer_ras, massive_ras),
                 (tracer_decs, massive_decs),
                 (tracer_resids, massive_resids),
@@ -1427,9 +1421,9 @@ class System:
                 **free_params, **fixed_params, **padded_supporting_data[1]
             )
             return (
-                (trailing[0], leading[0]),
-                (trailing[1], leading[1]),
                 (trailing[2], leading[2]),
+                (trailing[3], leading[3]),
+                (trailing[4], leading[4]),
             )
 
         resids_function = jax.jit(
@@ -1447,7 +1441,7 @@ class System:
             leading = _resids(
                 **free_params, **fixed_params, **padded_supporting_data[1]
             )
-            return trailing[3] + leading[3]
+            return trailing[-1] + leading[-1]
 
         loglike_function = jax.jit(
             jax.tree_util.Partial(
@@ -1553,6 +1547,8 @@ class System:
             axes = tuple([0] * 18 + [None] * 9)
             if tracer_Init_Times[0].shape[0] > 0:
                 (
+                    overhanging_xs,
+                    overhanging_vs,
                     overhanging_ras,
                     overhanging_decs,
                     overhanging_resids,
@@ -1578,6 +1574,12 @@ class System:
                     tracer_Astrometric_Uncertainties[0],
                     *fixed_tracer_inputs,
                 )
+                overhanging_xs = overhanging_xs.reshape(
+                    (-1, overhanging_xs.shape[-2], 3)
+                )
+                overhanging_vs = overhanging_vs.reshape(
+                    (-1, overhanging_vs.shape[-2], 3)
+                )
                 overhanging_ras = overhanging_ras.reshape(
                     (-1, overhanging_ras.shape[-1])
                 )
@@ -1590,14 +1592,21 @@ class System:
                 overhanging_loglike = jnp.sum(overhanging_loglike)
             else:
                 s = tracer_Valid_Steps[1].shape[-1] + 1
+                overhanging_xs = jnp.empty((0, s, 3))
+                overhanging_vs = jnp.empty((0, s, 3))
                 overhanging_ras = jnp.empty((0, s))
                 overhanging_decs = jnp.empty((0, s))
                 overhanging_resids = jnp.empty((0, s))
                 overhanging_loglike = jnp.array(0.0)
             if tracer_Init_Times[1].shape[0] > 1:
-                even_ras, even_decs, even_resids, even_loglike = jax.pmap(
-                    tracer_likelihoods, in_axes=axes
-                )(
+                (
+                    even_xs,
+                    even_vs,
+                    even_ras,
+                    even_decs,
+                    even_resids,
+                    even_loglike,
+                ) = jax.pmap(tracer_likelihoods, in_axes=axes)(
                     tracer_x0s[ex:].reshape([num_devices, -1, tracer_x0s.shape[-1]]),
                     tracer_v0s[ex:].reshape([num_devices, -1, tracer_v0s.shape[-1]]),
                     tracer_Init_Times[1],
@@ -1618,17 +1627,23 @@ class System:
                     tracer_Astrometric_Uncertainties[1],
                     *fixed_tracer_inputs,
                 )
+                even_xs = even_xs.reshape((-1, even_xs.shape[-2], 3))
+                even_vs = even_vs.reshape((-1, even_vs.shape[-2], 3))
                 even_ras = even_ras.reshape((-1, even_ras.shape[-1]))
                 even_decs = even_decs.reshape((-1, even_decs.shape[-1]))
                 even_resids = even_resids.reshape((-1, even_resids.shape[-1]))
                 even_loglike = jnp.sum(even_loglike)
             else:
                 s = tracer_Valid_Steps[0].shape[-1] + 1
+                even_xs = jnp.empty((0, s, 3))
+                even_vs = jnp.empty((0, s, 3))
                 even_ras = jnp.empty((0, s))
                 even_decs = jnp.empty((0, s))
                 even_resids = jnp.empty((0, s))
                 even_loglike = jnp.array(0.0)
 
+            tracer_xs = jnp.concatenate((overhanging_xs, even_xs))
+            tracer_vs = jnp.concatenate((overhanging_vs, even_vs))
             tracer_ras = jnp.concatenate((overhanging_ras, even_ras))
             tracer_decs = jnp.concatenate((overhanging_decs, even_decs))
             tracer_resids = jnp.concatenate((overhanging_resids, even_resids))
@@ -1665,12 +1680,20 @@ class System:
             axes = tuple([0] + [None] * 25)
             if massive_pmap_inds[0].shape[0] > 0:
                 (
+                    overhanging_xs,
+                    overhanging_vs,
                     overhanging_ras,
                     overhanging_decs,
                     overhanging_resids,
                     overhanging_loglike,
                 ) = jax.pmap(massive_likelihoods, in_axes=axes)(
                     massive_pmap_inds[0], *fixed_massive_inputs
+                )
+                overhanging_xs = overhanging_xs.reshape(
+                    (-1, overhanging_xs.shape[-2], 3)
+                )
+                overhanging_vs = overhanging_vs.reshape(
+                    (-1, overhanging_vs.shape[-2], 3)
                 )
                 overhanging_ras = overhanging_ras.reshape(
                     (-1, overhanging_ras.shape[-1])
@@ -1685,39 +1708,53 @@ class System:
             else:
                 s = massive_Valid_Steps.shape[1] + 1
                 (
+                    overhanging_xs,
+                    overhanging_vs,
                     overhanging_ras,
                     overhanging_decs,
                     overhanging_resids,
                     overhanging_loglike,
                 ) = (
+                    jnp.empty((0, s, 3)),
+                    jnp.empty((0, s, 3)),
                     jnp.empty((0, s)),
                     jnp.empty((0, s)),
                     jnp.empty((0, s)),
                     jnp.array(0.0),
                 )
             if massive_pmap_inds[1].shape[0] > 0:
-                even_ras, even_decs, even_resids, even_loglike = jax.pmap(
-                    massive_likelihoods, in_axes=axes
-                )(massive_pmap_inds[1], *fixed_massive_inputs)
+                even_xs, even_vs, even_ras, even_decs, even_resids, even_loglike = (
+                    jax.pmap(massive_likelihoods, in_axes=axes)(
+                        massive_pmap_inds[1], *fixed_massive_inputs
+                    )
+                )
+                even_xs = even_xs.reshape((-1, even_xs.shape[-2], 3))
+                even_vs = even_vs.reshape((-1, even_vs.shape[-2], 3))
                 even_ras = even_ras.reshape((-1, even_ras.shape[-1]))
                 even_decs = even_decs.reshape((-1, even_decs.shape[-1]))
                 even_resids = even_resids.reshape((-1, even_resids.shape[-1]))
                 even_loglike = jnp.sum(even_loglike)
             else:
                 s = massive_Valid_Steps.shape[1] + 1
-                even_ras, even_decs, even_resids, even_loglike = (
+                even_xs, even_vs, even_ras, even_decs, even_resids, even_loglike = (
+                    jnp.empty((0, s, 3)),
+                    jnp.empty((0, s, 3)),
                     jnp.empty((0, s)),
                     jnp.empty((0, s)),
                     jnp.empty((0, s)),
                     jnp.array(0.0),
                 )
 
+            massive_xs = jnp.concatenate((overhanging_xs, even_xs))
+            massive_vs = jnp.concatenate((overhanging_vs, even_vs))
             massive_ras = jnp.concatenate((overhanging_ras, even_ras))
             massive_decs = jnp.concatenate((overhanging_decs, even_decs))
             massive_resids = jnp.concatenate((overhanging_resids, even_resids))
             massive_loglike = overhanging_loglike + even_loglike
 
             return (
+                (tracer_xs, massive_xs),
+                (tracer_vs, massive_vs),
                 (tracer_ras, massive_ras),
                 (tracer_decs, massive_decs),
                 (tracer_resids, massive_resids),
@@ -1735,9 +1772,9 @@ class System:
                 **free_params, **fixed_params, **padded_supporting_data[1]
             )
             return (
-                (trailing[0], leading[0]),
-                (trailing[1], leading[1]),
                 (trailing[2], leading[2]),
+                (trailing[3], leading[3]),
+                (trailing[4], leading[4]),
             )
 
         resids_function = jax.tree_util.Partial(
@@ -1753,7 +1790,7 @@ class System:
             leading = _resids(
                 **free_params, **fixed_params, **padded_supporting_data[1]
             )
-            return trailing[3] + leading[3]
+            return trailing[-1] + leading[-1]
 
         loglike_function = jax.tree_util.Partial(
             loglike_function,
