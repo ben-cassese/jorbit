@@ -696,7 +696,7 @@ def prep_uneven_GJ_integrator(
     for i in range(len(times) - 1):
         # print(f'Current time: {times[i]}')
         # print(f'Next time: {times[i+1]}')
-        integrator_jump = times[i + 1] - times[i]
+        integrator_jump = jnp.abs(times[i + 1] - times[i])
         # print(f'Jump: {integrator_jump}')
 
         if integrator_jump < low_order_cutoff:
@@ -729,7 +729,8 @@ def prep_uneven_GJ_integrator(
             assert jnp.ceil(integrator_jump / t) >= high_order / 2 + 1
             Jumps.append(int(jnp.ceil(integrator_jump / t)))
 
-        # print()
+    # print(Jumps)
+    # print()
     chunks = []
     ts = []
     for i in range(len(times) - 1):

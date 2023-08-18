@@ -121,7 +121,7 @@ def tracer_likelihoods(
             sigma2 = astrometric_uncertainties**2
             loglike = -0.5 * jnp.sum(resids**2 / sigma2)
 
-            return None, (calc_ra, calc_dec, resids, loglike)
+            return None, (x, v, calc_ra, calc_dec, resids, loglike)
 
         def false_func(scan_over):
             (
@@ -145,6 +145,8 @@ def tracer_likelihoods(
                 astrometric_uncertainties,
             ) = scan_over
             return None, (
+                jnp.ones((jump_times.shape[0] + 1, 3)) * 999.0,
+                jnp.ones((jump_times.shape[0] + 1, 3)) * 999.0,
                 jnp.zeros(jump_times.shape[0] + 1),
                 jnp.zeros(jump_times.shape[0] + 1),
                 jnp.ones(jump_times.shape[0] + 1) * 999.0,
@@ -156,30 +158,32 @@ def tracer_likelihoods(
             a[tuple([0] * (len(a.shape)))] != 999, true_func, false_func, scan_over
         )
 
-    tracer_ras, tracer_decs, tracer_resids, tracer_loglike = jax.lax.scan(
-        _tracer_scan_func,
-        None,
-        (
-            tracer_x0s,
-            tracer_v0s,
-            tracer_Init_Times,
-            tracer_Jump_Times,
-            tracer_Valid_Steps,
-            tracer_Planet_Xs,
-            tracer_Planet_Vs,
-            tracer_Planet_As,
-            tracer_Asteroid_Xs,
-            tracer_Planet_Xs_Warmup,
-            tracer_Asteroid_Xs_Warmup,
-            tracer_Dts_Warmup,
-            tracer_Observer_Positions,
-            tracer_RAs,
-            tracer_Decs,
-            tracer_Observed_Planet_Xs,
-            tracer_Observed_Asteroid_Xs,
-            tracer_Astrometric_Uncertainties,
-        ),
-    )[1]
+    tracer_xs, tracer_vs, tracer_ras, tracer_decs, tracer_resids, tracer_loglike = (
+        jax.lax.scan(
+            _tracer_scan_func,
+            None,
+            (
+                tracer_x0s,
+                tracer_v0s,
+                tracer_Init_Times,
+                tracer_Jump_Times,
+                tracer_Valid_Steps,
+                tracer_Planet_Xs,
+                tracer_Planet_Vs,
+                tracer_Planet_As,
+                tracer_Asteroid_Xs,
+                tracer_Planet_Xs_Warmup,
+                tracer_Asteroid_Xs_Warmup,
+                tracer_Dts_Warmup,
+                tracer_Observer_Positions,
+                tracer_RAs,
+                tracer_Decs,
+                tracer_Observed_Planet_Xs,
+                tracer_Observed_Asteroid_Xs,
+                tracer_Astrometric_Uncertainties,
+            ),
+        )[1]
+    )
 
     # These aren't necessary and don't affect the likelihood, but makes it easier to
     # interpret
@@ -192,7 +196,7 @@ def tracer_likelihoods(
     )
 
     tracer_loglike = jnp.sum(tracer_loglike)
-    return tracer_ras, tracer_decs, tracer_resids, tracer_loglike
+    return tracer_xs, tracer_vs, tracer_ras, tracer_decs, tracer_resids, tracer_loglike
 
 
 def massive_likelihoods(
@@ -284,11 +288,13 @@ def massive_likelihoods(
             sigma2 = massive_Astrometric_Uncertainties[ind] ** 2
             loglike = -0.5 * jnp.sum(resids**2 / sigma2)
 
-            return None, (calc_ra, calc_dec, resids, loglike)
+            return None, (x, v, calc_ra, calc_dec, resids, loglike)
 
         def false_func(scan_over):
             j = massive_Jump_Times[scan_over].shape[0]
             return None, (
+                jnp.ones((j + 1, 3)) * 999.0,
+                jnp.ones((j + 1, 3)) * 999.0,
                 jnp.zeros(j + 1),
                 jnp.zeros(j + 1),
                 jnp.ones(j + 1) * 999.0,
@@ -300,11 +306,14 @@ def massive_likelihoods(
             a[tuple([0] * (len(a.shape)))] != 999, true_func, false_func, scan_over
         )
 
-    massive_calc_RAs, massive_calc_Decs, massive_resids, massive_loglike = jax.lax.scan(
-        _massive_scan_func,
-        None,
-        scan_inds,
-    )[1]
+    (
+        massive_xs,
+        massive_vs,
+        massive_calc_RAs,
+        massive_calc_Decs,
+        massive_resids,
+        massive_loglike,
+    ) = jax.lax.scan(_massive_scan_func, None, scan_inds,)[1]
 
     # These aren't necessary and don't affect the likelihood, but makes it easier to
     # interpret
@@ -320,6 +329,8 @@ def massive_likelihoods(
 
     massive_loglike = jnp.sum(massive_loglike)
     return (
+        massive_xs,
+        massive_vs,
         massive_calc_RAs,
         massive_calc_Decs,
         massive_resids,
