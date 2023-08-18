@@ -30,6 +30,7 @@ class Particle:
         name="",
         free_orbit=True,
         free_gm=False,
+        prior=None,
     ):
         assert time is not None, "Must provide an epoch for the particle"
         if isinstance(time, type(Time("2023-01-01"))):

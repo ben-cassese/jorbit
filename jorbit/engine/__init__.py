@@ -36,8 +36,6 @@ import jax
 from jax.config import config
 
 config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-from jax import jit, lax
 
 from jorbit.engine.accelerations import *
 from jorbit.engine.ephemeris import *
