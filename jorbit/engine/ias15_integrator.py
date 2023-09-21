@@ -11,104 +11,15 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-# Constants
-H = jnp.array(
-    [
-        0.0,
-        0.0562625605369221464656521910318,
-        0.180240691736892364987579942780,
-        0.352624717113169637373907769648,
-        0.547153626330555383001448554766,
-        0.734210177215410531523210605558,
-        0.885320946839095768090359771030,
-        0.977520613561287501891174488626,
-    ]
+from jorbit.data.constants import (
+    IAS15_EPSILON,
+    IAS15_MIN_DT,
+    IAS15_SAFETY_FACTOR,
+    IAS15_RR,
+    IAS15_C,
+    IAS15_D,
+    IAS15_H,
 )
-RR = jnp.array(
-    [
-        0.0562625605369221464656522,
-        0.1802406917368923649875799,
-        0.1239781311999702185219278,
-        0.3526247171131696373739078,
-        0.2963621565762474909082556,
-        0.1723840253762772723863278,
-        0.5471536263305553830014486,
-        0.4908910657936332365357964,
-        0.3669129345936630180138686,
-        0.1945289092173857456275408,
-        0.7342101772154105315232106,
-        0.6779476166784883850575584,
-        0.5539694854785181665356307,
-        0.3815854601022408941493028,
-        0.1870565508848551485217621,
-        0.8853209468390957680903598,
-        0.8290583863021736216247076,
-        0.7050802551022034031027798,
-        0.5326962297259261307164520,
-        0.3381673205085403850889112,
-        0.1511107696236852365671492,
-        0.9775206135612875018911745,
-        0.9212580530243653554255223,
-        0.7972799218243951369035945,
-        0.6248958964481178645172667,
-        0.4303669872307321188897259,
-        0.2433104363458769703679639,
-        0.0921996667221917338008147,
-    ]
-)
-C = jnp.array(
-    [
-        -0.0562625605369221464656522,
-        0.0101408028300636299864818,
-        -0.2365032522738145114532321,
-        -0.0035758977292516175949345,
-        0.0935376952594620658957485,
-        -0.5891279693869841488271399,
-        0.0019565654099472210769006,
-        -0.0547553868890686864408084,
-        0.4158812000823068616886219,
-        -1.1362815957175395318285885,
-        -0.0014365302363708915424460,
-        0.0421585277212687077072973,
-        -0.3600995965020568122897665,
-        1.2501507118406910258505441,
-        -1.8704917729329500633517991,
-        0.0012717903090268677492943,
-        -0.0387603579159067703699046,
-        0.3609622434528459832253398,
-        -1.4668842084004269643701553,
-        2.9061362593084293014237913,
-        -2.7558127197720458314421588,
-    ]
-)
-D = jnp.array(
-    [
-        0.0562625605369221464656522,
-        0.0031654757181708292499905,
-        0.2365032522738145114532321,
-        0.0001780977692217433881125,
-        0.0457929855060279188954539,
-        0.5891279693869841488271399,
-        0.0000100202365223291272096,
-        0.0084318571535257015445000,
-        0.2535340690545692665214616,
-        1.1362815957175395318285885,
-        0.0000005637641639318207610,
-        0.0015297840025004658189490,
-        0.0978342365324440053653648,
-        0.8752546646840910912297246,
-        1.8704917729329500633517991,
-        0.0000000317188154017613665,
-        0.0002762930909826476593130,
-        0.0360285539837364596003871,
-        0.5767330002770787313544596,
-        2.2485887607691597933926895,
-        2.7558127197720458314421588,
-    ]
-)
-EPSILON = 10 ** (-9)
-MIN_DT = 0.0001
-SAFETY_FACTOR = 0.25
 
 
 def acc(x0, v0, t):
@@ -133,7 +44,7 @@ def sqrt7(a):
 
 
 def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n):
-    t_sub = t + H[n] * dt
+    t_sub = t + IAS15_H[n] * dt
     x_sub = (
         -csx
         + (
@@ -142,37 +53,43 @@ def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
                     (
                         (
                             (
-                                ((b6 * 7.0 * H[n] / 9.0 + b5) * 3.0 * H[n] / 4.0 + b4)
+                                (
+                                    (b6 * 7.0 * IAS15_H[n] / 9.0 + b5)
+                                    * 3.0
+                                    * IAS15_H[n]
+                                    / 4.0
+                                    + b4
+                                )
                                 * 5.0
-                                * H[n]
+                                * IAS15_H[n]
                                 / 7.0
                                 + b3
                             )
                             * 2.0
-                            * H[n]
+                            * IAS15_H[n]
                             / 3.0
                             + b2
                         )
                         * 3.0
-                        * H[n]
+                        * IAS15_H[n]
                         / 5.0
                         + b1
                     )
-                    * H[n]
+                    * IAS15_H[n]
                     / 2.0
                     + b0
                 )
-                * H[n]
+                * IAS15_H[n]
                 / 3.0
                 + a0
             )
             * dt
-            * H[n]
+            * IAS15_H[n]
             / 2.0
             + v0
         )
         * dt
-        * H[n]
+        * IAS15_H[n]
     )
     v_sub = (
         -csv
@@ -181,33 +98,39 @@ def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
                 (
                     (
                         (
-                            ((b6 * 7.0 * H[n] / 8.0 + b5) * 6.0 * H[n] / 7.0 + b4)
+                            (
+                                (b6 * 7.0 * IAS15_H[n] / 8.0 + b5)
+                                * 6.0
+                                * IAS15_H[n]
+                                / 7.0
+                                + b4
+                            )
                             * 5.0
-                            * H[n]
+                            * IAS15_H[n]
                             / 6.0
                             + b3
                         )
                         * 4.0
-                        * H[n]
+                        * IAS15_H[n]
                         / 5.0
                         + b2
                     )
                     * 3.0
-                    * H[n]
+                    * IAS15_H[n]
                     / 4.0
                     + b1
                 )
                 * 2.0
-                * H[n]
+                * IAS15_H[n]
                 / 3.0
                 + b0
             )
-            * H[n]
+            * IAS15_H[n]
             / 2.0
             + a0
         )
         * dt
-        * H[n]
+        * IAS15_H[n]
     )
     x_sub = x_sub + x0
     v_sub = v_sub + v0
@@ -216,12 +139,27 @@ def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
 
 
 def initialize_gs(b0, b1, b2, b3, b4, b5, b6):
-    g0 = b6 * D[15] + b5 * D[10] + b4 * D[6] + b3 * D[3] + b2 * D[1] + b1 * D[0] + b0
-    g1 = b6 * D[16] + b5 * D[11] + b4 * D[7] + b3 * D[4] + b2 * D[2] + b1
-    g2 = b6 * D[17] + b5 * D[12] + b4 * D[8] + b3 * D[5] + b2
-    g3 = b6 * D[18] + b5 * D[13] + b4 * D[9] + b3
-    g4 = b6 * D[19] + b5 * D[14] + b4
-    g5 = b6 * D[20] + b5
+    g0 = (
+        b6 * IAS15_D[15]
+        + b5 * IAS15_D[10]
+        + b4 * IAS15_D[6]
+        + b3 * IAS15_D[3]
+        + b2 * IAS15_D[1]
+        + b1 * IAS15_D[0]
+        + b0
+    )
+    g1 = (
+        b6 * IAS15_D[16]
+        + b5 * IAS15_D[11]
+        + b4 * IAS15_D[7]
+        + b3 * IAS15_D[4]
+        + b2 * IAS15_D[2]
+        + b1
+    )
+    g2 = b6 * IAS15_D[17] + b5 * IAS15_D[12] + b4 * IAS15_D[8] + b3 * IAS15_D[5] + b2
+    g3 = b6 * IAS15_D[18] + b5 * IAS15_D[13] + b4 * IAS15_D[9] + b3
+    g4 = b6 * IAS15_D[19] + b5 * IAS15_D[14] + b4
+    g5 = b6 * IAS15_D[20] + b5
     g6 = b6
     return g0, g1, g2, g3, g4, g5, g6
 
@@ -268,7 +206,7 @@ def predictor_corrector_iteration(
     gk_cs = 0.0
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
-    g0 = gk / RR[0]
+    g0 = gk / IAS15_RR[0]
     b0, csb0 = comp_sum(b0, csb0, g0 - tmp)
 
     n = 2
@@ -280,9 +218,9 @@ def predictor_corrector_iteration(
     gk_cs = 0.0
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
-    g1 = (gk / RR[1] - g0) / RR[2]
+    g1 = (gk / IAS15_RR[1] - g0) / IAS15_RR[2]
     tmp = g1 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[0])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[0])
     b1, csb1 = comp_sum(b1, csb1, tmp)
 
     n = 3
@@ -294,10 +232,10 @@ def predictor_corrector_iteration(
     gk_cs = 0.0
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
-    g2 = ((gk / RR[3] - g0) / RR[4] - g1) / RR[5]
+    g2 = ((gk / IAS15_RR[3] - g0) / IAS15_RR[4] - g1) / IAS15_RR[5]
     tmp = g2 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[1])
-    b1, csb1 = comp_sum(b1, csb1, tmp * C[2])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[1])
+    b1, csb1 = comp_sum(b1, csb1, tmp * IAS15_C[2])
     b2, csb2 = comp_sum(b2, csb2, tmp)
 
     n = 4
@@ -309,11 +247,11 @@ def predictor_corrector_iteration(
     gk_cs = 0.0
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
-    g3 = (((gk / RR[6] - g0) / RR[7] - g1) / RR[8] - g2) / RR[9]
+    g3 = (((gk / IAS15_RR[6] - g0) / IAS15_RR[7] - g1) / IAS15_RR[8] - g2) / IAS15_RR[9]
     tmp = g3 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[3])
-    b1, csb1 = comp_sum(b1, csb1, tmp * C[4])
-    b2, csb2 = comp_sum(b2, csb2, tmp * C[5])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[3])
+    b1, csb1 = comp_sum(b1, csb1, tmp * IAS15_C[4])
+    b2, csb2 = comp_sum(b2, csb2, tmp * IAS15_C[5])
     b3, csb3 = comp_sum(b3, csb3, tmp)
 
     n = 5
@@ -325,12 +263,16 @@ def predictor_corrector_iteration(
     gk_cs = 0.0
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
-    g4 = ((((gk / RR[10] - g0) / RR[11] - g1) / RR[12] - g2) / RR[13] - g3) / RR[14]
+    g4 = (
+        (((gk / IAS15_RR[10] - g0) / IAS15_RR[11] - g1) / IAS15_RR[12] - g2)
+        / IAS15_RR[13]
+        - g3
+    ) / IAS15_RR[14]
     tmp = g4 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[6])
-    b1, csb1 = comp_sum(b1, csb1, tmp * C[7])
-    b2, csb2 = comp_sum(b2, csb2, tmp * C[8])
-    b3, csb3 = comp_sum(b3, csb3, tmp * C[9])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[6])
+    b1, csb1 = comp_sum(b1, csb1, tmp * IAS15_C[7])
+    b2, csb2 = comp_sum(b2, csb2, tmp * IAS15_C[8])
+    b3, csb3 = comp_sum(b3, csb3, tmp * IAS15_C[9])
     b4, csb4 = comp_sum(b4, csb4, tmp)
 
     n = 6
@@ -343,14 +285,20 @@ def predictor_corrector_iteration(
     gk, gk_cs = comp_sum(gk, gk_cs, -a0)
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
     g5 = (
-        ((((gk / RR[15] - g0) / RR[16] - g1) / RR[17] - g2) / RR[18] - g3) / RR[19] - g4
-    ) / RR[20]
+        (
+            (((gk / IAS15_RR[15] - g0) / IAS15_RR[16] - g1) / IAS15_RR[17] - g2)
+            / IAS15_RR[18]
+            - g3
+        )
+        / IAS15_RR[19]
+        - g4
+    ) / IAS15_RR[20]
     tmp = g5 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[10])
-    b1, csb1 = comp_sum(b1, csb1, tmp * C[11])
-    b2, csb2 = comp_sum(b2, csb2, tmp * C[12])
-    b3, csb3 = comp_sum(b3, csb3, tmp * C[13])
-    b4, csb4 = comp_sum(b4, csb4, tmp * C[14])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[10])
+    b1, csb1 = comp_sum(b1, csb1, tmp * IAS15_C[11])
+    b2, csb2 = comp_sum(b2, csb2, tmp * IAS15_C[12])
+    b3, csb3 = comp_sum(b3, csb3, tmp * IAS15_C[13])
+    b4, csb4 = comp_sum(b4, csb4, tmp * IAS15_C[14])
     b5, csb5 = comp_sum(b5, csb5, tmp)
 
     n = 7
@@ -364,19 +312,24 @@ def predictor_corrector_iteration(
     gk, gk_cs = comp_sum(gk, gk_cs, 0)  # csa0
     g6 = (
         (
-            ((((gk / RR[21] - g0) / RR[22] - g1) / RR[23] - g2) / RR[24] - g3) / RR[25]
+            (
+                (((gk / IAS15_RR[21] - g0) / IAS15_RR[22] - g1) / IAS15_RR[23] - g2)
+                / IAS15_RR[24]
+                - g3
+            )
+            / IAS15_RR[25]
             - g4
         )
-        / RR[26]
+        / IAS15_RR[26]
         - g5
-    ) / RR[27]
+    ) / IAS15_RR[27]
     tmp = g6 - tmp
-    b0, csb0 = comp_sum(b0, csb0, tmp * C[15])
-    b1, csb1 = comp_sum(b1, csb1, tmp * C[16])
-    b2, csb2 = comp_sum(b2, csb2, tmp * C[17])
-    b3, csb3 = comp_sum(b3, csb3, tmp * C[18])
-    b4, csb4 = comp_sum(b4, csb4, tmp * C[19])
-    b5, csb5 = comp_sum(b5, csb5, tmp * C[20])
+    b0, csb0 = comp_sum(b0, csb0, tmp * IAS15_C[15])
+    b1, csb1 = comp_sum(b1, csb1, tmp * IAS15_C[16])
+    b2, csb2 = comp_sum(b2, csb2, tmp * IAS15_C[17])
+    b3, csb3 = comp_sum(b3, csb3, tmp * IAS15_C[18])
+    b4, csb4 = comp_sum(b4, csb4, tmp * IAS15_C[19])
+    b5, csb5 = comp_sum(b5, csb5, tmp * IAS15_C[20])
     b6, csb6 = comp_sum(b6, csb6, tmp)
 
     # global error:
@@ -730,10 +683,14 @@ def ias15_step(
 
     integrator_error = maxb6k / maxak
 
-    dt_new = sqrt7(EPSILON / integrator_error) * dt
-    dt_new = jnp.where(jnp.abs(dt_new) < MIN_DT, jnp.copysign(MIN_DT, dt_new), dt_new)
+    dt_new = sqrt7(IAS15_EPSILON / integrator_error) * dt
     dt_new = jnp.where(
-        jnp.abs(dt_new / dt) > (1.0 / SAFETY_FACTOR), dt / SAFETY_FACTOR, dt_new
+        jnp.abs(dt_new) < IAS15_MIN_DT, jnp.copysign(IAS15_MIN_DT, dt_new), dt_new
+    )
+    dt_new = jnp.where(
+        jnp.abs(dt_new / dt) > (1.0 / IAS15_SAFETY_FACTOR),
+        dt / IAS15_SAFETY_FACTOR,
+        dt_new,
     )
 
     def successful_step(params):
@@ -763,7 +720,7 @@ def ias15_step(
         return x0, csx, v0, csv, t
 
     x0, csx, v0, csv, t = jax.lax.cond(
-        dt_new / dt > SAFETY_FACTOR,
+        dt_new / dt > IAS15_SAFETY_FACTOR,
         successful_step,
         failed_step,
         (x0, csx, v0, csv, b0, b1, b2, b3, b4, b5, b6, a0, dt, t),
@@ -906,7 +863,7 @@ def ias15_integrate(
 # [0.97752061356128750189117,0.477773274968617987575421,0.155677741630169726318351,0.076089100758079550432207,0.044627198675018728876142,0.029082671086883856332127,0.020306364632037016645903,0.014887417510731039470401,0.011318811388447780906456]
 # ])
 # def substep_acceleration(b0,b1,b2,b3,b4,b5,b6, csx, csv, x0, v0, a0, t, dt, n):
-#     t_sub = t + H[n] * dt
+#     t_sub = t + IAS15_H[n] * dt
 #     dt2 = dt**2
 #     consts = dt2*Q[n-1]
 
@@ -921,8 +878,8 @@ def ias15_integrate(
 #     # x_sub, cx = comp_sum(x_sub, cx, b6*consts[8])
 #     # x_sub = -csx + dt*v0*Q[n-1,0] + a0*consts[1] + b0*consts[2] + b1*consts[3] + b2*consts[4] + b3*consts[5] + b4*consts[6] + b5*consts[7] + b6*consts[8]
 
-#     # x_sub = -csx + ((((((((b6 * 7. * H[n] / 9. + b5) * 3. * H[n] / 4. + b4) * 5. * H[n] / 7. + b3) * 2. * H[n] / 3. + b2) * 3. * H[n] / 5. + b1) * H[n] / 2. + b0) * H[n] / 3. + a0) * dt * H[n] / 2. + v0) * dt * H[n]
-#     v_sub = -csv + (((((((b6*7.*H[n]/8. + b5)*6.*H[n]/7. + b4)*5.*H[n]/6. + b3)*4.*H[n]/5. + b2)*3.*H[n]/4. + b1)*2.*H[n]/3. + b0)*H[n]/2. + a0) * dt * H[n]
+#     # x_sub = -csx + ((((((((b6 * 7. * IAS15_H[n] / 9. + b5) * 3. * IAS15_H[n] / 4. + b4) * 5. * IAS15_H[n] / 7. + b3) * 2. * IAS15_H[n] / 3. + b2) * 3. * IAS15_H[n] / 5. + b1) * IAS15_H[n] / 2. + b0) * IAS15_H[n] / 3. + a0) * dt * IAS15_H[n] / 2. + v0) * dt * IAS15_H[n]
+#     v_sub = -csv + (((((((b6*7.*IAS15_H[n]/8. + b5)*6.*IAS15_H[n]/7. + b4)*5.*IAS15_H[n]/6. + b3)*4.*IAS15_H[n]/5. + b2)*3.*IAS15_H[n]/4. + b1)*2.*IAS15_H[n]/3. + b0)*IAS15_H[n]/2. + a0) * dt * IAS15_H[n]
 #     x_sub = x_sub + x0
 #     v_sub = v_sub + v0
 #     a_sub = acc(x_sub, v_sub, t_sub)

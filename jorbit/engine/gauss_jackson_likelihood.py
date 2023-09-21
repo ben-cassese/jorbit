@@ -8,7 +8,7 @@ from jorbit.engine.gauss_jackson_integrator import gj_integrate_multiple
 from jorbit.engine.sky_projection import on_sky, sky_error
 
 
-def tracer_likelihoods(
+def gj_tracer_likelihoods(
     tracer_x0s,
     tracer_v0s,
     tracer_Init_Times,
@@ -199,7 +199,7 @@ def tracer_likelihoods(
     return tracer_xs, tracer_vs, tracer_ras, tracer_decs, tracer_resids, tracer_loglike
 
 
-def massive_likelihoods(
+def gj_massive_likelihoods(
     scan_inds,
     massive_x0s,
     massive_v0s,

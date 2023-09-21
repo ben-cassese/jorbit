@@ -39,7 +39,7 @@ config.update("jax_enable_x64", True)
 
 from jorbit.engine.accelerations import *
 from jorbit.engine.ephemeris import *
-from jorbit.engine.likelihood import *
+from jorbit.engine.gauss_jackson_likelihood import *
 from jorbit.engine.sky_projection import *
 
 j_planet_state_helper = jax.jit(planet_state_helper)

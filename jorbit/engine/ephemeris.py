@@ -96,7 +96,7 @@ def planet_state_helper(
         def scan_func(X, a):
             b_i, b_ii = X
             tmp = b_i
-            b_i = a + 2 * s * b_i - b_ii
+            b_i = a + 2 * x * b_i - b_ii
             b_ii = tmp
             return (b_i, b_ii), b_i
 

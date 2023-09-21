@@ -1,14 +1,6 @@
-"""
-The one module within jorbit.engine where the functions do not have to be jax/jit/grad
-compatible. Functions here should only have to be run once per system, and outputs
-should be able to be reused for every subsequent likelihood call or integration to the
-same epochs.
-"""
-
 import jax
-from jax.config import config
 
-config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jplephem.spk import SPK
@@ -679,7 +671,7 @@ def prep_gj_integrator_multiple(t0, times, jumps, a_jk, planet_params, asteroid_
     return jax.lax.scan(scan_func, t0, times)[1]
 
 
-def prep_uneven_GJ_integrator(
+def prep_gj_integrator_uneven(
     times,
     low_order,
     high_order,
