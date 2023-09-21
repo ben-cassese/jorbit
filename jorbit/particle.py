@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore", module="erfa")
 from astropy.time import Time
 
 from jorbit.data import STANDARD_SUN_PARAMS
-from jorbit.engine.utils import construct_perturbers
+from jorbit.utils import construct_perturbers
 from jorbit.engine import (
     j_cart_to_elements,
     j_elements_to_cart,
