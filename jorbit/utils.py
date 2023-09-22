@@ -10,7 +10,7 @@ from astropy.utils.data import download_file
 
 
 # jorbit imports:
-from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.ephemeris import perturber_states, perturber_positions
 
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
@@ -375,12 +375,8 @@ def prep_leapfrog_integrator_single(
     # leaving it out for now. worth coming back to though, I'm guesssing it's something
     # with time scale conversions
 
-    planet_xs, _, _ = planet_state(
-        planet_params=planet_params, times=times, velocity=False, acceleration=False
-    )
-    asteroid_xs, _, _ = planet_state(
-        planet_params=asteroid_params, times=times, velocity=False, acceleration=False
-    )
+    planet_xs = perturber_positions(planet_params=planet_params, times=times)
+    asteroid_xs = perturber_positions(planet_params=asteroid_params, times=times)
 
     return planet_xs, asteroid_xs, dt
 
@@ -558,13 +554,11 @@ def prep_gj_integrator_single(
     dts_warmup = jnp.stack((b_dts, f_dts))
 
     times = jnp.concatenate((backwards_times[::-1], jnp.linspace(t0, tf, jumps + 1)))
-    planet_xs, planet_vs, planet_as = planet_state(
-        planet_params=planet_params, times=times, velocity=True, acceleration=True
+    planet_xs, planet_vs, planet_as = perturber_states(
+        planet_params=planet_params, times=times
     )
 
-    asteroid_xs, _, _ = planet_state(
-        planet_params=asteroid_params, times=times, velocity=False, acceleration=False
-    )
+    asteroid_xs = perturber_positions(planet_params=asteroid_params, times=times)
 
     return (
         planet_xs,

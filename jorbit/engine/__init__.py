@@ -36,3 +36,8 @@ import jax
 from jax.config import config
 
 config.update("jax_enable_x64", True)
+
+from jorbit.engine.sky_projection import cart_to_elements, elements_to_cart
+
+j_cart_to_elements = jax.jit(cart_to_elements)
+j_elements_to_cart = jax.jit(elements_to_cart)

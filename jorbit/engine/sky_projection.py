@@ -20,7 +20,7 @@ from jorbit.data.constants import (
     Y4_D,
 )
 
-from jorbit.engine.ephemeris import perturber_positions
+from jorbit.engine.ephemeris import perturber_states
 from jorbit.engine.yoshida_integrator import yoshida_integrate
 
 
@@ -253,9 +253,7 @@ def cart_to_elements(X, V, time, sun_params=STANDARD_SUN_PARAMS):
     # sun_params is TUPLE (3), the first entries of something like STANDARD_PLANET_PARAMS
     # time is float, the time in TDB
 
-    sun_x, sun_v, _ = planet_state(
-        sun_params, jnp.array([time]), velocity=True, acceleration=False
-    )
+    sun_x, sun_v, _ = perturber_states(sun_params, jnp.array([time]))
 
     sun_pos = sun_x[0][0]
     sun_vel = sun_v[0][0]
@@ -309,9 +307,7 @@ def elements_to_cart(
     # Each of the elements are (n_particles, )
     # The angles are in *degrees*. Always assuming orbital element angles are in degrees
 
-    sun_x, sun_v, _ = planet_state(
-        sun_params, jnp.array([time]), velocity=True, acceleration=False
-    )
+    sun_x, sun_v, _ = perturber_states(sun_params, jnp.array([time]))
 
     sun_pos = sun_x[0][0]
     sun_vel = sun_v[0][0]
