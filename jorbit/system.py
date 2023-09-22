@@ -13,7 +13,8 @@ from astropy.time import Time
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
-from jorbit import Observations, Particle
+from jorbit.particle import Particle
+from jorbit.observations import Observations
 from jorbit.utils import (
     construct_perturbers,
     prep_gj_integrator_single,
@@ -26,7 +27,7 @@ from jorbit.engine.gauss_jackson_likelihood import (
 )
 from jorbit.engine.gauss_jackson_integrator import gj_integrate, gj_integrate_multiple
 from jorbit.engine.sky_projection import on_sky
-from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.ephemeris import perturber_positions, perturber_states
 
 from jorbit.data import (
     STANDARD_PLANET_PARAMS,
@@ -53,7 +54,7 @@ class BaseSystem(ABC):
         asteroids=LARGE_ASTEROIDS,
         fit_planet_gms=False,
         fit_asteroid_gms=False,
-        force_common_epoch=True,
+        infer_epoch=True,
         parallelize=False,
         verbose=True,
     ):
@@ -62,7 +63,7 @@ class BaseSystem(ABC):
         self._asteroids = asteroids
         self._fit_planet_gms = fit_planet_gms
         self._fit_asteroid_gms = fit_asteroid_gms
-        self._force_common_epoch = force_common_epoch
+        self._infer_epoch = infer_epoch
         self._parallelize = parallelize
         self._verbose = verbose
 
@@ -112,7 +113,7 @@ class BaseSystem(ABC):
         self._gms = jnp.array([p.gm for p in self._particles])
 
     def __repr__(self):
-        return f"{self.__class__.__name__} with {len(self._xs)} particles"
+        return f"{self.__class__.__name__} with {len(self._xs)} particle(s)"
 
     def __len__(self):
         return len(self._xs)
@@ -132,9 +133,9 @@ class BaseSystem(ABC):
                 " (https://github.com/google/jax/issues/1408)"
             )
 
-        if not self._force_common_epoch:
+        if not self._infer_epoch:
             t = self._particles[0].time
-            for p in self.particles:
+            for p in self._particles:
                 assert p.time == t, (
                     "If not forcing common epoch, all particles must"
                     " be initialized at the same time"
@@ -234,7 +235,7 @@ class BaseSystem(ABC):
                     massive_rx_rm["k"].append(i)
 
         fixed_params = {}
-        if len(tracer_rx_rm["x"]) > 0:
+        if len(tracer_rx_rm["k"]) > 0:
             fixed_params["tracer_rx_rm__x"] = jnp.array(
                 [q.x for q in tracer_rx_rm["particles"]]
             )
@@ -245,14 +246,14 @@ class BaseSystem(ABC):
             fixed_params["tracer_rx_rm__x"] = jnp.empty((0, 3))
             fixed_params["tracer_rx_rm__v"] = jnp.empty((0, 3))
 
-        if len(massive_fx_rm["x"]) > 0:
+        if len(massive_fx_rm["k"]) > 0:
             fixed_params["massive_fx_rm__gm"] = jnp.array(
                 [q.gm for q in massive_fx_rm["particles"]]
             )
         else:
             fixed_params["massive_fx_rm__gm"] = jnp.empty((0,))
 
-        if len(massive_rx_fm["x"]) > 0:
+        if len(massive_rx_fm["k"]) > 0:
             fixed_params["massive_rx_fm__x"] = jnp.array(
                 [q.x for q in massive_rx_fm["particles"]]
             )
@@ -263,7 +264,7 @@ class BaseSystem(ABC):
             fixed_params["massive_rx_fm__x"] = jnp.empty((0, 3))
             fixed_params["massive_rx_fm__v"] = jnp.empty((0, 3))
 
-        if len(massive_rx_rm["x"]) > 0:
+        if len(massive_rx_rm["k"]) > 0:
             fixed_params["massive_rx_rm__x"] = jnp.array(
                 [q.x for q in massive_rx_rm["particles"]]
             )
@@ -279,7 +280,7 @@ class BaseSystem(ABC):
             fixed_params["massive_rx_rm__gm"] = jnp.empty((0,))
 
         free_params = {}
-        if len(tracer_fx_rm["x"]) > 0:
+        if len(tracer_fx_rm["k"]) > 0:
             free_params["tracer_fx_rm__x"] = jnp.array(
                 [q.x for q in tracer_fx_rm["particles"]]
             )
@@ -290,7 +291,7 @@ class BaseSystem(ABC):
             fixed_params["tracer_fx_rm__x"] = jnp.empty((0, 3))
             fixed_params["tracer_fx_rm__v"] = jnp.empty((0, 3))
 
-        if len(massive_fx_rm["x"]) > 0:
+        if len(massive_fx_rm["k"]) > 0:
             free_params["massive_fx_rm__x"] = jnp.array(
                 [q.x for q in massive_fx_rm["particles"]]
             )
@@ -301,14 +302,14 @@ class BaseSystem(ABC):
             fixed_params["massive_fx_rm__x"] = jnp.empty((0, 3))
             fixed_params["massive_fx_rm__v"] = jnp.empty((0, 3))
 
-        if len(massive_rx_fm["x"]) > 0:
+        if len(massive_rx_fm["k"]) > 0:
             free_params["massive_rx_fm__gm"] = jnp.array(
                 [q.gm for q in massive_rx_fm["particles"]]
             )
         else:
             fixed_params["massive_rx_fm__gm"] = jnp.empty((0,))
 
-        if len(massive_fx_fm["x"]) > 0:
+        if len(massive_fx_fm["k"]) > 0:
             free_params["massive_fx_fm__x"] = jnp.array(
                 [q.x for q in massive_fx_fm["particles"]]
             )
@@ -521,7 +522,7 @@ class BaseSystem(ABC):
     ################################################################################
     @abstractmethod
     def _initialize_particles(self):
-        pass  # modified_particles, epoch, dummy_obs_mask, original_observations
+        pass  # modified_particles, epoch, obs_mask, original_observations
 
     @abstractmethod
     def _generate_parallelized_likelihood_funcs():
@@ -532,6 +533,96 @@ class BaseSystem(ABC):
         pass  # residual_func, likelihood_func
 
     @abstractmethod
+    def propagate(self, t):
+        pass
+
+
+class IAS15System(BaseSystem):
+    def __init__(self, particles, **kwargs):
+        super().__init__(particles, **kwargs)
+
+    def _initialize_particles(self, particles):
+        if self._infer_epoch:
+            # find the mean epoch of all observations, weighted by the precision of those
+            # observations. There might be a better way to do this.
+            # Also, right now I'm forcing the whole system to have a common epoch. In theory
+            # the tracer particles could all have their own optimial epochs
+            times = []
+            weights = []
+            for p in particles:
+                if p.observations != None:
+                    times.append(p.observations.times)
+                    weights.append(1 / p.observations.astrometric_uncertainties**2)
+            if len(times) > 0:
+                times = jnp.concatenate(times)
+                weights = jnp.concatenate(weights)
+                epoch = jnp.sum(times * weights) / jnp.sum(weights)
+
+                # TODO remove this, just testing issues with trailing observations
+                # epoch = jnp.min(times) - 1e-2
+                # epoch = jnp.max(times) + 1e-2
+
+            else:
+                epoch = particles[0].time
+
+        # _input_checks already verified all particles have same epoch
+        else:
+            epoch = particles[0].time
+
+        # move each particles to the mean epoch. To do this, we neglect the influence of
+        # massive particles and evolve each particle only under the influence of fixed
+        # solar system perturbers
+        modified_particles = []
+        obs_mask = []
+        if self._verbose and self._infer_epoch:
+            print("Moving particles to common epoch")
+        for p in particles:
+            if p.time != epoch:
+                raise NotImplementedError(
+                    "Cannot yet start particles away from system epoch"
+                )
+                x = x[0]
+                v = v[0]
+            else:
+                x = p.x
+                v = p.v
+
+            if p.observations != None:
+                # obs = p.observations + blank_obs
+                obs_mask.append(False)
+            else:
+                # obs = blank_obs2
+                obs_mask.append(True)
+
+            new_particle = Particle(
+                x=x,
+                v=v,
+                elements=None,
+                gm=p.gm,
+                time=epoch,
+                observations=p.observations,
+                earliest_time=p.earliest_time,
+                latest_time=p.latest_time,
+                name=p.name,
+                free_orbit=p.free_orbit,
+                free_gm=p.free_gm,
+            )
+            modified_particles.append(new_particle)
+
+        original_observations = []
+        for p in particles:
+            original_observations.append(p.observations)
+
+        return modified_particles, epoch, obs_mask, original_observations
+
+    def _generate_parallelized_likelihood_funcs(self):
+        # pass  # residual_func, likelihood_func
+        return lambda x: x, lambda x: x
+
+    def _generate_single_device_likelihood_funcs(self):
+        # pass  # residual_func, likelihood_func
+        return lambda x: x, lambda x: x
+
     def propagate(self, t):
         pass
 
@@ -1309,7 +1400,7 @@ class BaseSystem(ABC):
 #         # massive particles and evolve each particle only under the influence of fixed
 #         # solar system perturbers
 #         modified_particles = []
-#         dummy_obs_mask = []
+#         obs_mask = []
 #         if self._verbose:
 #             print("Moving particles to common epoch")
 #         for p in particles:
@@ -1369,10 +1460,10 @@ class BaseSystem(ABC):
 
 #             if p.observations != None:
 #                 # obs = p.observations + blank_obs
-#                 dummy_obs_mask.append(False)
+#                 obs_mask.append(False)
 #             else:
 #                 # obs = blank_obs2
-#                 dummy_obs_mask.append(True)
+#                 obs_mask.append(True)
 
 #             new_particle = Particle(
 #                 x=x,
@@ -1393,7 +1484,7 @@ class BaseSystem(ABC):
 #         for p in particles:
 #             original_observations.append(p.observations)
 
-#         return modified_particles, epoch, dummy_obs_mask, original_observations
+#         return modified_particles, epoch, obs_mask, original_observations
 
 #     def _generate_single_device_likelihood_funcs(self):
 #         self._prep_system_GJ_integrator()
@@ -2192,20 +2283,3 @@ class BaseSystem(ABC):
 #         if xs.shape[0] == 1:
 #             return xs[0], vs[0]
 #         return xs, vs
-
-
-class IAS15System(BaseSystem):
-    def __init__(particles, **kwargs):
-        super().__init__(particles, **kwargs)
-
-    def _initialize_particles(self):
-        pass  # modified_particles, epoch, dummy_obs_mask, original_observations
-
-    def _generate_parallelized_likelihood_funcs():
-        pass  # residual_func, likelihood_func
-
-    def _generate_single_device_likelihood_funcs():
-        pass  # residual_func, likelihood_func
-
-    def propagate(self, t):
-        pass
