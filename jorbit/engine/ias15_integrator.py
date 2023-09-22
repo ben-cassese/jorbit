@@ -22,11 +22,6 @@ from jorbit.data.constants import (
 )
 
 
-def acc(x0, v0, t):
-    a = (-1 / jnp.linalg.norm(x0, axis=1) ** 3)[:, None] * x0
-    return a
-
-
 def comp_sum(a, comp, b):
     y = b - comp
     t = a + y
@@ -43,7 +38,9 @@ def sqrt7(a):
     return jax.lax.scan(scan_fn, 1, None, length=20)[0]
 
 
-def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n):
+def substep_acceleration(
+    acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+):
     t_sub = t + IAS15_H[n] * dt
     x_sub = (
         -csx
@@ -134,7 +131,7 @@ def substep_acceleration(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
     )
     x_sub = x_sub + x0
     v_sub = v_sub + v0
-    a_sub = acc(x_sub, v_sub, t_sub)
+    a_sub = acc(x_sub, v_sub, t_sub, **acc_kwargs)
     return a_sub
 
 
@@ -165,6 +162,8 @@ def initialize_gs(b0, b1, b2, b3, b4, b5, b6):
 
 
 def predictor_corrector_iteration(
+    acc,
+    acc_kwargs,
     b0,
     b1,
     b2,
@@ -199,7 +198,7 @@ def predictor_corrector_iteration(
     #######################################################
     n = 1
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g0
     gk = a_sub
@@ -211,7 +210,7 @@ def predictor_corrector_iteration(
 
     n = 2
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g1
     gk = a_sub
@@ -225,7 +224,7 @@ def predictor_corrector_iteration(
 
     n = 3
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g2
     gk = a_sub
@@ -240,7 +239,7 @@ def predictor_corrector_iteration(
 
     n = 4
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g3
     gk = a_sub
@@ -256,7 +255,7 @@ def predictor_corrector_iteration(
 
     n = 5
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g4
     gk = a_sub
@@ -277,7 +276,7 @@ def predictor_corrector_iteration(
 
     n = 6
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g5
     gk = a_sub
@@ -303,7 +302,7 @@ def predictor_corrector_iteration(
 
     n = 7
     a_sub = substep_acceleration(
-        b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
     )
     tmp = g6
     gk = a_sub
@@ -372,7 +371,9 @@ def predictor_corrector_iteration(
     )
 
 
-def predictor_corrector(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt):
+def predictor_corrector(
+    acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
+):
     predictor_corrector_error = 1e300
     g0, g1, g2, g3, g4, g5, g6 = initialize_gs(b0, b1, b2, b3, b4, b5, b6)
     csb0 = jnp.zeros_like(b0)
@@ -383,9 +384,11 @@ def predictor_corrector(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt)
     csb5 = jnp.zeros_like(b5)
     csb6 = jnp.zeros_like(b6)
 
+    iteration = jax.tree_util.Partial(predictor_corrector_iteration, acc, acc_kwargs)
+
     def iterate(carry, scan_over):
         def iteration_needed(carry):
-            return predictor_corrector_iteration(*carry)
+            return iteration(*carry)
 
         def iteration_not_needed(carry):
             return carry
@@ -621,6 +624,8 @@ def predict_next_step(
 
 
 def ias15_step(
+    acc,
+    acc_kwargs,
     x0,
     v0,
     a0,
@@ -644,6 +649,7 @@ def ias15_step(
     dt,
     tf,
 ):
+    dt = jnp.copysign(dt, tf - t)
     (
         b0,
         b1,
@@ -675,7 +681,9 @@ def ias15_step(
         dt,
         a_sub,
         predictor_corrector_error,
-    ) = predictor_corrector(b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt)
+    ) = predictor_corrector(
+        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
+    )
 
     # global error
     maxak = jnp.max(jnp.abs(a_sub))
@@ -726,9 +734,14 @@ def ias15_step(
         (x0, csx, v0, csv, b0, b1, b2, b3, b4, b5, b6, a0, dt, t),
     )
 
-    dt_new = jnp.where(jnp.abs(tf - (t)) < jnp.abs(dt_new), tf - (t), dt_new)
+    remaining_time = tf - (t)
+    tmp = dt_new
+    dt_new = jnp.where(
+        jnp.abs(remaining_time) < jnp.abs(dt_new), remaining_time, dt_new
+    )
+    dt_new = jnp.where(dt_new == 0, tmp, dt_new)  # don't let the next dt go to zero
 
-    a0 = acc(x0, v0, t)
+    a0 = acc(x0, v0, t, **acc_kwargs)
     ratio = dt_new / dt
     e0, e1, e2, e3, e4, e5, e6, b0, b1, b2, b3, b4, b5, b6 = predict_next_step(
         ratio,
@@ -788,6 +801,8 @@ def ias15_step(
 
 
 def ias15_integrate(
+    acc,
+    acc_kwargs,
     x0,
     v0,
     a0,
@@ -811,11 +826,13 @@ def ias15_integrate(
     dt,
     tf,
 ):
+    step = jax.tree_util.Partial(ias15_step, acc, acc_kwargs)
+
     def iterate(carry, scan_over):
         remaining_time = carry[-1] - carry[-3]
 
         def step_needed(carry):
-            return ias15_step(*carry)
+            return step(*carry)
 
         def reached_end(carry):
             return carry
@@ -850,8 +867,115 @@ def ias15_integrate(
             tf,
         ),
         None,
-        length=5000,
+        length=10000,
     )[0]
+
+
+def ias15_integrate_multiple(
+    acc,
+    acc_kwargs,
+    x0,
+    v0,
+    a0,
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    e0,
+    e1,
+    e2,
+    e3,
+    e4,
+    e5,
+    e6,
+    csx,
+    csv,
+    t0,
+    dt,
+    tfs,
+):
+    integrate = jax.tree_util.Partial(ias15_integrate, acc, acc_kwargs)
+
+    def scan_fn(carry, scan_over):
+        (
+            x0,
+            v0,
+            a0,
+            b0,
+            b1,
+            b2,
+            b3,
+            b4,
+            b5,
+            b6,
+            e0,
+            e1,
+            e2,
+            e3,
+            e4,
+            e5,
+            e6,
+            csx,
+            csv,
+            t0,
+            dt,
+            tf,
+        ) = integrate(*carry, scan_over)
+        return (
+            x0,
+            v0,
+            a0,
+            b0,
+            b1,
+            b2,
+            b3,
+            b4,
+            b5,
+            b6,
+            e0,
+            e1,
+            e2,
+            e3,
+            e4,
+            e5,
+            e6,
+            csx,
+            csv,
+            t0,
+            dt,
+        ), (x0, v0, t0)
+
+    s = jax.lax.scan(
+        scan_fn,
+        (
+            x0,
+            v0,
+            a0,
+            b0,
+            b1,
+            b2,
+            b3,
+            b4,
+            b5,
+            b6,
+            e0,
+            e1,
+            e2,
+            e3,
+            e4,
+            e5,
+            e6,
+            csx,
+            csv,
+            t0,
+            dt,
+        ),
+        tfs,
+    )
+    return s[1]
 
 
 # Q = jnp.array([[0.05626256053692214646565,0.0015827378590854146249952,0.00002968296153695723135209,8.350197101940939341306e-7,2.818820819659103805192e-8,1.057293846725378882528e-9,4.249004218335851037836e-11,1.792948927918187883134e-12,7.84590314640274393589e-14],

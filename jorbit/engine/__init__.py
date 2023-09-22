@@ -36,22 +36,3 @@ import jax
 from jax.config import config
 
 config.update("jax_enable_x64", True)
-
-from jorbit.engine.accelerations import *
-from jorbit.engine.ephemeris import *
-from jorbit.engine.gauss_jackson_likelihood import *
-from jorbit.engine.sky_projection import *
-
-j_planet_state_helper = jax.jit(planet_state_helper)
-j_planet_state = jax.jit(planet_state)
-j_gr_helper = jax.jit(gr_helper)
-j_gr = jax.jit(gr)
-j_newtonian_helper = jax.jit(newtonian_helper)
-j_newtonian = jax.jit(newtonian)
-j_acceleration = jax.jit(acceleration)
-j_on_sky = jax.jit(on_sky)
-j_sky_error = jax.jit(sky_error)
-j_barycentricmeanecliptic_to_icrs = jax.jit(barycentricmeanecliptic_to_icrs)
-j_icrs_to_barycentricmeanecliptic = jax.jit(icrs_to_barycentricmeanecliptic)
-j_cart_to_elements = jax.jit(cart_to_elements)
-j_elements_to_cart = jax.jit(elements_to_cart)
