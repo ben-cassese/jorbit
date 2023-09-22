@@ -20,7 +20,7 @@ from jorbit.data.constants import (
     Y4_D,
 )
 
-from jorbit.engine.ephemeris import planet_state
+from jorbit.engine.ephemeris import perturber_positions
 from jorbit.engine.yoshida_integrator import yoshida_integrate
 
 
