@@ -32,7 +32,7 @@ class Particle:
         free_gm=False,
         prior=None,
     ):
-        assert time is not None, "Must provide an epoch for the particle"
+        assert time is not None, "Must provide a single epoch for the particle"
         if isinstance(time, type(Time("2023-01-01"))):
             self._time = time.tdb.jd
         elif isinstance(time, float):
@@ -167,6 +167,11 @@ class Particle:
     @property
     def name(self):
         return self._name
+
+    @name.setter
+    def name(self, value):
+        assert type(value) == str, "Name must be a string"
+        self._name = value
 
     @property
     def free_orbit(self):

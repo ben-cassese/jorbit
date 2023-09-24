@@ -404,33 +404,40 @@ class Observations:
                     f.write(f"'{t}'\n")
                 return "horizons_query.txt"
 
-        query = construct_horizons_query(target, center, times)
-        with open(query) as f:
-            url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
-            r = requests.post(url, data={"format": "text"}, files={"input": f})
-            l = r.text.split("\n")
-        start = l.index("$$SOE")
-        end = l.index("$$EOE")
-        data = pd.read_csv(
-            io.StringIO("\n".join(l[start + 1 : end])),
-            header=None,
-            names=[
-                "JDTDB",
-                "Cal",
-                "x",
-                "y",
-                "z",
-                "vx",
-                "vy",
-                "vz",
-                "LT",
-                "RG",
-                "RR",
-                "_",
-            ],
-        )
-        os.remove("horizons_query.txt")
-        return data
+        try:
+            query = construct_horizons_query(target, center, times)
+            with open(query) as f:
+                url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
+                r = requests.post(url, data={"format": "text"}, files={"input": f})
+                l = r.text.split("\n")
+            start = l.index("$$SOE")
+            end = l.index("$$EOE")
+            data = pd.read_csv(
+                io.StringIO("\n".join(l[start + 1 : end])),
+                header=None,
+                names=[
+                    "JDTDB",
+                    "Cal",
+                    "x",
+                    "y",
+                    "z",
+                    "vx",
+                    "vy",
+                    "vz",
+                    "LT",
+                    "RG",
+                    "RR",
+                    "_",
+                ],
+            )
+            os.remove("horizons_query.txt")
+            return data
+        except:
+            try:
+                os.remove("horizons_query.txt")
+            except:
+                pass
+            raise ValueError("Vectors query failed, check inputs.")
 
     @staticmethod
     def horizons_bulk_astrometry_query(target, center, times, skip_daylight=False):
@@ -456,48 +463,55 @@ class Observations:
                     f.write(f"'{t.jd}'\n")
                 return "horizons_query.txt"
 
-        query = construct_horizons_query(target=target, center=center, times=times)
-        with open(query) as f:
-            url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
-            r = requests.post(url, data={"format": "text"}, files={"input": f})
-            l = r.text.split("\n")
-        start = l.index("$$SOE")
-        end = l.index("$$EOE")
+        try:
+            query = construct_horizons_query(target=target, center=center, times=times)
+            with open(query) as f:
+                url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
+                r = requests.post(url, data={"format": "text"}, files={"input": f})
+                l = r.text.split("\n")
+            start = l.index("$$SOE")
+            end = l.index("$$EOE")
 
-        cleaned = []
-        for line in l[start + 1 : end]:
-            if "Daylight Cut-off Requested" in line:
-                continue
-            elif line == "":
-                continue
-            cleaned.append(line)
-        cleaned
+            cleaned = []
+            for line in l[start + 1 : end]:
+                if "Daylight Cut-off Requested" in line:
+                    continue
+                elif line == "":
+                    continue
+                cleaned.append(line)
+            cleaned
 
-        data = pd.read_csv(
-            io.StringIO("\n".join(cleaned)),
-            header=None,
-            names=[
-                "Cal",
-                "twilight_flag",
-                "moon_flag",
-                "RA",
-                "Dec",
-                "RA 3sig",
-                "DEC 3sig",
-                "SMAA_3sig",
-                "SMIA_3sig",
-                "Theta",
-                "Area_3sig",
-                "_",
-            ],
-        )
-        os.remove("horizons_query.txt")
-
-        if len(data) != len(times):
-            raise ValueError(
-                "Some requested times were skipped, check skip_daylight flag"
+            data = pd.read_csv(
+                io.StringIO("\n".join(cleaned)),
+                header=None,
+                names=[
+                    "Cal",
+                    "twilight_flag",
+                    "moon_flag",
+                    "RA",
+                    "Dec",
+                    "RA 3sig",
+                    "DEC 3sig",
+                    "SMAA_3sig",
+                    "SMIA_3sig",
+                    "Theta",
+                    "Area_3sig",
+                    "_",
+                ],
             )
-        return data
+            os.remove("horizons_query.txt")
+
+            if len(data) != len(times):
+                raise ValueError(
+                    "Some requested times were skipped, check skip_daylight flag"
+                )
+            return data
+        except:
+            try:
+                os.remove("horizons_query.txt")
+            except:
+                pass
+            raise ValueError("Astrometry query failed, check inputs.")
 
     @property
     def ra(self):

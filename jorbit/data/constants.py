@@ -248,6 +248,25 @@ IAS15_D = jnp.array(
 IAS15_EPSILON = 10 ** (-9)
 IAS15_MIN_DT = 0.0001
 IAS15_SAFETY_FACTOR = 0.25
+IAS15_INIT = {
+    "dt": 0.0001,
+    "b0": jnp.zeros((1, 3)),
+    "b1": jnp.zeros((1, 3)),
+    "b2": jnp.zeros((1, 3)),
+    "b3": jnp.zeros((1, 3)),
+    "b4": jnp.zeros((1, 3)),
+    "b5": jnp.zeros((1, 3)),
+    "b6": jnp.zeros((1, 3)),
+    "e0": jnp.zeros((1, 3)),
+    "e1": jnp.zeros((1, 3)),
+    "e2": jnp.zeros((1, 3)),
+    "e3": jnp.zeros((1, 3)),
+    "e4": jnp.zeros((1, 3)),
+    "e5": jnp.zeros((1, 3)),
+    "e6": jnp.zeros((1, 3)),
+    "csx": jnp.zeros((1, 3)),
+    "csv": jnp.zeros((1, 3)),
+}
 
 ################################################################################
 # Gauss-Jackson constants
