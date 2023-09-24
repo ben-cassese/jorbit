@@ -5,6 +5,7 @@ config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jorbit.data.constants import SPEED_OF_LIGHT
+from jorbit.engine.ephemeris import perturber_positions, perturber_states
 
 
 def gr_helper(x, v, planet_xs, planet_vs, planet_as, mu):
@@ -502,3 +503,63 @@ def acceleration(
     A += jax.lax.cond(jnp.sum(gms) > 0, true_func, false_func)
 
     return A
+
+
+def acceleration_at_time(
+    xs,
+    vs,
+    gms,
+    t,
+    planet_params,
+    asteroid_params,
+    planet_gms=jnp.array([0]),
+    asteroid_gms=jnp.array([0]),
+    use_GR=True,
+):
+    def einstein():
+        planet_xs, planet_vs, planet_as = perturber_states(
+            planet_params=planet_params,
+            times=t,
+        )
+        return planet_xs, planet_vs, planet_as
+
+    def newton():
+        (planet_xs,) = perturber_positions(
+            planet_params=planet_params,
+            times=t,
+        )
+        return planet_xs, jnp.zeros_like(planet_xs), jnp.zeros_like(planet_xs)
+
+    planet_xs, planet_vs, planet_as = jax.lax.cond(use_GR, einstein, newton)
+
+    (asteroid_xs,) = perturber_positions(
+        planet_params=asteroid_params,
+        times=t,
+    )
+
+    return acceleration(
+        xs=xs,
+        vs=vs,
+        gms=gms,
+        planet_xs=planet_xs,
+        planet_vs=planet_vs,
+        planet_as=planet_as,
+        asteroid_xs=asteroid_xs,
+        planet_gms=planet_gms,
+        asteroid_gms=asteroid_gms,
+        use_GR=use_GR,
+    )
+
+
+#     acceleration(
+#     xs,
+#     vs,
+#     gms,
+#     planet_xs,
+#     planet_vs,
+#     planet_as,
+#     asteroid_xs,
+#     planet_gms=jnp.array([0]),
+#     asteroid_gms=jnp.array([0]),
+#     use_GR=True,
+# )
