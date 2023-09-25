@@ -39,7 +39,24 @@ def sqrt7(a):
 
 
 def substep_acceleration(
-    acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+    acc,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    csx,
+    csv,
+    x0,
+    v0,
+    a0,
+    t,
+    dt,
+    n,
 ):
     t_sub = t + IAS15_H[n] * dt
     x_sub = (
@@ -131,7 +148,7 @@ def substep_acceleration(
     )
     x_sub = x_sub + x0
     v_sub = v_sub + v0
-    a_sub = acc(x_sub, v_sub, t_sub, **acc_kwargs)
+    a_sub = acc(x=x_sub, v=v_sub, time=t_sub, **acc_fixed_kwargs, **acc_free_kwargs)
     return a_sub
 
 
@@ -163,7 +180,8 @@ def initialize_gs(b0, b1, b2, b3, b4, b5, b6):
 
 def predictor_corrector_iteration(
     acc,
-    acc_kwargs,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
     b0,
     b1,
     b2,
@@ -198,7 +216,24 @@ def predictor_corrector_iteration(
     #######################################################
     n = 1
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g0
     gk = a_sub
@@ -210,7 +245,24 @@ def predictor_corrector_iteration(
 
     n = 2
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g1
     gk = a_sub
@@ -224,7 +276,24 @@ def predictor_corrector_iteration(
 
     n = 3
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g2
     gk = a_sub
@@ -239,7 +308,24 @@ def predictor_corrector_iteration(
 
     n = 4
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g3
     gk = a_sub
@@ -255,7 +341,24 @@ def predictor_corrector_iteration(
 
     n = 5
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g4
     gk = a_sub
@@ -276,7 +379,24 @@ def predictor_corrector_iteration(
 
     n = 6
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g5
     gk = a_sub
@@ -302,7 +422,24 @@ def predictor_corrector_iteration(
 
     n = 7
     a_sub = substep_acceleration(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt, n
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
+        n,
     )
     tmp = g6
     gk = a_sub
@@ -372,7 +509,23 @@ def predictor_corrector_iteration(
 
 
 def predictor_corrector(
-    acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
+    acc,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
+    b0,
+    b1,
+    b2,
+    b3,
+    b4,
+    b5,
+    b6,
+    csx,
+    csv,
+    x0,
+    v0,
+    a0,
+    t,
+    dt,
 ):
     predictor_corrector_error = 1e300
     g0, g1, g2, g3, g4, g5, g6 = initialize_gs(b0, b1, b2, b3, b4, b5, b6)
@@ -384,7 +537,9 @@ def predictor_corrector(
     csb5 = jnp.zeros_like(b5)
     csb6 = jnp.zeros_like(b6)
 
-    iteration = jax.tree_util.Partial(predictor_corrector_iteration, acc, acc_kwargs)
+    iteration = jax.tree_util.Partial(
+        predictor_corrector_iteration, acc, acc_fixed_kwargs, acc_free_kwargs
+    )
 
     def iterate(carry, scan_over):
         def iteration_needed(carry):
@@ -625,7 +780,8 @@ def predict_next_step(
 
 def ias15_step(
     acc,
-    acc_kwargs,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
     x0,
     v0,
     a0,
@@ -682,7 +838,23 @@ def ias15_step(
         a_sub,
         predictor_corrector_error,
     ) = predictor_corrector(
-        acc, acc_kwargs, b0, b1, b2, b3, b4, b5, b6, csx, csv, x0, v0, a0, t, dt
+        acc,
+        acc_fixed_kwargs,
+        acc_free_kwargs,
+        b0,
+        b1,
+        b2,
+        b3,
+        b4,
+        b5,
+        b6,
+        csx,
+        csv,
+        x0,
+        v0,
+        a0,
+        t,
+        dt,
     )
 
     # global error
@@ -741,7 +913,7 @@ def ias15_step(
     )
     dt_new = jnp.where(dt_new == 0, tmp, dt_new)  # don't let the next dt go to zero
 
-    a0 = acc(x0, v0, t, **acc_kwargs)
+    a0 = acc(x=x0, v=v0, time=t, **acc_fixed_kwargs, **acc_free_kwargs)
     ratio = dt_new / dt
     e0, e1, e2, e3, e4, e5, e6, b0, b1, b2, b3, b4, b5, b6 = predict_next_step(
         ratio,
@@ -802,7 +974,8 @@ def ias15_step(
 
 def ias15_integrate(
     acc,
-    acc_kwargs,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
     x0,
     v0,
     a0,
@@ -826,7 +999,7 @@ def ias15_integrate(
     dt,
     tf,
 ):
-    step = jax.tree_util.Partial(ias15_step, acc, acc_kwargs)
+    step = jax.tree_util.Partial(ias15_step, acc, acc_fixed_kwargs, acc_free_kwargs)
 
     def iterate(carry, scan_over):
         remaining_time = carry[-1] - carry[-3]
@@ -873,7 +1046,8 @@ def ias15_integrate(
 
 def ias15_integrate_multiple(
     acc,
-    acc_kwargs,
+    acc_fixed_kwargs,
+    acc_free_kwargs,
     x0,
     v0,
     a0,
@@ -897,7 +1071,9 @@ def ias15_integrate_multiple(
     dt,
     tfs,
 ):
-    integrate = jax.tree_util.Partial(ias15_integrate, acc, acc_kwargs)
+    integrate = jax.tree_util.Partial(
+        ias15_integrate, acc, acc_fixed_kwargs, acc_free_kwargs
+    )
 
     def scan_fn(carry, scan_over):
         (

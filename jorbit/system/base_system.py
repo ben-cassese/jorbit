@@ -40,6 +40,13 @@ class BaseSystem(ABC):
         self._infer_epoch = infer_epoch
         self._verbose = verbose
 
+        if type(self._fit_planet_gms) == bool:
+            self._fit_planet_gms = jnp.array([self._fit_planet_gms] * len(planets))
+        if type(self._fit_asteroid_gms) == bool:
+            self._fit_asteroid_gms = jnp.array(
+                [self._fit_asteroid_gms] * len(asteroids)
+            )
+
         for i, p in enumerate(self._particles):
             if p.name == "":
                 p.name = f"Particle {i}"
@@ -84,6 +91,18 @@ class BaseSystem(ABC):
             " they are each unique and not 'Particle (int < # of particles in the"
             " system)'"
         )
+
+        if self._fit_planet_gms is not False:
+            assert len(self._fit_planet_gms) == len(self._planets), (
+                "fit_planet_gms must be a boolean or an array of booleans with"
+                " length equal to the number of planets"
+            )
+
+        if self._fit_asteroid_gms is not False:
+            assert len(self._fit_asteroid_gms) == len(self._asteroids), (
+                "fit_asteroid_gms must be a boolean or an array of booleans with"
+                " length equal to the number of asteroids"
+            )
 
     def _initialize_planets(self):
         earlys = []

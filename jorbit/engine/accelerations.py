@@ -506,49 +506,26 @@ def acceleration(
 
 
 def acceleration_at_time(
-    xs,
-    vs,
-    gms,
-    t,
-    planet_params,
-    asteroid_params,
-    planet_gms=jnp.array([0]),
-    asteroid_gms=jnp.array([0]),
-    use_GR=True,
+    x, v, gm, time, planet_params, asteroid_params, planet_gms, asteroid_gms
 ):
-    def einstein():
-        planet_xs, planet_vs, planet_as = perturber_states(
-            planet_params=planet_params,
-            times=t,
-        )
-        return planet_xs, planet_vs, planet_as
-
-    def newton():
-        (planet_xs,) = perturber_positions(
-            planet_params=planet_params,
-            times=t,
-        )
-        return planet_xs, jnp.zeros_like(planet_xs), jnp.zeros_like(planet_xs)
-
-    planet_xs, planet_vs, planet_as = jax.lax.cond(use_GR, einstein, newton)
-
-    (asteroid_xs,) = perturber_positions(
-        planet_params=asteroid_params,
-        times=t,
+    planet_xs, planet_vs, planet_as = perturber_states(
+        planet_params=planet_params, times=jnp.array([time])
     )
-
+    asteroid_xs = perturber_positions(
+        planet_params=asteroid_params, times=jnp.array([time])
+    )
     return acceleration(
-        xs=xs,
-        vs=vs,
-        gms=gms,
+        xs=x[:, None, :],
+        vs=v[:, None, :],
+        gms=jnp.array([gm]),
         planet_xs=planet_xs,
         planet_vs=planet_vs,
         planet_as=planet_as,
         asteroid_xs=asteroid_xs,
         planet_gms=planet_gms,
         asteroid_gms=asteroid_gms,
-        use_GR=use_GR,
-    )
+        use_GR=True,
+    )[:, 0, :]
 
 
 #     acceleration(
