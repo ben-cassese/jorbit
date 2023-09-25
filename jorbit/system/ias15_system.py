@@ -14,8 +14,15 @@ class IAS15System(BaseSystem):
     def __init__(self, particles, **kwargs):
         super().__init__(particles, **kwargs)
 
-        self._particles, self._epoch = self._initialize_particles(particles)
-
+        self._particles, self._epoch = IAS15System._initialize_particles(
+            particles=self._particles,
+            infer_epoch=self._infer_epoch,
+            verbose=self._verbose,
+            planet_params=self._planet_params,
+            asteroid_params=self._asteroid_params,
+            planet_gms=self._planet_gms,
+            asteroid_gms=self._asteroid_gms,
+        )
         (
             self._tracer_xs,
             self._tracer_vs,
@@ -29,8 +36,10 @@ class IAS15System(BaseSystem):
             self._free_massive_gm_inds,
             self._free_planet_gm_inds,
             self._free_asteroid_gm_inds,
-        ) = self._setup_free_params(
-            self._particles, self._fit_planet_gms, self._fit_asteroid_gms
+        ) = IAS15System._setup_free_params(
+            particles=self._particles,
+            fit_planet_gms=self._fit_planet_gms,
+            fit_asteroid_gms=self._fit_asteroid_gms,
         )
 
         (
@@ -54,8 +63,110 @@ class IAS15System(BaseSystem):
             self._trailing_massive_uncertainty,
             self._trailing_massive_times,
             self._trailing_massive_observer_positions,
-        ) = self.setup_observations(self._particles, self._epoch)
+        ) = IAS15System._setup_observations(
+            particles=self._particles, epoch=self._epoch
+        )
 
+    ####################################################################################
+    @staticmethod
+    def _initialize_particles(
+        particles,
+        infer_epoch,
+        verbose,
+        planet_params,
+        asteroid_params,
+        planet_gms,
+        asteroid_gms,
+    ):
+        if infer_epoch:
+            # find the mean epoch of all observations, weighted by the precision of those
+            # observations. There might be a better way to do this.
+            # Also, right now I'm forcing the whole system to have a common epoch. In theory
+            # the tracer particles could all have their own optimial epochs
+            times = []
+            weights = []
+            for p in particles:
+                if p.observations != None:
+                    times.append(p.observations.times)
+                    weights.append(1 / p.observations.astrometric_uncertainties**2)
+            if len(times) > 0:
+                times = jnp.concatenate(times)
+                weights = jnp.concatenate(weights)
+                epoch = jnp.sum(times * weights) / jnp.sum(weights)
+
+                # TODO remove this, just testing issues with trailing observations
+                # epoch = jnp.min(times)
+                # epoch = jnp.min(times) - 1e-2
+                # epoch = jnp.max(times) + 1e-2
+
+            else:
+                epoch = particles[0].time
+
+        # _input_checks already verified all particles have same epoch
+        else:
+            epoch = particles[0].time
+
+        # move each particles to the mean epoch. To do this, we neglect the influence of
+        # massive particles and evolve each particle only under the influence of fixed
+        # solar system perturbers
+        modified_particles = []
+        obs_mask = []
+        if verbose and infer_epoch:
+            print("Moving particles to common epoch")
+        j = jax.jit(ias15_integrate_multiple)
+        for i, p in enumerate(particles):
+            if p.time != epoch:
+                a0 = acceleration_at_time(
+                    jnp.array([p.x]),
+                    jnp.array([p.v]),
+                    jnp.array([0.0]),
+                    p.time,
+                    planet_params,
+                    asteroid_params,
+                    planet_gms,
+                    asteroid_gms,
+                )
+                x, v, t = j(
+                    x0=jnp.array([p.x]),
+                    v0=jnp.array([p.v]),
+                    a0=a0,
+                    acc=jax.tree_util.Partial(acceleration_at_time),
+                    acc_fixed_kwargs={
+                        "gm": jnp.array([0.0]),
+                        "planet_params": planet_params,
+                        "asteroid_params": asteroid_params,
+                        "planet_gms": planet_gms,
+                        "asteroid_gms": asteroid_gms,
+                    },
+                    acc_free_kwargs={},
+                    t0=p.time,
+                    tfs=jnp.array([epoch]),
+                    **IAS15_INIT,
+                )
+                x = x[0, 0]
+                v = v[0, 0]
+            else:
+                x = p.x
+                v = p.v
+
+            new_particle = Particle(
+                x=x,
+                v=v,
+                elements=None,
+                gm=p.gm,
+                time=epoch,
+                observations=p.observations,
+                earliest_time=p.earliest_time,
+                latest_time=p.latest_time,
+                name=p.name,
+                free_orbit=p.free_orbit,
+                free_gm=p.free_gm,
+            )
+            modified_particles.append(new_particle)
+
+        return modified_particles, epoch
+
+    @staticmethod
     def _setup_free_params(particles, fit_planet_gms, fit_asteroid_gms):
         ntracers = 0
         nmassive = 0
@@ -99,11 +210,11 @@ class IAS15System(BaseSystem):
                 seen_massive += 1
 
         free_planet_gm_inds = []
-        for i, p in fit_planet_gms:
+        for i, p in enumerate(fit_planet_gms):
             if p:
                 free_planet_gm_inds.append(i)
         free_asteroid_gm_inds = []
-        for i, p in fit_asteroid_gms:
+        for i, p in enumerate(fit_asteroid_gms):
             if p:
                 free_asteroid_gm_inds.append(i)
 
@@ -122,89 +233,8 @@ class IAS15System(BaseSystem):
             jnp.array(free_asteroid_gm_inds),
         )
 
-    def _initialize_particles(self, particles):
-        if self._infer_epoch:
-            # find the mean epoch of all observations, weighted by the precision of those
-            # observations. There might be a better way to do this.
-            # Also, right now I'm forcing the whole system to have a common epoch. In theory
-            # the tracer particles could all have their own optimial epochs
-            times = []
-            weights = []
-            for p in particles:
-                if p.observations != None:
-                    times.append(p.observations.times)
-                    weights.append(1 / p.observations.astrometric_uncertainties**2)
-            if len(times) > 0:
-                times = jnp.concatenate(times)
-                weights = jnp.concatenate(weights)
-                epoch = jnp.sum(times * weights) / jnp.sum(weights)
-
-                # TODO remove this, just testing issues with trailing observations
-                # epoch = jnp.min(times)
-                # epoch = jnp.min(times) - 1e-2
-                # epoch = jnp.max(times) + 1e-2
-
-            else:
-                epoch = particles[0].time
-
-        # _input_checks already verified all particles have same epoch
-        else:
-            epoch = particles[0].time
-
-        # move each particles to the mean epoch. To do this, we neglect the influence of
-        # massive particles and evolve each particle only under the influence of fixed
-        # solar system perturbers
-        modified_particles = []
-        obs_mask = []
-        if self._verbose and self._infer_epoch:
-            print("Moving particles to common epoch")
-        j = jax.jit(ias15_integrate_multiple)
-        for i, p in enumerate(particles):
-            if p.time != epoch:
-                a0 = acceleration_at_time(
-                    jnp.array([p.x]),
-                    jnp.array([p.v]),
-                    jnp.array([0.0]),
-                    p.t,
-                    self._planet_params,
-                    self._asteroid_params,
-                    self._planet_gms,
-                    self._asteroid_gms,
-                    use_GR=True,
-                )
-
-                x, v, t = j(
-                    x0=jnp.array([p.x]),
-                    v0=jnp.array([p.v]),
-                    a0=a0,
-                    t0=p.t,
-                    times=jnp.array([epoch]),
-                    **IAS15_INIT,
-                )
-                x = x[0]
-                v = v[0]
-            else:
-                x = p.x
-                v = p.v
-
-            new_particle = Particle(
-                x=x,
-                v=v,
-                elements=None,
-                gm=p.gm,
-                time=epoch,
-                observations=p.observations,
-                earliest_time=p.earliest_time,
-                latest_time=p.latest_time,
-                name=p.name,
-                free_orbit=p.free_orbit,
-                free_gm=p.free_gm,
-            )
-            modified_particles.append(new_particle)
-
-        return modified_particles, epoch
-
-    def setup_observations(particles, epoch):
+    @staticmethod
+    def _setup_observations(particles, epoch):
         most_leading_obs = 0
         most_trailing_obs = 0
         ntracers = 0
@@ -212,67 +242,77 @@ class IAS15System(BaseSystem):
             if p.gm == 0.0 and not p.free_gm:
                 ntracers += 1
                 if p.observations is not None:
-                    leading = jnp.sum(p.observations.times.jd > epoch)
+                    leading = jnp.sum(p.observations.times > epoch)
                     most_leading_obs = max(most_leading_obs, leading)
-                    trailing = jnp.sum(p.observations.times.jd < epoch)
+                    trailing = jnp.sum(p.observations.times < epoch)
                     most_trailing_obs = max(most_trailing_obs, trailing)
 
-        trailing_tracer_ra = jnp.zeros((most_trailing_obs, ntracers))
-        trailing_tracer_dec = jnp.zeros((most_trailing_obs, ntracers))
-        trailing_tracer_uncertainty = jnp.ones((most_trailing_obs, ntracers)) * 999.0
-        trailing_tracer_times = jnp.ones((most_trailing_obs, ntracers)) * 999.0
+        print(f"most leading obs: {most_leading_obs}")
+        print(f"most trailing obs: {most_trailing_obs}")
+        trailing_tracer_ra = jnp.zeros((ntracers, most_trailing_obs))
+        trailing_tracer_dec = jnp.zeros((ntracers, most_trailing_obs))
+        trailing_tracer_uncertainty = jnp.ones((ntracers, most_trailing_obs)) * 999.0
+        trailing_tracer_times = jnp.ones((ntracers, most_trailing_obs)) * 999.0
         trailing_tracer_observer_positions = (
-            jnp.ones((most_trailing_obs, ntracers, 3)) * 999.0
+            jnp.ones((ntracers, most_trailing_obs, 3)) * 999.0
         )
-        leading_tracer_ra = jnp.zeros((most_leading_obs, ntracers))
-        leading_tracer_dec = jnp.zeros((most_leading_obs, ntracers))
-        leading_tracer_uncertainty = jnp.ones((most_leading_obs, ntracers)) * 999.0
-        leading_tracer_times = jnp.ones((most_leading_obs, ntracers)) * 999.0
+        leading_tracer_ra = jnp.zeros((ntracers, most_leading_obs))
+        leading_tracer_dec = jnp.zeros((ntracers, most_leading_obs))
+        leading_tracer_uncertainty = jnp.ones((ntracers, most_leading_obs)) * 999.0
+        leading_tracer_times = jnp.ones((ntracers, most_leading_obs)) * 999.0
         leading_tracer_observer_positions = (
-            jnp.ones((most_leading_obs, ntracers, 3)) * 999.0
+            jnp.ones((ntracers, most_leading_obs, 3)) * 999.0
         )
 
+        print(f"leading tracer ra shape: {leading_tracer_ra.shape}")
+        i = 0
         for p in particles:
             if p.gm == 0.0 and not p.free_gm:
                 if p.observations is not None:
-                    leading = jnp.sum(p.observations.times.jd > epoch)
-                    trailing = jnp.sum(p.observations.times.jd < epoch)
+                    leading = jnp.sum(p.observations.times > epoch)
+                    trailing = jnp.sum(p.observations.times < epoch)
+                    print(f"leading: {leading}")
+                    print(f"trailing: {trailing}")
                     if leading > 0:
-                        leading_tracer_ra = leading_tracer_ra.at[
-                            :leading, ntracers
-                        ].set(p.observations.ra)
-                        leading_tracer_dec = leading_tracer_dec.at[
-                            :leading, ntracers
-                        ].set(p.observations.dec)
+                        mask = p.observations.times > epoch
+                        leading_tracer_ra = leading_tracer_ra.at[i, :leading].set(
+                            p.observations.ra[mask]
+                        )
+                        leading_tracer_dec = leading_tracer_dec.at[i, :leading].set(
+                            p.observations.dec[mask]
+                        )
                         leading_tracer_uncertainty = leading_tracer_uncertainty.at[
-                            :leading, ntracers
-                        ].set(p.observations.astrometric_uncertainty)
-                        leading_tracer_times = leading_tracer_times.at[
-                            :leading, ntracers
-                        ].set(p.observations.times.jd)
+                            i, :leading
+                        ].set(p.observations.astrometric_uncertainties[mask])
+                        leading_tracer_times = leading_tracer_times.at[i, :leading].set(
+                            p.observations.times[mask]
+                        )
                         leading_tracer_observer_positions = (
-                            leading_tracer_observer_positions.at[
-                                :leading, ntracers
-                            ].set(p.observations.observer_positions)
+                            leading_tracer_observer_positions.at[i, :leading].set(
+                                p.observations.observer_positions[mask]
+                            )
                         )
                     if trailing > 0:
-                        trailing_tracer_ra = trailing_tracer_ra.at[
-                            :trailing, ntracers
-                        ].set(p.observations.ra)
-                        trailing_tracer_dec = trailing_tracer_dec.at[
-                            :trailing, ntracers
-                        ].set(p.observations.dec)
-                        trailing_tracer_uncertainty = trailing_tracer_uncertainty.at[
-                            :trailing, ntracers
-                        ].set(p.observations.astrometric_uncertainty)
-                        trailing_tracer_times = trailing_tracer_times.at[
-                            :trailing, ntracers
-                        ].set(p.observations.times.jd)
-                        trailing_tracer_observer_positions = (
-                            trailing_tracer_observer_positions.at[
-                                :trailing, ntracers
-                            ].set(p.observations.observer_positions)
+                        mask = p.observations.times < epoch
+                        trailing_tracer_ra = trailing_tracer_ra.at[i, :trailing].set(
+                            p.observations.ra[mask]
                         )
+                        trailing_tracer_dec = trailing_tracer_dec.at[i, :trailing].set(
+                            p.observations.dec[mask]
+                        )
+                        trailing_tracer_uncertainty = trailing_tracer_uncertainty.at[
+                            i, :trailing
+                        ].set(p.observations.astrometric_uncertainties[mask])
+                        trailing_tracer_times = trailing_tracer_times.at[
+                            i, :trailing
+                        ].set(p.observations.times[mask])
+                        trailing_tracer_observer_positions = (
+                            trailing_tracer_observer_positions.at[i, :trailing].set(
+                                p.observations.observer_positions[mask]
+                            )
+                        )
+                    i += 1
+        print(f"leading tracer ra shape: {leading_tracer_ra.shape}")
 
         most_leading_obs = 0
         most_trailing_obs = 0
@@ -281,67 +321,72 @@ class IAS15System(BaseSystem):
             if p.gm > 0.0 or p.free_gm:
                 nmassive += 1
                 if p.observations is not None:
-                    leading = jnp.sum(p.observations.times.jd > epoch)
+                    leading = jnp.sum(p.observations.times > epoch)
                     most_leading_obs = max(most_leading_obs, leading)
-                    trailing = jnp.sum(p.observations.times.jd < epoch)
+                    trailing = jnp.sum(p.observations.times < epoch)
                     most_trailing_obs = max(most_trailing_obs, trailing)
-
-        trailing_massive_ra = jnp.zeros((most_trailing_obs, nmassive))
-        trailing_massive_dec = jnp.zeros((most_trailing_obs, nmassive))
-        trailing_massive_uncertainty = jnp.ones((most_trailing_obs, nmassive)) * 999.0
-        trailing_massive_times = jnp.ones((most_trailing_obs, nmassive)) * 999.0
+        print(f"most leading obs: {most_leading_obs}")
+        print(f"most trailing obs: {most_trailing_obs}")
+        trailing_massive_ra = jnp.zeros((nmassive, most_trailing_obs))
+        trailing_massive_dec = jnp.zeros((nmassive, most_trailing_obs))
+        trailing_massive_uncertainty = jnp.ones((nmassive, most_trailing_obs)) * 999.0
+        trailing_massive_times = jnp.ones((nmassive, most_trailing_obs)) * 999.0
         trailing_massive_observer_positions = (
-            jnp.ones((most_trailing_obs, nmassive, 3)) * 999.0
+            jnp.ones((nmassive, most_trailing_obs, 3)) * 999.0
         )
-        leading_massive_ra = jnp.zeros((most_leading_obs, nmassive))
-        leading_massive_dec = jnp.zeros((most_leading_obs, nmassive))
-        leading_massive_uncertainty = jnp.ones((most_leading_obs, nmassive)) * 999.0
-        leading_massive_times = jnp.ones((most_leading_obs, nmassive)) * 999.0
+        leading_massive_ra = jnp.zeros((nmassive, most_leading_obs))
+        leading_massive_dec = jnp.zeros((nmassive, most_leading_obs))
+        leading_massive_uncertainty = jnp.ones((nmassive, most_leading_obs)) * 999.0
+        leading_massive_times = jnp.ones((nmassive, most_leading_obs)) * 999.0
         leading_massive_observer_positions = (
-            jnp.ones((most_leading_obs, nmassive, 3)) * 999.0
+            jnp.ones((nmassive, most_leading_obs, 3)) * 999.0
         )
 
+        i = 0
         for p in particles:
             if p.gm > 0.0 or p.free_gm:
                 if p.observations is not None:
-                    leading = jnp.sum(p.observations.times.jd > epoch)
-                    trailing = jnp.sum(p.observations.times.jd < epoch)
+                    leading = jnp.sum(p.observations.times > epoch)
+                    trailing = jnp.sum(p.observations.times < epoch)
                     if leading > 0:
-                        leading_massive_ra = leading_massive_ra.at[
-                            :leading, nmassive
-                        ].set(p.observations.ra)
-                        leading_massive_dec = leading_massive_dec.at[
-                            :leading, nmassive
-                        ].set(p.observations.dec)
+                        mask = p.observations.times > epoch
+                        leading_massive_ra = leading_massive_ra.at[i, :trailing].set(
+                            p.observations.ra[mask]
+                        )
+                        leading_massive_dec = leading_massive_dec.at[i, :trailing].set(
+                            p.observations.dec[mask]
+                        )
                         leading_massive_uncertainty = leading_massive_uncertainty.at[
-                            :leading, nmassive
-                        ].set(p.observations.astrometric_uncertainty)
+                            i, :trailing
+                        ].set(p.observations.astrometric_uncertainties[mask])
                         leading_massive_times = leading_massive_times.at[
-                            :leading, nmassive
-                        ].set(p.observations.times.jd)
+                            i, :trailing
+                        ].set(p.observations.times[mask])
                         leading_massive_observer_positions = (
-                            leading_massive_observer_positions.at[
-                                :leading, nmassive
-                            ].set(p.observations.observer_positions)
+                            leading_massive_observer_positions.at[i, :trailing].set(
+                                p.observations.observer_positions[mask]
+                            )
                         )
                     if trailing > 0:
-                        trailing_massive_ra = trailing_massive_ra.at[
-                            :trailing, nmassive
-                        ].set(p.observations.ra)
-                        trailing_massive_dec = trailing_massive_dec.at[
-                            :trailing, nmassive
-                        ].set(p.observations.dec)
-                        trailing_massive_uncertainty = trailing_massive_uncertainty.at[
-                            :trailing, nmassive
-                        ].set(p.observations.astrometric_uncertainty)
-                        trailing_massive_times = trailing_massive_times.at[
-                            :trailing, nmassive
-                        ].set(p.observations.times.jd)
-                        trailing_massive_observer_positions = (
-                            trailing_massive_observer_positions.at[
-                                :trailing, nmassive
-                            ].set(p.observations.observer_positions)
+                        mask = p.observations.times < epoch
+                        trailing_massive_ra = trailing_massive_ra.at[i, :trailing].set(
+                            p.observations.ra[mask]
                         )
+                        trailing_massive_dec = trailing_massive_dec.at[
+                            i, :trailing
+                        ].set(p.observations.dec[mask])
+                        trailing_massive_uncertainty = trailing_massive_uncertainty.at[
+                            i, :trailing
+                        ].set(p.observations.astrometric_uncertainties[mask])
+                        trailing_massive_times = trailing_massive_times.at[
+                            i, :trailing
+                        ].set(p.observations.times[mask])
+                        trailing_massive_observer_positions = (
+                            trailing_massive_observer_positions.at[i, :trailing].set(
+                                p.observations.observer_positions[mask]
+                            )
+                        )
+                    i += 1
 
         return (
             leading_tracer_ra,
@@ -374,7 +419,7 @@ class IAS15System(BaseSystem):
     def residuals(self):
         pass
 
-    def _generate_likelihood_func(self):
+    def _generate_likelihood_funcs(self):
         pass
 
     def propagate(self, t):
