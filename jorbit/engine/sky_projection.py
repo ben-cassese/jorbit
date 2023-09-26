@@ -74,8 +74,6 @@ def on_sky(
                 xz = carry
                 earth_distance = jnp.linalg.norm(xz - observer_position)
                 light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
-                # emitted_time = time - light_travel_time
-                # nudge = emitted_time - time
                 (
                     xz,
                     _,

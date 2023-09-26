@@ -248,7 +248,7 @@ IAS15_D = jnp.array(
 IAS15_EPSILON = 10 ** (-9)
 IAS15_MIN_DT = 0.0001
 IAS15_SAFETY_FACTOR = 0.25
-IAS15_INIT = {
+IAS15_INIT_SINGLE = {
     "dt": 0.0001,
     "b0": jnp.zeros((1, 3)),
     "b1": jnp.zeros((1, 3)),
