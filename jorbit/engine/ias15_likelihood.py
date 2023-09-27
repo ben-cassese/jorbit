@@ -90,10 +90,7 @@ def parser(
 
 
 def single_tracer_likelihood(
-    indiv_tracer_x,
-    indiv_tracer_v,
     t0,
-    indiv_tracer_obs_times,
     massive_x0,
     massive_v0,
     massive_gms,
@@ -101,6 +98,9 @@ def single_tracer_likelihood(
     asteroid_gms,
     planet_params,
     asteroid_params,
+    indiv_tracer_x,
+    indiv_tracer_v,
+    indiv_tracer_obs_times,
     indiv_tracer_observer_positions,
     indiv_tracer_planet_xs_at_obs,
     indiv_tracer_asteroid_xs_at_obs,

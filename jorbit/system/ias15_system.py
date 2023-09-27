@@ -467,35 +467,59 @@ class IAS15System(BaseSystem):
             perturber_positions, in_axes=(None, 0)
         )(asteroid_params, trailing_massive_times)
 
+        def pad_to_parallelize(arr, pad_value):
+            """
+            Fold arrays where the first index runs over particles into chunks that
+            can be parallelized over multiple devices
+            """
+            ndevices = jax.local_device_count()
+
+            nparticles = arr.shape[0]
+            other_dims = len(arr.shape[1:])
+
+            tmp = jnp.divmod(nparticles, ndevices)
+
+            chunks = tmp[0] + 1
+            needed_padding = ndevices - tmp[1]
+
+            padded_arr = jnp.pad(
+                arr,
+                tuple([(0, needed_padding)] + [(0, 0)] * other_dims),
+                constant_values=pad_value,
+            )
+
+            particles_per_device = padded_arr.shape[0] // ndevices
+            return padded_arr.reshape((ndevices, particles_per_device) + arr.shape[1:])
+
         return (
-            leading_tracer_ra,
-            leading_tracer_dec,
-            leading_tracer_astrometric_uncertainties,
-            leading_tracer_times,
-            leading_tracer_observer_positions,
-            leading_tracer_planet_xs_at_obs,
-            leading_tracer_asteroid_xs_at_obs,
-            trailing_tracer_ra,
-            trailing_tracer_dec,
-            trailing_tracer_astrometric_uncertainties,
-            trailing_tracer_times,
-            trailing_tracer_observer_positions,
-            trailing_tracer_planet_xs_at_obs,
-            trailing_tracer_asteroid_xs_at_obs,
-            leading_massive_ra,
-            leading_massive_dec,
-            leading_massive_astrometric_uncertainties,
-            leading_massive_times,
-            leading_massive_observer_positions,
-            leading_massive_planet_xs_at_obs,
-            leading_massive_asteroid_xs_at_obs,
-            trailing_massive_ra,
-            trailing_massive_dec,
-            trailing_massive_astrometric_uncertainties,
-            trailing_massive_times,
-            trailing_massive_observer_positions,
-            trailing_massive_planet_xs_at_obs,
-            trailing_massive_asteroid_xs_at_obs,
+            pad_to_parallelize(leading_tracer_ra, 0.0),
+            pad_to_parallelize(leading_tracer_dec, 0.0),
+            pad_to_parallelize(leading_tracer_astrometric_uncertainties, jnp.inf),
+            pad_to_parallelize(leading_tracer_times, 999.0),
+            pad_to_parallelize(leading_tracer_observer_positions, 999.0),
+            pad_to_parallelize(leading_tracer_planet_xs_at_obs, 999.0),
+            pad_to_parallelize(leading_tracer_asteroid_xs_at_obs, 999.0),
+            pad_to_parallelize(trailing_tracer_ra, 0.0),
+            pad_to_parallelize(trailing_tracer_dec, 0.0),
+            pad_to_parallelize(trailing_tracer_astrometric_uncertainties, jnp.inf),
+            pad_to_parallelize(trailing_tracer_times, 999.0),
+            pad_to_parallelize(trailing_tracer_observer_positions, 999.0),
+            pad_to_parallelize(trailing_tracer_planet_xs_at_obs, 999.0),
+            pad_to_parallelize(trailing_tracer_asteroid_xs_at_obs, 999.0),
+            pad_to_parallelize(leading_massive_ra, 0.0),
+            pad_to_parallelize(leading_massive_dec, 0.0),
+            pad_to_parallelize(leading_massive_astrometric_uncertainties, jnp.inf),
+            pad_to_parallelize(leading_massive_times, 999.0),
+            pad_to_parallelize(leading_massive_observer_positions, 999.0),
+            pad_to_parallelize(leading_massive_planet_xs_at_obs, 999.0),
+            pad_to_parallelize(leading_massive_asteroid_xs_at_obs, 999.0),
+            pad_to_parallelize(trailing_massive_ra, 0.0),
+            pad_to_parallelize(trailing_massive_dec, 0.0),
+            pad_to_parallelize(trailing_massive_astrometric_uncertainties, jnp.inf),
+            pad_to_parallelize(trailing_massive_times, 999.0),
+            pad_to_parallelize(trailing_massive_observer_positions, 999.0),
+            pad_to_parallelize(trailing_massive_planet_xs_at_obs, 999.0),
+            pad_to_parallelize(trailing_massive_asteroid_xs_at_obs, 999.0),
         )
 
     ####################################################################################
