@@ -7,6 +7,7 @@ from jorbit.engine.ias15_integrator import (
     ias15_integrate_multiple,
     ias15_initial_params,
 )
+from jorbit.engine import pad_to_parallelize
 from jorbit.engine.accelerations import acceleration_at_time
 from jorbit.engine.ephemeris import perturber_positions
 from jorbit.particle import Particle
@@ -77,8 +78,8 @@ class IAS15System(BaseSystem):
             self._trailing_massive_astrometric_uncertainties,
             self._trailing_massive_times,
             self._trailing_massive_observer_positions,
-            self._trailing_tracer_planet_xs_at_obs,
-            self._trailing_tracer_asteroid_xs_at_obs,
+            self._trailing_massive_planet_xs_at_obs,
+            self._trailing_massive_asteroid_xs_at_obs,
         ) = IAS15System._setup_observations(
             particles=self._particles,
             epoch=self._epoch,
@@ -296,7 +297,7 @@ class IAS15System(BaseSystem):
         trailing_tracer_ra = jnp.zeros((ntracers, most_trailing_obs))
         trailing_tracer_dec = jnp.zeros((ntracers, most_trailing_obs))
         trailing_tracer_astrometric_uncertainties = (
-            jnp.ones((ntracers, most_trailing_obs)) * 999.0
+            jnp.ones((ntracers, most_trailing_obs)) * jnp.inf
         )
         trailing_tracer_times = jnp.ones((ntracers, most_trailing_obs)) * 999.0
         trailing_tracer_observer_positions = (
@@ -305,7 +306,7 @@ class IAS15System(BaseSystem):
         leading_tracer_ra = jnp.zeros((ntracers, most_leading_obs))
         leading_tracer_dec = jnp.zeros((ntracers, most_leading_obs))
         leading_tracer_astrometric_uncertainties = (
-            jnp.ones((ntracers, most_leading_obs)) * 999.0
+            jnp.ones((ntracers, most_leading_obs)) * jnp.inf
         )
         leading_tracer_times = jnp.ones((ntracers, most_leading_obs)) * 999.0
         leading_tracer_observer_positions = (
@@ -376,7 +377,7 @@ class IAS15System(BaseSystem):
         trailing_massive_ra = jnp.zeros((nmassive, most_trailing_obs))
         trailing_massive_dec = jnp.zeros((nmassive, most_trailing_obs))
         trailing_massive_astrometric_uncertainties = (
-            jnp.ones((nmassive, most_trailing_obs)) * 999.0
+            jnp.ones((nmassive, most_trailing_obs)) * jnp.inf
         )
         trailing_massive_times = jnp.ones((nmassive, most_trailing_obs)) * 999.0
         trailing_massive_observer_positions = (
@@ -385,7 +386,7 @@ class IAS15System(BaseSystem):
         leading_massive_ra = jnp.zeros((nmassive, most_leading_obs))
         leading_massive_dec = jnp.zeros((nmassive, most_leading_obs))
         leading_massive_astrometric_uncertainties = (
-            jnp.ones((nmassive, most_leading_obs)) * 999.0
+            jnp.ones((nmassive, most_leading_obs)) * jnp.inf
         )
         leading_massive_times = jnp.ones((nmassive, most_leading_obs)) * 999.0
         leading_massive_observer_positions = (
@@ -467,30 +468,6 @@ class IAS15System(BaseSystem):
             perturber_positions, in_axes=(None, 0)
         )(asteroid_params, trailing_massive_times)
 
-        def pad_to_parallelize(arr, pad_value):
-            """
-            Fold arrays where the first index runs over particles into chunks that
-            can be parallelized over multiple devices
-            """
-            ndevices = jax.local_device_count()
-
-            nparticles = arr.shape[0]
-            other_dims = len(arr.shape[1:])
-
-            tmp = jnp.divmod(nparticles, ndevices)
-
-            chunks = tmp[0] + 1
-            needed_padding = ndevices - tmp[1]
-
-            padded_arr = jnp.pad(
-                arr,
-                tuple([(0, needed_padding)] + [(0, 0)] * other_dims),
-                constant_values=pad_value,
-            )
-
-            particles_per_device = padded_arr.shape[0] // ndevices
-            return padded_arr.reshape((ndevices, particles_per_device) + arr.shape[1:])
-
         return (
             pad_to_parallelize(leading_tracer_ra, 0.0),
             pad_to_parallelize(leading_tracer_dec, 0.0),
@@ -521,6 +498,36 @@ class IAS15System(BaseSystem):
             pad_to_parallelize(trailing_massive_planet_xs_at_obs, 999.0),
             pad_to_parallelize(trailing_massive_asteroid_xs_at_obs, 999.0),
         )
+        # return (
+        #     leading_tracer_ra,
+        #     leading_tracer_dec,
+        #     leading_tracer_astrometric_uncertainties,
+        #     leading_tracer_times,
+        #     leading_tracer_observer_positions,
+        #     leading_tracer_planet_xs_at_obs,
+        #     leading_tracer_asteroid_xs_at_obs,
+        #     trailing_tracer_ra,
+        #     trailing_tracer_dec,
+        #     trailing_tracer_astrometric_uncertainties,
+        #     trailing_tracer_times,
+        #     trailing_tracer_observer_positions,
+        #     trailing_tracer_planet_xs_at_obs,
+        #     trailing_tracer_asteroid_xs_at_obs,
+        #     leading_massive_ra,
+        #     leading_massive_dec,
+        #     leading_massive_astrometric_uncertainties,
+        #     leading_massive_times,
+        #     leading_massive_observer_positions,
+        #     leading_massive_planet_xs_at_obs,
+        #     leading_massive_asteroid_xs_at_obs,
+        #     trailing_massive_ra,
+        #     trailing_massive_dec,
+        #     trailing_massive_astrometric_uncertainties,
+        #     trailing_massive_times,
+        #     trailing_massive_observer_positions,
+        #     trailing_massive_planet_xs_at_obs,
+        #     trailing_massive_asteroid_xs_at_obs,
+        # )
 
     ####################################################################################
     # likelihood methods
