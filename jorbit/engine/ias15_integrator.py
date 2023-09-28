@@ -40,7 +40,6 @@ def sqrt7(a):
 
 def substep_acceleration(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     b0,
     b1,
@@ -148,7 +147,7 @@ def substep_acceleration(
     )
     x_sub = x_sub + x0
     v_sub = v_sub + v0
-    a_sub = acc(x=x_sub, v=v_sub, time=t_sub, **acc_fixed_kwargs, **acc_free_kwargs)
+    a_sub = acc(x=x_sub, v=v_sub, time=t_sub, **acc_free_kwargs)
     return a_sub
 
 
@@ -180,7 +179,6 @@ def initialize_gs(b0, b1, b2, b3, b4, b5, b6):
 
 def predictor_corrector_iteration(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     b0,
     b1,
@@ -217,7 +215,6 @@ def predictor_corrector_iteration(
     n = 1
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -246,7 +243,6 @@ def predictor_corrector_iteration(
     n = 2
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -277,7 +273,6 @@ def predictor_corrector_iteration(
     n = 3
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -309,7 +304,6 @@ def predictor_corrector_iteration(
     n = 4
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -342,7 +336,6 @@ def predictor_corrector_iteration(
     n = 5
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -380,7 +373,6 @@ def predictor_corrector_iteration(
     n = 6
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -423,7 +415,6 @@ def predictor_corrector_iteration(
     n = 7
     a_sub = substep_acceleration(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -510,7 +501,6 @@ def predictor_corrector_iteration(
 
 def predictor_corrector(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     b0,
     b1,
@@ -538,7 +528,7 @@ def predictor_corrector(
     csb6 = jnp.zeros_like(b6)
 
     iteration = jax.tree_util.Partial(
-        predictor_corrector_iteration, acc, acc_fixed_kwargs, acc_free_kwargs
+        predictor_corrector_iteration, acc, acc_free_kwargs
     )
 
     def iterate(carry, scan_over):
@@ -780,7 +770,6 @@ def predict_next_step(
 
 def ias15_step(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     x0,
     v0,
@@ -839,7 +828,6 @@ def ias15_step(
         predictor_corrector_error,
     ) = predictor_corrector(
         acc,
-        acc_fixed_kwargs,
         acc_free_kwargs,
         b0,
         b1,
@@ -913,7 +901,7 @@ def ias15_step(
     )
     dt_new = jnp.where(dt_new == 0, tmp, dt_new)  # don't let the next dt go to zero
 
-    a0 = acc(x=x0, v=v0, time=t, **acc_fixed_kwargs, **acc_free_kwargs)
+    a0 = acc(x=x0, v=v0, time=t, **acc_free_kwargs)
     ratio = dt_new / dt
     e0, e1, e2, e3, e4, e5, e6, b0, b1, b2, b3, b4, b5, b6 = predict_next_step(
         ratio,
@@ -974,7 +962,6 @@ def ias15_step(
 
 def ias15_integrate(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     x0,
     v0,
@@ -999,7 +986,7 @@ def ias15_integrate(
     dt,
     tf,
 ):
-    step = jax.tree_util.Partial(ias15_step, acc, acc_fixed_kwargs, acc_free_kwargs)
+    step = jax.tree_util.Partial(ias15_step, acc, acc_free_kwargs)
 
     def iterate(carry, scan_over):
         remaining_time = carry[-1] - carry[-3]
@@ -1046,7 +1033,6 @@ def ias15_integrate(
 
 def ias15_integrate_multiple(
     acc,
-    acc_fixed_kwargs,
     acc_free_kwargs,
     x0,
     v0,
@@ -1071,58 +1057,17 @@ def ias15_integrate_multiple(
     dt,
     tfs,
 ):
-    integrate = jax.tree_util.Partial(
-        ias15_integrate, acc, acc_fixed_kwargs, acc_free_kwargs
-    )
+    integrate = jax.tree_util.Partial(ias15_integrate, acc, acc_free_kwargs)
+
+    def true_fn(x):
+        carry, scan_over = x
+        return integrate(*carry, scan_over)[:-1]  # everything but tf
 
     def scan_fn(carry, scan_over):
-        (
-            x0,
-            v0,
-            a0,
-            b0,
-            b1,
-            b2,
-            b3,
-            b4,
-            b5,
-            b6,
-            e0,
-            e1,
-            e2,
-            e3,
-            e4,
-            e5,
-            e6,
-            csx,
-            csv,
-            t0,
-            dt,
-            tf,
-        ) = integrate(*carry, scan_over)
-        return (
-            x0,
-            v0,
-            a0,
-            b0,
-            b1,
-            b2,
-            b3,
-            b4,
-            b5,
-            b6,
-            e0,
-            e1,
-            e2,
-            e3,
-            e4,
-            e5,
-            e6,
-            csx,
-            csv,
-            t0,
-            dt,
-        ), (x0, v0, t0)
+        q = jax.lax.cond(
+            scan_over != 999.0, true_fn, lambda x: x[0], (carry, scan_over)
+        )
+        return q, (q[:2] + (q[-2],))  # x0, v0, t0
 
     s = jax.lax.scan(
         scan_fn,

@@ -66,6 +66,6 @@ def _pad_to_parallelize(ndevices, arr, pad_value):
     return padded_arr.reshape((ndevices, particles_per_device) + arr.shape[1:])
 
 
-pad_to_parallelize = jax.tree_util.Partial(
-    _pad_to_parallelize, jax.local_device_count()
+pad_to_parallelize = jax.jit(
+    jax.tree_util.Partial(_pad_to_parallelize, jax.local_device_count())
 )

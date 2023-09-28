@@ -65,10 +65,10 @@ class BaseSystem(ABC):
         self._num_devices = jax.local_device_count()
 
     def __repr__(self):
-        return f"{self.__class__.__name__} with {len(self._xs)} particle(s)"
+        return f"{self.__class__.__name__} with {len(self._particles)} particle(s)"
 
     def __len__(self):
-        return len(self._xs)
+        return len(self._particles)
 
     ################################################################################
     # Shared methods
