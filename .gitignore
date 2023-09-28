@@ -1,12 +1,7 @@
-jorbit/__pycache__/
-jorbit/data/__pycache__/
-jorbit.egg-info/
 development/
+**/__pycache__/
+jorbit.egg-info/
 .DS_Store
-tests/__pycache__/
-tests/unit/__pycache__/
 .coverage
 .vscode/
-jorbit/engine/__pycache__/
-jorbit/system/__pycache__/
 .pytest_cache/
