@@ -36,8 +36,36 @@ import jax
 from jax.config import config
 
 config.update("jax_enable_x64", True)
+import jax.numpy as jnp
 
 from jorbit.engine.sky_projection import cart_to_elements, elements_to_cart
 
 j_cart_to_elements = jax.jit(cart_to_elements)
 j_elements_to_cart = jax.jit(elements_to_cart)
+
+
+def _pad_to_parallelize(ndevices, arr, pad_value):
+    """
+    Fold arrays where the first index runs over particles into chunks that
+    can be parallelized over multiple devices
+    """
+    nparticles = arr.shape[0]
+
+    if nparticles < ndevices:
+        return arr.reshape((nparticles, 1) + arr.shape[1:])
+
+    padding = arr.shape[0] % ndevices  # can't use divmod, that's not jittable
+
+    padded_arr = jnp.ones((arr.shape[0] + padding,) + arr.shape[1:]) * pad_value
+    padded_arr = padded_arr.at[:nparticles].set(arr)
+
+    particles_per_device = (
+        padded_arr.shape[0] // ndevices
+    )  # can't use divmod, that's not jittable
+
+    return padded_arr.reshape((ndevices, particles_per_device) + arr.shape[1:])
+
+
+pad_to_parallelize = jax.tree_util.Partial(
+    _pad_to_parallelize, jax.local_device_count()
+)
