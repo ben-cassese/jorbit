@@ -7,6 +7,7 @@ from jorbit.engine.ias15_integrator import (
     ias15_integrate_multiple,
     ias15_initial_params,
 )
+from jorbit.engine.ias15_likelihood import ias15_likelihood
 from jorbit.engine import pad_to_parallelize
 from jorbit.engine.accelerations import acceleration_at_time
 from jorbit.engine.ephemeris import perturber_positions
@@ -21,6 +22,8 @@ class IAS15System(BaseSystem):
         #################
         super().__init__(particles, **kwargs)
 
+        if self._verbose:
+            print("Initializing particles...")
         self._particles, self._epoch = IAS15System._initialize_particles(
             particles=self._particles,
             infer_epoch=self._infer_epoch,
@@ -30,6 +33,9 @@ class IAS15System(BaseSystem):
             planet_gms=self._planet_gms,
             asteroid_gms=self._asteroid_gms,
         )
+
+        if self._verbose:
+            print("Sorting free/fixed parameters...")
         (
             self._tracer_xs,
             self._tracer_vs,
@@ -51,6 +57,8 @@ class IAS15System(BaseSystem):
             fit_asteroid_gms=self._fit_asteroid_gms,
         )
 
+        if self._verbose:
+            print("Caching observations metadata...")
         (
             self._leading_tracer_ra,
             self._leading_tracer_dec,
@@ -109,6 +117,22 @@ class IAS15System(BaseSystem):
             free_planet_gm_inds=self._free_planet_gm_inds,
             free_asteroid_gm_inds=self._free_asteroid_gm_inds,
         )
+
+        if self._verbose:
+            print("Compiling likelihood functions...")
+        self._full_resids, self.loglike = self._generate_likelihood_funcs()
+        _ = self._full_resids(self._x)
+        _ = self.loglike(self._x)
+
+        if self._verbose:
+            print(
+                "Compiling gradient of likelihood functions (longest and last step)..."
+            )
+        _ = jax.jacfwd(self.loglike)(self._x)
+
+        if self._verbose:
+            print("System initialized!")
+            print(self.__repr__())
 
     ####################################################################################
     # initialization methods
@@ -171,14 +195,16 @@ class IAS15System(BaseSystem):
                     x0=jnp.array([p.x]),
                     v0=jnp.array([p.v]),
                     a0=a0,
-                    acc=jax.tree_util.Partial(acceleration_at_time),
-                    acc_fixed_kwargs={
-                        "gm": jnp.array([0.0]),
-                        "planet_params": planet_params,
-                        "asteroid_params": asteroid_params,
-                        "planet_gms": planet_gms,
-                        "asteroid_gms": asteroid_gms,
-                    },
+                    acc=jax.tree_util.Partial(
+                        acceleration_at_time,
+                        **{
+                            "gm": jnp.array([0.0]),
+                            "planet_params": planet_params,
+                            "asteroid_params": asteroid_params,
+                            "planet_gms": planet_gms,
+                            "asteroid_gms": asteroid_gms,
+                        },
+                    ),
                     acc_free_kwargs={},
                     t0=p.time,
                     tfs=jnp.array([epoch]),
@@ -263,6 +289,16 @@ class IAS15System(BaseSystem):
             if p:
                 free_asteroid_gm_inds.append(i)
 
+        # ugly fix for the parser in ias15_likelihood not being able to handle empty
+        # arrays, come back to this later
+        if tracer_xs.shape[0] == 0:
+            tracer_xs = jnp.ones((1, 3)) * 999.0
+            tracer_vs = jnp.ones((1, 3)) * 999.0
+        if massive_xs.shape[0] == 0:
+            massive_xs = jnp.ones((1, 3)) * 999.0
+            massive_vs = jnp.ones((1, 3)) * 999.0
+            massive_gms = jnp.ones((1)) * 999.0
+
         return (
             tracer_xs,
             tracer_vs,
@@ -293,6 +329,12 @@ class IAS15System(BaseSystem):
                     most_leading_obs = max(most_leading_obs, leading)
                     trailing = jnp.sum(p.observations.times < epoch)
                     most_trailing_obs = max(most_trailing_obs, trailing)
+        if ntracers == 0:
+            ntracers = 1
+        if most_leading_obs == 0:
+            most_leading_obs = 1
+        if most_trailing_obs == 0:
+            most_trailing_obs = 1
 
         trailing_tracer_ra = jnp.zeros((ntracers, most_trailing_obs))
         trailing_tracer_dec = jnp.zeros((ntracers, most_trailing_obs))
@@ -374,6 +416,13 @@ class IAS15System(BaseSystem):
                     most_leading_obs = max(most_leading_obs, leading)
                     trailing = jnp.sum(p.observations.times < epoch)
                     most_trailing_obs = max(most_trailing_obs, trailing)
+        if nmassive == 0:
+            nmassive = 1
+        if most_leading_obs == 0:
+            most_leading_obs = 1
+        if most_trailing_obs == 0:
+            most_trailing_obs = 1
+
         trailing_massive_ra = jnp.zeros((nmassive, most_trailing_obs))
         trailing_massive_dec = jnp.zeros((nmassive, most_trailing_obs))
         trailing_massive_astrometric_uncertainties = (
@@ -401,22 +450,22 @@ class IAS15System(BaseSystem):
                     trailing = jnp.sum(p.observations.times < epoch)
                     if leading > 0:
                         mask = p.observations.times > epoch
-                        leading_massive_ra = leading_massive_ra.at[i, :trailing].set(
+                        leading_massive_ra = leading_massive_ra.at[i, :leading].set(
                             p.observations.ra[mask]
                         )
-                        leading_massive_dec = leading_massive_dec.at[i, :trailing].set(
+                        leading_massive_dec = leading_massive_dec.at[i, :leading].set(
                             p.observations.dec[mask]
                         )
                         leading_massive_astrometric_uncertainties = (
                             leading_massive_astrometric_uncertainties.at[
-                                i, :trailing
+                                i, :leading
                             ].set(p.observations.astrometric_uncertainties[mask])
                         )
                         leading_massive_times = leading_massive_times.at[
-                            i, :trailing
+                            i, :leading
                         ].set(p.observations.times[mask])
                         leading_massive_observer_positions = (
-                            leading_massive_observer_positions.at[i, :trailing].set(
+                            leading_massive_observer_positions.at[i, :leading].set(
                                 p.observations.observer_positions[mask]
                             )
                         )
@@ -498,36 +547,6 @@ class IAS15System(BaseSystem):
             pad_to_parallelize(trailing_massive_planet_xs_at_obs, 999.0),
             pad_to_parallelize(trailing_massive_asteroid_xs_at_obs, 999.0),
         )
-        # return (
-        #     leading_tracer_ra,
-        #     leading_tracer_dec,
-        #     leading_tracer_astrometric_uncertainties,
-        #     leading_tracer_times,
-        #     leading_tracer_observer_positions,
-        #     leading_tracer_planet_xs_at_obs,
-        #     leading_tracer_asteroid_xs_at_obs,
-        #     trailing_tracer_ra,
-        #     trailing_tracer_dec,
-        #     trailing_tracer_astrometric_uncertainties,
-        #     trailing_tracer_times,
-        #     trailing_tracer_observer_positions,
-        #     trailing_tracer_planet_xs_at_obs,
-        #     trailing_tracer_asteroid_xs_at_obs,
-        #     leading_massive_ra,
-        #     leading_massive_dec,
-        #     leading_massive_astrometric_uncertainties,
-        #     leading_massive_times,
-        #     leading_massive_observer_positions,
-        #     leading_massive_planet_xs_at_obs,
-        #     leading_massive_asteroid_xs_at_obs,
-        #     trailing_massive_ra,
-        #     trailing_massive_dec,
-        #     trailing_massive_astrometric_uncertainties,
-        #     trailing_massive_times,
-        #     trailing_massive_observer_positions,
-        #     trailing_massive_planet_xs_at_obs,
-        #     trailing_massive_asteroid_xs_at_obs,
-        # )
 
     ####################################################################################
     # likelihood methods
@@ -571,7 +590,58 @@ class IAS15System(BaseSystem):
         pass
 
     def _generate_likelihood_funcs(self):
-        pass
+        full_resids = jax.tree_util.Partial(
+            ias15_likelihood,
+            tracer_xs=self._tracer_xs,
+            tracer_vs=self._tracer_vs,
+            massive_xs=self._massive_xs,
+            massive_vs=self._massive_vs,
+            massive_gms=self._massive_gms,
+            planet_gms=self._planet_gms,
+            asteroid_gms=self._asteroid_gms,
+            free_tracer_x_inds=self._free_tracer_x_inds,
+            free_tracer_v_inds=self._free_tracer_v_inds,
+            free_massive_x_inds=self._free_massive_x_inds,
+            free_massive_v_inds=self._free_massive_v_inds,
+            free_massive_gm_inds=self._free_massive_gm_inds,
+            free_planet_gm_inds=self._free_planet_gm_inds,
+            free_asteroid_gm_inds=self._free_asteroid_gm_inds,
+            epoch=self._epoch,
+            planet_params=self._planet_params,
+            asteroid_params=self._asteroid_params,
+            leading_tracer_times=self._leading_tracer_times,
+            leading_tracer_observer_positions=self._leading_tracer_observer_positions,
+            leading_tracer_planet_xs_at_obs=self._leading_tracer_planet_xs_at_obs,
+            leading_tracer_asteroid_xs_at_obs=self._leading_tracer_asteroid_xs_at_obs,
+            leading_tracer_ra=self._leading_tracer_ra,
+            leading_tracer_dec=self._leading_tracer_dec,
+            leading_tracer_astrometric_uncertainties=self._leading_tracer_astrometric_uncertainties,
+            trailing_tracer_times=self._trailing_tracer_times,
+            trailing_tracer_observer_positions=self._trailing_tracer_observer_positions,
+            trailing_tracer_planet_xs_at_obs=self._trailing_tracer_planet_xs_at_obs,
+            trailing_tracer_asteroid_xs_at_obs=self._trailing_tracer_asteroid_xs_at_obs,
+            trailing_tracer_ra=self._trailing_tracer_ra,
+            trailing_tracer_dec=self._trailing_tracer_dec,
+            trailing_tracer_astrometric_uncertainties=self._trailing_tracer_astrometric_uncertainties,
+            leading_massive_times=self._leading_massive_times,
+            leading_massive_observer_positions=self._leading_massive_observer_positions,
+            leading_massive_planet_xs_at_obs=self._leading_massive_planet_xs_at_obs,
+            leading_massive_asteroid_xs_at_obs=self._leading_massive_asteroid_xs_at_obs,
+            leading_massive_ra=self._leading_massive_ra,
+            leading_massive_dec=self._leading_massive_dec,
+            leading_massive_astrometric_uncertainties=self._leading_massive_astrometric_uncertainties,
+            trailing_massive_times=self._trailing_massive_times,
+            trailing_massive_observer_positions=self._trailing_massive_observer_positions,
+            trailing_massive_planet_xs_at_obs=self._trailing_massive_planet_xs_at_obs,
+            trailing_massive_asteroid_xs_at_obs=self._trailing_massive_asteroid_xs_at_obs,
+            trailing_massive_ra=self._trailing_massive_ra,
+            trailing_massive_dec=self._trailing_massive_dec,
+            trailing_massive_astrometric_uncertainties=self._trailing_massive_astrometric_uncertainties,
+        )
+
+        loglike = lambda x: full_resids(x)[0]
+
+        return full_resids, loglike
 
     def propagate(self, t):
         pass
