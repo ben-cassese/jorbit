@@ -128,7 +128,8 @@ class IAS15System(BaseSystem):
             print(
                 "Compiling gradient of likelihood functions (longest and last step)..."
             )
-        _ = jax.jacfwd(self.loglike)(self._x)
+        # _ = jax.jacfwd(self.loglike)(self._x)
+        _ = jax.grad(self.loglike)(self._x)
 
         if self._verbose:
             print("System initialized!")
@@ -297,7 +298,7 @@ class IAS15System(BaseSystem):
         if massive_xs.shape[0] == 0:
             massive_xs = jnp.ones((1, 3)) * 999.0
             massive_vs = jnp.ones((1, 3)) * 999.0
-            massive_gms = jnp.ones((1)) * 999.0
+            massive_gms = jnp.ones((1)) * 0.0
 
         return (
             tracer_xs,
@@ -639,7 +640,19 @@ class IAS15System(BaseSystem):
             trailing_massive_astrometric_uncertainties=self._trailing_massive_astrometric_uncertainties,
         )
 
-        loglike = lambda x: full_resids(x)[0]
+        _loglike = lambda x: full_resids(x)[0]
+
+        @jax.custom_jvp
+        def loglike(x):
+            return _loglike(x)
+
+        @loglike.defjvp
+        def fwd(primals, tangents):
+            (x,) = primals
+            (x_dot,) = tangents
+            ans = _loglike(x)
+            ans_dot = jax.jacfwd(_loglike)(x)
+            return ans, jnp.sum(ans_dot * x_dot)
 
         return full_resids, loglike
 

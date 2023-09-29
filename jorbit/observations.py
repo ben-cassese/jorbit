@@ -126,6 +126,35 @@ class Observations:
                 " observatory_locations, and astrometric_uncertainties must be given"
                 " manually."
             )
+            if (
+                not isinstance(self._times, type(Time("2023-01-01")))
+                and not isinstance(self._times, list)
+                and not isinstance(self._times, jnp.ndarray)
+            ):
+                raise ValueError(
+                    "times must be either astropy.time.Time, list of astropy.time.Time,"
+                    " or jax.numpy.ndarray (interpreted as JD in TDB)"
+                )
+
+            assert (
+                isinstance(self._observatory_locations, str)
+                or isinstance(self._observatory_locations, list)
+                or isinstance(self._observatory_locations, jnp.ndarray)
+            ), (
+                "observatory_locations must be either a string (interpreted as an MPC"
+                " observatory code), a list of observatory codes, or a"
+                " jax.numpy.ndarray"
+            )
+            if isinstance(self._observatory_locations, list):
+                assert len(self._observatory_locations) == len(self._times), (
+                    "If observatory_locations is a list, it must be the same length as"
+                    " the number of observations."
+                )
+            elif isinstance(self._observatory_locations, jnp.ndarray):
+                assert len(self._observatory_locations) == len(self._times), (
+                    "If observatory_locations is a jax.numpy.ndarray, it must be the"
+                    " same length as the number of observations."
+                )
         else:
             assert (
                 (self._observed_coordinates is None)
@@ -135,35 +164,6 @@ class Observations:
             ), (
                 "If an MPC file is provided, observed_coordinates, times,"
                 " observatory_locations, and astrometric_uncertainties must be None."
-            )
-
-        if (
-            not isinstance(self._times, type(Time("2023-01-01")))
-            and not isinstance(self._times, list)
-            and not isinstance(self._times, jnp.ndarray)
-        ):
-            raise ValueError(
-                "times must be either astropy.time.Time, list of astropy.time.Time, or"
-                " jax.numpy.ndarray (interpreted as JD in TDB)"
-            )
-
-        assert (
-            isinstance(self._observatory_locations, str)
-            or isinstance(self._observatory_locations, list)
-            or isinstance(self._observatory_locations, jnp.ndarray)
-        ), (
-            "observatory_locations must be either a string (interpreted as an MPC"
-            " observatory code), a list of observatory codes, or a jax.numpy.ndarray"
-        )
-        if isinstance(self._observatory_locations, list):
-            assert len(self._observatory_locations) == len(self._times), (
-                "If observatory_locations is a list, it must be the same length as"
-                " the number of observations."
-            )
-        elif isinstance(self._observatory_locations, jnp.ndarray):
-            assert len(self._observatory_locations) == len(self._times), (
-                "If observatory_locations is a jax.numpy.ndarray, it must be the same"
-                " length as the number of observations."
             )
 
     def _parse_astrometry(self):
