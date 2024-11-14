@@ -1,7 +1,10 @@
-development/
-**/__pycache__/
-jorbit.egg-info/
-.DS_Store
-.coverage
-.vscode/
-.pytest_cache/
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
