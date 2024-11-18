@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "black>=24.10.0",
+    "black[jupyter]>=24.10.0",
     "ipykernel>=6.29.5",
     "matplotlib>=3.9.2",
     "myst-parser>=4.0.0",

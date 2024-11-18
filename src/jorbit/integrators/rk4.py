@@ -6,15 +6,15 @@ import jax.numpy as jnp
 from typing import Callable
 from functools import partial
 
-from jorbit.utils.system_state import SystemState
-from jorbit.integrators import IntegratorState
+from jorbit.utils.states import SystemState
+from jorbit.integrators import RK4IntegratorState
 
 
 @jax.jit
 def rk4_step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
-    initial_integrator_state: IntegratorState,
+    initial_integrator_state: RK4IntegratorState,
 ) -> SystemState:
     dt = initial_integrator_state.dt
     x = initial_system_state.positions
@@ -75,10 +75,10 @@ def rk4_evolve(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     final_time: float,
-    initial_integrator_state: IntegratorState,
+    initial_integrator_state: RK4IntegratorState,
     n_steps: int = 1000,
 ) -> SystemState:
-    dt_lim = initial_integrator_state.meta.get("dt_limit", None)
+    _dt = initial_integrator_state.dt
 
     def step_needed(system_state, acceleration_func, integrator_state):
         system_state, integrator_state = rk4_step(
@@ -96,9 +96,7 @@ def rk4_evolve(
             jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
         )
 
-        step_length = jnp.sign(final_time - t) * jnp.min(
-            jnp.array([step_length, dt_lim])
-        )
+        step_length = jnp.sign(final_time - t) * jnp.min(jnp.array([step_length, _dt]))
 
         integrator_state.dt = step_length
 
@@ -111,8 +109,10 @@ def rk4_evolve(
 
         return (system_state, integrator_state), None
 
-    final_state, _ = jax.lax.scan(
+    (final_system_state, final_integrator_state), _ = jax.lax.scan(
         scan_func, (initial_system_state, initial_integrator_state), length=n_steps
     )
 
-    return final_state
+    final_integrator_state.dt = _dt
+
+    return (final_system_state, final_integrator_state)

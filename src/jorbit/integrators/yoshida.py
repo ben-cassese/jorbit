@@ -6,15 +6,15 @@ import jax.numpy as jnp
 from typing import Callable
 from functools import partial
 
-from jorbit.utils.system_state import SystemState
-from jorbit.integrators import IntegratorState
+from jorbit.utils.states import SystemState
+from jorbit.integrators import LeapfrogIntegratorState
 
 
 @jax.jit
 def yoshida_step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
-    initial_integrator_state: IntegratorState,
+    initial_integrator_state: LeapfrogIntegratorState,
 ) -> SystemState:
     def leapfrog_scan(carry, scan_over):
         x, v = carry
@@ -35,8 +35,8 @@ def yoshida_step(
 
     x0 = initial_system_state.positions
     v0 = initial_system_state.velocities
-    C = initial_integrator_state.meta["leapfrog_coeffs"]["C"]
-    D = initial_integrator_state.meta["leapfrog_coeffs"]["D"]
+    C = initial_integrator_state.c_coeff
+    D = initial_integrator_state.d_coeff
 
     q = jax.lax.scan(leapfrog_scan, (x0, v0), (C[:-1], D))[0]
     x, v = q
@@ -53,3 +53,51 @@ def yoshida_step(
     new_integrator_state = initial_integrator_state
 
     return new_system_state, new_integrator_state
+
+
+@partial(jax.jit, static_argnames=("n_steps"))
+def leapfrog_evolve(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    final_time: float,
+    initial_integrator_state: LeapfrogIntegratorState,
+    n_steps: int = 1000,
+):
+    _dt = initial_integrator_state.dt
+
+    def step_needed(system_state, acceleration_func, integrator_state):
+        system_state, integrator_state = yoshida_step(
+            system_state, acceleration_func, integrator_state
+        )
+        return system_state, integrator_state
+
+    def objective_reached(system_state, acceleration_func, integrator_state):
+        return system_state, integrator_state
+
+    def scan_func(carry, scan_over):
+        system_state, integrator_state = carry
+        t = system_state.time
+        step_length = jnp.min(
+            jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
+        )
+
+        step_length = jnp.sign(final_time - t) * jnp.min(jnp.array([step_length, _dt]))
+
+        integrator_state.dt = step_length
+
+        system_state, integrator_state = jax.lax.cond(
+            step_length != 0,
+            step_needed,
+            objective_reached,
+            *(system_state, acceleration_func, integrator_state),
+        )
+
+        return (system_state, integrator_state), None
+
+    (final_system_state, final_integrator_state), _ = jax.lax.scan(
+        scan_func, (initial_system_state, initial_integrator_state), length=n_steps
+    )
+
+    final_integrator_state.dt = _dt
+
+    return (final_system_state, final_integrator_state)
