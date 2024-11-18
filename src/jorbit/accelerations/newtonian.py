@@ -3,7 +3,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from jorbit.utils.system_state import SystemState
+from jorbit.utils.states import SystemState
 
 
 @jax.jit
