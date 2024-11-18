@@ -38,8 +38,9 @@ def ias15_step(
     t_beginning = initial_system_state.time
     x0 = initial_system_state.positions
     v0 = initial_system_state.velocities
-    a0 = acceleration_func(initial_system_state)
-    initial_integrator_state.a0 = a0  # ias15 specific, so not included in SystemState
+    # a0 = acceleration_func(initial_system_state)
+    # initial_integrator_state.a0 = a0  # ias15 specific, so not included in SystemState
+    a0 = initial_integrator_state.a0
 
     dt = initial_integrator_state.dt
     csx = initial_integrator_state.csx
@@ -95,14 +96,11 @@ def ias15_step(
     predictor_corrector_error = 1e300
     predictor_corrector_error_last = 2.0
 
-    # predictor-corrector iterations
-    for iteration in range(5):
-        # if predictor_corrector_error < 1e-16:
-        #     break
-        # elif (iteration > 2) and (
-        #     predictor_corrector_error > predictor_corrector_error_last
-        # ):
-        #     break
+    def do_nothing(b, csb, g, predictor_corrector_error):
+        print("just chillin")
+        return b, csb, g, predictor_corrector_error, predictor_corrector_error
+
+    def predictor_corrector_iteration(b, csb, g, predictor_corrector_error):
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
 
@@ -332,4 +330,126 @@ def ias15_step(
         print(predictor_corrector_error)
         print("\n\n\n")
 
-    return maxa, maxb6tmp
+        return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
+
+    # predictor-corrector iterations
+    for iteration in range(10):
+        if predictor_corrector_error < 1e-16:
+            b, csb, g, predictor_corrector_error, predictor_corrector_error_last = (
+                do_nothing(b, csb, g, predictor_corrector_error)
+            )
+
+        elif (iteration > 2) and (
+            predictor_corrector_error > predictor_corrector_error_last
+        ):
+            b, csb, g, predictor_corrector_error, predictor_corrector_error_last = (
+                do_nothing(b, csb, g, predictor_corrector_error)
+            )
+
+        else:
+            b, csb, g, predictor_corrector_error, predictor_corrector_error_last = (
+                predictor_corrector_iteration(b, csb, g, predictor_corrector_error)
+            )
+
+    # check the validity of the step, estimate next timestep
+    dt_done = dt
+
+    a0i = jnp.sum(a0 * a0, axis=1)
+    print(f"a0i={a0i}")
+    tmp = a0 + b.p0 + b.p1 + b.p2 + b.p3 + b.p4 + b.p5 + b.p6
+    y2 = jnp.sum(tmp * tmp, axis=1)
+    print(f"y2={y2}")
+    tmp = (
+        b.p0
+        + 2.0 * b.p1
+        + 3.0 * b.p2
+        + 4.0 * b.p3
+        + 5.0 * b.p4
+        + 6.0 * b.p5
+        + 7.0 * b.p6
+    )
+    y3 = jnp.sum(tmp * tmp, axis=1)
+    print(f"y3={y3}")
+    tmp = (
+        2.0 * b.p1 + 6.0 * b.p2 + 12.0 * b.p3 + 20.0 * b.p4 + 30.0 * b.p5 + 42.0 * b.p6
+    )
+    y4 = jnp.sum(tmp * tmp, axis=1)
+    print(f"y4={y4}")
+    tmp = 6.0 * b.p2 + 24.0 * b.p3 + 60.0 * b.p4 + 120.0 * b.p5 + 210.0 * b.p6
+    y5 = jnp.sum(tmp * tmp, axis=1)
+    print(f"y5={y5}")
+
+    timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
+    print(f"timescale2={timescale2}")
+    min_timescale2 = jnp.nanmin(timescale2)
+    print(f"min_timescale2={min_timescale2}")
+
+    # 0.1750670293218999748586614182797188957 = sqrt7(r->ri_ias15.epsilon*5040.0)
+    dt_new = jnp.sqrt(min_timescale2) * dt_done * 0.1750670293218999749
+    # not checking for a min dt, since rebound default is 0.0 anyway
+    # and we're willing to let it get tiny
+    print(dt_new)
+
+    def step_too_ambitious(x0, v0, csx, csv):
+        print("step was too ambitious")
+        print("going to reject the step")
+        dt_done = 0.0
+        return x0, v0, dt_done, dt_new
+
+    def step_was_good(x0, v0, csx, csv):
+        print("step was good")
+        # print(f"dt_new={dt_new}")
+        dt_neww = jnp.where(
+            dt_new / dt_done > 1 / IAS15_SAFETY_FACTOR,
+            dt_done / IAS15_SAFETY_FACTOR,
+            dt_new,
+        )
+        print(f"dt_new={dt_neww}")
+
+        x0, csx = add_cs(x0, csx, b.p6 / 72.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p5 / 56.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p4 / 42.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p3 / 30.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p2 / 20.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p1 / 12.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p0 / 6.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, a0 / 2.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, v0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p6 / 8.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p5 / 7.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p4 / 6.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p3 / 5.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p2 / 4.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p1 / 3.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p0 / 2.0 * dt_done)
+        v0, csv = add_cs(v0, csv, a0 * dt_done)
+
+        return x0, v0, dt_done, dt_neww
+
+    if jnp.abs(dt_new / dt_done) < IAS15_SAFETY_FACTOR:
+        x0, v0, dt_done, dt_new = step_too_ambitious(x0, v0, csx, csv)
+    else:
+        x0, v0, dt_done, dt_new = step_was_good(x0, v0, csx, csv)
+
+    new_system_state = SystemState(
+        positions=x0,
+        velocities=v0,
+        gms=initial_system_state.gms,
+        time=t_beginning + dt_done,
+        acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+    )
+
+    new_integrator_state = IAS15IntegratorState(
+        g=g,
+        b=b,
+        e=e,
+        br=br,
+        er=er,
+        csx=csx,
+        csv=csv,
+        a0=acceleration_func(new_system_state),
+        dt=dt_new,
+        dt_last_done=dt_done,
+    )
+
+    return new_system_state, new_integrator_state

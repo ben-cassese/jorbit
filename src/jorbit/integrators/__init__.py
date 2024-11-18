@@ -109,7 +109,7 @@ class IAS15Helper:
 
 @jax.tree_util.register_pytree_node_class
 class IAS15IntegratorState(IntegratorState):
-    def __init__(self, g, b, e, br, er, csx, csv, csa0, at, a0, dt, meta=None):
+    def __init__(self, g, b, e, br, er, csx, csv, a0, dt, dt_last_done, meta=None):
         """
 
         Parameters:
@@ -120,10 +120,9 @@ class IAS15IntegratorState(IntegratorState):
             er: IAS15Helper
             csx: jnp.ndarray
             csv: jnp.ndarray
-            csa0: jnp.ndarray
-            at: jnp.ndarray
             a0: jnp.ndarray
             dt: float
+            dt_last_done: float
 
         """
         super().__init__(meta=meta)
@@ -134,10 +133,9 @@ class IAS15IntegratorState(IntegratorState):
         self.er = er
         self.csx = csx
         self.csv = csv
-        self.csa0 = csa0
-        self.at = at
         self.a0 = a0
         self.dt = dt
+        self.dt_last_done = dt_last_done
 
         # at, x0, v0, a0, csx, csv, csa0,
         # self.at = jnp.zeros((n_particles, 3), dtype=jnp.float64)
@@ -151,10 +149,9 @@ class IAS15IntegratorState(IntegratorState):
             self.er,
             self.csx,
             self.csv,
-            self.csa0,
-            self.at,
             self.a0,
             self.dt,
+            self.dt_last_done,
             self.meta,
         )
         aux_data = None
@@ -177,7 +174,7 @@ def initialize_ias15_helper(n_particles):
     )
 
 
-def initialize_ias15_integrator_state(n_particles):
+def initialize_ias15_integrator_state(n_particles, a0):
     return IAS15IntegratorState(
         g=initialize_ias15_helper(n_particles),
         b=initialize_ias15_helper(n_particles),
@@ -186,10 +183,9 @@ def initialize_ias15_integrator_state(n_particles):
         er=initialize_ias15_helper(n_particles),
         csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        csa0=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        at=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        a0=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        dt=0.001,
+        a0=a0,
+        dt=1.0,
+        dt_last_done=0.0,
     )
 
 
