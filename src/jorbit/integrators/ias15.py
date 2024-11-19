@@ -560,12 +560,14 @@ def ias15_evolve(
             t = system_state.time
 
             step_length = jnp.sign(final_time - t) * jnp.min(
-                jnp.array([jnp.abs(final_time - t), integrator_state.dt])
+                jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
             )
+            # jax.debug.print("step_length: {x}", x=step_length)
             last_meaningful_dt = jnp.where(
                 step_length == 0, last_meaningful_dt, step_length
             )
             integrator_state.dt = step_length
+            # jax.debug.print("integrator_state.dt: {x}", x=integrator_state.dt)
 
             system_state, integrator_state = jax.lax.cond(
                 step_length != 0,
