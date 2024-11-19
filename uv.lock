@@ -857,6 +857,7 @@ dev = [
     { name = "nbsphinx" },
     { name = "pre-commit" },
     { name = "rebound" },
+    { name = "reboundx" },
     { name = "sphinx" },
     { name = "sphinx-automodapi" },
     { name = "sphinx-book-theme" },
@@ -879,6 +880,7 @@ dev = [
     { name = "nbsphinx", specifier = ">=0.9.5" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "rebound", specifier = ">=4.4.3" },
+    { name = "reboundx", specifier = ">=4.4.0" },
     { name = "sphinx", specifier = ">=8.1.3" },
     { name = "sphinx-automodapi", specifier = ">=0.18.0" },
     { name = "sphinx-book-theme", specifier = ">=1.1.3" },
@@ -1885,6 +1887,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e2/97/c02dcb831d5a4a615027ee70c7437a2f942670a3f6f69d3ad60df572aa43/rebound-4.4.3-pp310-pypy310_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:1798c2497dc2427c3e82b4f3fac03f0e2316dc102a9b489ce78d8257a3019815", size = 301437 },
     { url = "https://files.pythonhosted.org/packages/cd/48/f572cfa1e714a172c01e34ddaec661e1e86574f2b8bc8ef3e455addf2659/rebound-4.4.3-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:11e8f4571786b262b0282d13ae2e2fe961c96fc0edd2bd055a14f0ab381ba3f4", size = 296402 },
 ]
+
+[[package]]
+name = "reboundx"
+version = "4.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rebound" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/fa/6ea0c7138d17c242141d370ca8da6c93cd1b5277c695d879edd42da349ea/reboundx-4.4.0.tar.gz", hash = "sha256:d6297430e2709a2f6dcfd1f7af1be2f874d3c8f0f201a4d6e14a87e24497e3dc", size = 93995 }
 
 [[package]]
 name = "referencing"
