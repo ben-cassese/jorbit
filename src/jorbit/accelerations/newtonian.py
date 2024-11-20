@@ -20,12 +20,12 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
         accelerations: Accelerations on each particle due to Newtonian gravity
 
     """
-
+    G = 1.0  # Gravitational constant
     separations = inputs.positions[:, None, :] - inputs.positions[None, :, :]
     separations_norm = jnp.linalg.norm(separations, axis=-1)
     separations_norm += jnp.eye(separations_norm.shape[0]) * 1e300
 
-    acceleration_magnitudes_from_each = -inputs.gms / (separations_norm**3)
+    acceleration_magnitudes_from_each = -G * inputs.gms / (separations_norm**3)
     accelerations = jnp.sum(
         separations * acceleration_magnitudes_from_each[:, :, None], axis=1
     )
