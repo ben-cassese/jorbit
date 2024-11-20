@@ -1,7 +1,7 @@
 # This is a pythonized/jaxified version of the IAS15 integrator from
 # Rein & Spiegel (2015) (DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND.
-# The original code is available at https://github.com/hannorein/rebound/blob/main/src/integrator_ias15.c,
-# originally accessed Summer 2023, re-written Fall 2024.
+# The original code is available at https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
+# Accessed Summer 2023, re-visited Fall 2024.
 
 # Many thanks to the REBOUND developers for their work on this integrator,
 # and for making it open source!
