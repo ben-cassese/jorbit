@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 
 # equivalent of  in reboundx
-def gr_full2(
+def gr_full(
     x: jnp.ndarray,  # positions (N,3)
     v: jnp.ndarray,  # velocities (N,3)
     a0: jnp.ndarray,  # initial accelerations (N,3)
