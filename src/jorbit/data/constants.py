@@ -122,7 +122,7 @@ Y4_C = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y4_D = jnp.array(
     [
         1.351207191959657634047687808,
@@ -132,7 +132,7 @@ Y4_D = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y6_C = jnp.array(
     [
         0.392256805238779981959140741,
@@ -147,7 +147,7 @@ Y6_C = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y6_D = jnp.array(
     [
         0.78451361047755996391828148,
@@ -161,7 +161,7 @@ Y6_D = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y8_C = jnp.array(
     [
         0.457422123114870016191702006,
@@ -184,7 +184,7 @@ Y8_C = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y8_D = jnp.array(
     [
         0.91484424622974003238340401,
@@ -307,5 +307,4 @@ IAS15_D = jnp.array(
 )
 
 IAS15_EPSILON = 10 ** (-9)
-IAS15_MIN_DT = 0.0
 IAS15_SAFETY_FACTOR = 0.25
