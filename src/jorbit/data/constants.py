@@ -16,6 +16,11 @@ INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
 # Ephemeris constants
 ################################################################################
 
+DEFAULT_PLANET_EPHEMERIS_URL = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
+DEFAULT_ASTEROID_EPHEMERIS_URL = (
+    "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de440.bsp"
+)
+
 # These are from the JPL ephemeris comments, and are in units of AU^3 / day^2
 # Pluto is still included in the main "de" ephemeris series, no other dwarf planets
 # JOKES these are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
