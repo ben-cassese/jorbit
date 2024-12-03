@@ -12,90 +12,19 @@ from astropy.time import Time
 from astropy.utils.data import download_file
 from jplephem.spk import SPK
 
+import warnings
+
+warnings.filterwarnings("ignore", module="erfa")
+
+from jorbit.ephemeris.functional_ephemeris import FunctionalEphemeris
 from jorbit.data.constants import (
     DEFAULT_PLANET_EPHEMERIS_URL,
     DEFAULT_ASTEROID_EPHEMERIS_URL,
+    ALL_PLANET_IDS,
+    ALL_PLANET_LOG_GMS,
+    LARGE_ASTEROID_IDS,
+    LARGE_ASTEROID_LOG_GMS,
 )
-
-
-@jax.tree_util.register_pytree_node_class
-class ProcessedEphemeris:
-    def __init__(self, init, intlen, coeffs, gms):
-        self.init = init
-        self.intlen = intlen
-        self.coeffs = coeffs
-        self.gms = gms
-
-    def tree_flatten(self):
-        children = (self.init, self.intlen, self.coeffs, self.gms)
-        aux_data = None
-        return children, aux_data
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-    @jax.jit
-    def eval_cheby(self, coefficients, x):
-        b_ii = jnp.zeros(3)
-        b_i = jnp.zeros(3)
-
-        def scan_func(X, a):
-            b_i, b_ii = X
-            tmp = b_i
-            b_i = a + 2 * x * b_i - b_ii
-            b_ii = tmp
-            return (b_i, b_ii), b_i
-
-        (b_i, b_ii), s = jax.lax.scan(scan_func, (b_i, b_ii), coefficients[:-1])
-        return coefficients[-1] + x * b_i - b_ii, s
-
-    @jax.jit
-    def _individual_state(self, init, intlen, coeffs, tdb):
-        tdb2 = 0.0  # leaving in case we ever decide to increase the time precision and use 2 floats
-        _, _, n = coeffs.shape
-
-        # 2451545.0 is the J2000 epoch in TDB
-        index1, offset1 = jnp.divmod((tdb - 2451545.0) * 86400.0 - init, intlen)
-        index2, offset2 = jnp.divmod(tdb2 * 86400.0, intlen)
-        index3, offset = jnp.divmod(offset1 + offset2, intlen)
-        index = (index1 + index2 + index3).astype(int)
-
-        omegas = index == n
-        index = jnp.where(omegas, index - 1, index)
-        offset = jnp.where(omegas, offset + intlen, offset)
-
-        coefficients = coeffs[:, :, index]
-
-        s = 2.0 * offset / intlen - 1.0
-
-        # Position
-        x, As = self.eval_cheby(coefficients, s)  # in km here
-
-        # Velocity
-        Q = self.eval_cheby(2 * As, s)
-        v = Q[0] - As[-1]
-        v /= intlen
-        v *= 2.0  # in km/s here
-
-        # Acceleration
-        a = self.eval_cheby(4 * Q[1], s)[0] - 2 * Q[1][-1]
-        a /= intlen**2
-        a *= 4.0  # in km/s^2 here
-
-        # Convert to AU, AU/day, AU/day^2
-        return (
-            x.T * 6.684587122268446e-09,
-            v.T * 0.0005775483273639937,
-            a.T * 49.900175484249054,
-        )
-
-    @jax.jit
-    def state(self, tdb):
-        x, v, a = jax.vmap(self._individual_state, in_axes=(0, 0, 0, None))(
-            self.init, self.intlen, self.coeffs, tdb
-        )
-        return x, v, a
 
 
 class Ephemeris:
@@ -103,63 +32,105 @@ class Ephemeris:
         self,
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2100-01-01"),
+        ssos="default planets",
         ephem_file=DEFAULT_PLANET_EPHEMERIS_URL,
     ):
         self.earliest_time = earliest_time
         self.latest_time = latest_time
+        self.ssos = ssos
         self.ephem_file = ephem_file
 
-        self.planet_ids = [10, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        self.ssos, self.sso_ids, self.sso_log_gms = self.setup_ssos(ssos)
 
-        self.initial_checks()
-        self.ProcessedEphemeris = self.process()
+        self.validation_checks()
 
-    def initial_checks(self):
-        pass
+        self.FunctionalEphemeris = self.setup_functional()
 
-    def process(self):
-        # come back to this to let users pick planets
+    def setup_ssos(self, ssos):
+        if ssos == "default planets":
+            ssos = list(ALL_PLANET_IDS.keys())
+            ids = ALL_PLANET_IDS
+            log_gms = ALL_PLANET_LOG_GMS
+        elif ssos == "large asteroids":
+            ssos = list(LARGE_ASTEROID_IDS.keys())
+            ids = LARGE_ASTEROID_IDS
+            log_gms = LARGE_ASTEROID_LOG_GMS
+        else:
+            ssos = ssos
+            ids = []
+            log_gms = []
+            for obj in ssos:
+                if obj.lower() in ALL_PLANET_IDS.keys():
+                    ids.append(ALL_PLANET_IDS[obj.lower()])
+                    log_gms.append(ALL_PLANET_LOG_GMS[obj.lower()])
+                elif obj.lower() in LARGE_ASTEROID_IDS.keys():
+                    ids.append(LARGE_ASTEROID_IDS[obj.lower()])
+                    log_gms.append(LARGE_ASTEROID_LOG_GMS[obj.lower()])
+                else:
+                    raise ValueError(f"{obj} is not a recognized object")
+            ids = dict(zip(ssos, ids))
+            log_gms = dict(zip(ssos, log_gms))
+
+        return ssos, ids, log_gms
+
+    def validation_checks(self):
+        if self.earliest_time > self.latest_time:
+            raise ValueError("earliest_time must be before latest_time")
 
         kernel = SPK.open(download_file(self.ephem_file, cache=True))
+        for i, name in enumerate(self.ssos):
+            found = False
+            for seg in kernel.segments:
+                if seg.target == self.sso_ids[name]:
+                    found = True
+                    break
+            if not found:
+                raise ValueError(
+                    f"Object '{self.ssos[i]}' (id={self.sso_ids[name]}) is not found included in this ephemeris file, {self.ephem_file}"
+                )
 
-        planet_init = []
-        planet_intlen = []
-        planet_coeffs = []
-        for id in self.planet_ids:
+    def setup_functional(self):
+        kernel = SPK.open(download_file(self.ephem_file, cache=True))
+
+        sso_init = []
+        sso_intlen = []
+        sso_coeffs = []
+        for name in self.ssos:
+            id = self.sso_ids[name]
             for seg in kernel.segments:
                 if seg.target != id:
                     continue
                 init, intlen, coeff = seg._data
-                planet_init.append(jnp.array(init))
-                planet_intlen.append(jnp.array(intlen))
-                planet_coeffs.append(jnp.array(coeff))
+                sso_init.append(jnp.array(init))
+                sso_intlen.append(jnp.array(intlen))
+                sso_coeffs.append(jnp.array(coeff))
 
-        planet_init = jnp.array(planet_init)
-        planet_intlen = jnp.array(planet_intlen)
-        # planet_coeffs = jnp.array(planet_coeffs)
+        sso_init = jnp.array(sso_init)
+        sso_intlen = jnp.array(sso_intlen)
+        # sso_coeffs = jnp.array(sso_coeffs)
 
-        init0 = planet_init[0]
-        for i in planet_init:
+        init0 = sso_init[0]
+        for i in sso_init:
             assert i == init0
 
         # Trim the timespans down to the earliest and latest times
-        longest_intlen = jnp.max(planet_intlen)
-        ratios = longest_intlen / planet_intlen
+        longest_intlen = jnp.max(sso_intlen)
+        ratios = longest_intlen / sso_intlen
         early_indecies = []
         late_indecies = []
-        for i in range(len(planet_init)):
-            component_count, coefficient_count, n = planet_coeffs[i].shape
+        for i in range(len(sso_init)):
+            component_count, coefficient_count, n = sso_coeffs[i].shape
             index, offset = jnp.divmod(
-                (self.earliest_time.tdb.jd - 2451545.0) * 86400.0 - planet_init[i],
-                planet_intlen[i],
+                (self.earliest_time.tdb.jd - 2451545.0) * 86400.0 - sso_init[i],
+                sso_intlen[i],
             )
             omegas = index == n
             index = jnp.where(omegas, index - 1, index)
             early_indecies.append(index)
 
             index, offset = jnp.divmod(
-                (self.latest_time.tdb.jd - 2451545.0) * 86400.0 - planet_init[i],
-                planet_intlen[i],
+                (self.latest_time.tdb.jd - 2451545.0) * 86400.0 - sso_init[i],
+                sso_intlen[i],
             )
             omegas = index == n
             index = jnp.where(omegas, index - 1, index)
@@ -168,14 +139,14 @@ class Ephemeris:
         early_indecies = (
             jnp.ones(len(early_indecies)) * jnp.min(jnp.array(early_indecies)) * ratios
         ).astype(int)
-        new_inits = planet_init + early_indecies * planet_intlen
+        new_inits = sso_init + early_indecies * sso_intlen
         late_indecies = (
             jnp.ones(len(late_indecies)) * jnp.min(jnp.array(late_indecies)) * ratios
         ).astype(int)
         trimmed_coeffs = []
-        for i in range(len(planet_init)):
+        for i in range(len(sso_init)):
             trimmed_coeffs.append(
-                planet_coeffs[i][:, :, early_indecies[i] : late_indecies[i]]
+                sso_coeffs[i][:, :, early_indecies[i] : late_indecies[i]]
             )
 
         # Add extra Chebyshev coefficients (zeros) to make the number of
@@ -196,25 +167,22 @@ class Ephemeris:
         # we could technically feed in times outside the original timespan and get a false result
         # But, by keeping their original intlens intact, if we feed in a time within
         # the timespan, we should just always stay in the first half, quarter, whatever
-        shortest_intlen = jnp.min(planet_intlen)
-        padded_intlens = jnp.ones(len(planet_intlen)) * shortest_intlen
+        shortest_intlen = jnp.min(sso_intlen)
+        padded_intlens = jnp.ones(len(sso_intlen)) * shortest_intlen
         extra_padded = []
         for i in range(len(padded_coefficients)):
             extra_padded.append(
-                jnp.tile(
-                    padded_coefficients[i], int(planet_intlen[i] / shortest_intlen)
-                )
+                jnp.tile(padded_coefficients[i], int(sso_intlen[i] / shortest_intlen))
             )
 
         new_coeff = jnp.array(extra_padded)
 
-        gms = jnp.ones(len(self.planet_ids)) * 1.0  # need to fill in real ones
-        return ProcessedEphemeris(new_inits, planet_intlen, new_coeff, gms)
+        return FunctionalEphemeris(new_inits, sso_intlen, new_coeff, self.sso_log_gms)
 
     def state(self, time):
-        xs, vs, accs = self.ProcessedEphemeris.state(time.tdb.jd)
+        xs, vs, accs = self.FunctionalEphemeris.state(time.tdb.jd)
         d = {}
-        for i, id in enumerate(self.planet_ids):
+        for i, id in enumerate(self.sso_ids):
             d[id] = {
                 "x": xs[i],
                 "v": vs[i],
