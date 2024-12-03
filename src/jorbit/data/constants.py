@@ -115,7 +115,7 @@ Y8_Ws = jnp.array(
 )
 
 # Created using the Decimal version of
-# jorbit.engine.yoshida_integrator._create_yoshida_coeffs
+# jorbit.utils.generate_coefficients.create_yoshida_coeffs
 Y4_C = jnp.array(
     [
         0.675603595979828817023843904,
@@ -212,6 +212,7 @@ Y8_D = jnp.array(
 ################################################################################
 # IAS15 constants
 ################################################################################
+# https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_H = jnp.array(
     [
         0.0,
@@ -225,6 +226,7 @@ IAS15_H = jnp.array(
     ]
 )
 
+# https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_RR = jnp.array(
     [
         0.0562625605369221464656522,
@@ -258,6 +260,7 @@ IAS15_RR = jnp.array(
     ]
 )
 
+# https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_C = jnp.array(
     [
         -0.0562625605369221464656522,
@@ -284,6 +287,7 @@ IAS15_C = jnp.array(
     ]
 )
 
+# https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
     [
         0.0562625605369221464656522,
@@ -310,5 +314,6 @@ IAS15_D = jnp.array(
     ]
 )
 
+# https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
 IAS15_SAFETY_FACTOR = 0.25
