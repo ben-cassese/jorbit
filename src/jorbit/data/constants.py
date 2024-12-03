@@ -21,43 +21,42 @@ DEFAULT_ASTEROID_EPHEMERIS_URL = (
     "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de440.bsp"
 )
 
-# These are from the JPL ephemeris comments, and are in units of AU^3 / day^2
-# Pluto is still included in the main "de" ephemeris series, no other dwarf planets
-# JOKES these are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
-# which lists Earth as apparently 1% different from its de440 and de441 value??
-ALL_PLANET_GMS = {
-    "mercury": 4.9125001948893175e-11,
-    "venus": 7.2434523326441177e-10,
-    "earth": 8.9970113929473456e-10,
-    "mars": 9.5495488297258106e-11,
-    "jupiter": 2.8253458252257912e-07,
-    "saturn": 8.4597059933762889e-08,
-    "uranus": 1.2920265649682398e-08,
-    "neptune": 1.5243573478851935e-08,
-    "pluto": 2.1750964648933581e-12,
-    "sun": 2.9591220828411951e-04,
+# These are NOT from the JPL ephemeris comments, and are in units of AU^3 / day^2
+# They are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
+# which lists Earth as apparently 1% different from its de440 and de441 value
+ALL_PLANET_LOG_GMS = {
+    "mercury": jnp.log(4.9125001948893175e-11),
+    "venus": jnp.log(7.2434523326441177e-10),
+    "earth": jnp.log(8.9970113929473456e-10),
+    "mars": jnp.log(9.5495488297258106e-11),
+    "jupiter": jnp.log(2.8253458252257912e-07),
+    "saturn": jnp.log(8.4597059933762889e-08),
+    "uranus": jnp.log(1.2920265649682398e-08),
+    "neptune": jnp.log(1.5243573478851935e-08),
+    "pluto": jnp.log(2.1750964648933581e-12),
+    "sun": jnp.log(2.9591220828411951e-04),
 }
 
-LARGE_ASTEROID_GMS = {
-    "ceres": 1.3964518123081067e-13,
-    "pallas": 3.0471146330043194e-14,
-    "juno": 4.2823439677995e-15,
-    "vesta": 3.85480002252579e-14,
-    "iris": 2.5416014973471494e-15,
-    "hygiea": 1.2542530761640807e-14,
-    "eunomia": 4.5107799051436795e-15,
-    "psyche": 3.544500284248897e-15,
-    "euphrosyne": 2.4067012218937573e-15,
-    "europa": 5.982431526486983e-15,
-    "cybele": 2.091717595513368e-15,
-    "sylvia": 4.834560654610551e-15,
-    "thisbe": 2.652943661035635e-15,
-    "camilla": 3.2191392075878576e-15,
-    "davida": 8.683625349228651e-15,
-    "interamnia": 6.311034342087888e-15,
+LARGE_ASTEROID_LOG_GMS = {
+    "ceres": jnp.log(1.3964518123081067e-13),
+    "pallas": jnp.log(3.0471146330043194e-14),
+    "juno": jnp.log(4.2823439677995e-15),
+    "vesta": jnp.log(3.85480002252579e-14),
+    "iris": jnp.log(2.5416014973471494e-15),
+    "hygiea": jnp.log(1.2542530761640807e-14),
+    "eunomia": jnp.log(4.5107799051436795e-15),
+    "psyche": jnp.log(3.544500284248897e-15),
+    "euphrosyne": jnp.log(2.4067012218937573e-15),
+    "europa": jnp.log(5.982431526486983e-15),
+    "cybele": jnp.log(2.091717595513368e-15),
+    "sylvia": jnp.log(4.834560654610551e-15),
+    "thisbe": jnp.log(2.652943661035635e-15),
+    "camilla": jnp.log(3.2191392075878576e-15),
+    "davida": jnp.log(8.683625349228651e-15),
+    "interamnia": jnp.log(6.311034342087888e-15),
 }
 
-ALL_PLANET_NUMS = {
+ALL_PLANET_IDS = {
     "mercury": 1,
     "venus": 2,
     "earth": 3,
@@ -70,7 +69,7 @@ ALL_PLANET_NUMS = {
     "sun": 10,
 }
 
-LARGE_ASTEROID_NUMS = {
+LARGE_ASTEROID_IDS = {
     "ceres": 2000001,
     "pallas": 2000002,
     "juno": 2000003,
