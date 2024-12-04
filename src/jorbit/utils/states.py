@@ -88,3 +88,43 @@ class LikelihoodState:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
+
+
+@jax.tree_util.register_pytree_node_class
+class KeplerianState:
+    def __init__(
+        self,
+        semi,
+        ecc,
+        inc,
+        Omega,
+        omega,
+        nu,
+        time,
+    ):
+        self.semi = semi
+        self.ecc = ecc
+        self.inc = inc
+        self.Omega = Omega
+        self.omega = omega
+        self.nu = nu
+        self.time = time
+
+    def tree_flatten(self):
+        children = (
+            self.semi,
+            self.ecc,
+            self.inc,
+            self.Omega,
+            self.omega,
+            self.nu,
+            self.time,
+        )
+        aux_data = None
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+    # @jax.jit()
