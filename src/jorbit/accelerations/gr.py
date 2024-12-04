@@ -12,6 +12,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from functools import partial
+
 from jorbit.data.constants import SPEED_OF_LIGHT
 
 
@@ -87,6 +89,7 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 
 
 # equivalent of rebx_calculate_gr_full in reboundx
+@partial(jax.jit, static_argnames=["max_iterations"])
 def gr_full(
     x: jnp.ndarray,  # positions (N,3)
     v: jnp.ndarray,  # velocities (N,3)
@@ -104,7 +107,7 @@ def gr_full(
 
     # Calculate pairwise differences
     dx = x[:, None, :] - x[None, :, :]  # (N,N,3)
-    r2 = jnp.sum(dx**2, axis=-1)  # (N,N)
+    r2 = jnp.sum(dx * dx, axis=-1)  # (N,N)
     r = jnp.sqrt(r2)  # (N,N)
     r3 = r2 * r  # (N,N)
 
@@ -112,7 +115,7 @@ def gr_full(
     mask = ~jnp.eye(N, dtype=bool)  # (N,N)
 
     # Compute initial Newtonian accelerations
-    prefac = 1 / r3
+    prefac = 1.0 / r3
     prefac = jnp.where(mask, prefac, 0.0)
     a_newt = -jnp.sum(prefac[:, :, None] * dx * gms[None, :, None], axis=1)  # (N,3)
 
@@ -121,9 +124,11 @@ def gr_full(
     v_com = jnp.sum(v * gms[:, None], axis=0) / jnp.sum(gms)
     x = x - x_com
     v = v - v_com
+    # jax.debug.print("new_x: {x}", x=x[0][0])
+    # jax.debug.print("new_v: {v}\n", v=v[0][0])
 
     # Compute constant acceleration terms
-    v2 = jnp.sum(v**2, axis=1)  # (N,)
+    v2 = jnp.sum(v * v, axis=1)  # (N,)
     vdotv = jnp.dot(v, v.T)  # (N,N)
     dv = v[:, None, :] - v[None, :, :]  # (N,N,3)
     rdotv = jnp.sum(dx * v[None, :, :], axis=-1)  # (N,N)
@@ -134,21 +139,32 @@ def gr_full(
     a3 = -v2 / C2  # (N,)
     a4 = -2.0 * v2[None, :] / C2  # (N,N)
     a5 = (4.0 / C2) * vdotv  # (N,N)
-    a6 = (3.0 / (2.0 * C2)) * (rdotv**2 / r2)  # (N,N)
+    a6 = (3.0 / (2.0 * C2)) * (rdotv * rdotv / r2)  # (N,N)
     a7 = jnp.sum(dx * a_newt[None, :, :], axis=-1) / (2 * C2)  # (N,N)
 
     # Combine all factors
     factor1 = (a1 + a2 + a3)[:, None] + jnp.where(mask, a4 + a5 + a6 + a7, 0.0)  # (N,N)
+    jax.debug.print("a1: {x}", x=a1[0])
+    jax.debug.print("a2: {x}", x=a2[0])
+    jax.debug.print("a3: {x}", x=a3[0])
+    jax.debug.print("a4: {x}", x=a4[0][0])
+    jax.debug.print("a5: {x}", x=a5[0][0])
+    jax.debug.print("a6: {x}", x=a6[0][0])
+    jax.debug.print("a7: {x}", x=a7[0][0])
 
+    jax.debug.print("factor 1: {x}", x=factor1[0][0])
     # Calculate first part of a_const
     a_const = jnp.sum(
         gms[None, :, None] * dx * (factor1[:, :, None]) / r3[:, :, None],
         axis=1,
         where=mask[:, :, None],
     )  # (N,3)
+    jax.debug.print("part 1: {x}", x=a_const[0][0])
 
     # Second constant part
-    factor2 = jnp.sum(dx * (4 * v[:, None, :] - 3 * v[None, :, :]), axis=-1)  # (N,N)
+    factor2 = jnp.sum(
+        dx * (4.0 * v[:, None, :] - 3.0 * v[None, :, :]), axis=-1
+    )  # (N,N)
 
     # Add second part to a_const
     # a_const *= 0.0
@@ -156,19 +172,32 @@ def gr_full(
         (gms[None, :, None] / C2)
         * (
             (factor2[:, :, None] * dv / r3[:, :, None])
-            + (7 / 2 * a_newt[None, :, :] / r[:, :, None])
+            + (7.0 / 2.0 * a_newt[None, :, :] / r[:, :, None])
         ),
         axis=1,
         where=mask[:, :, None],
     )
+    z = jnp.sum(
+        (gms[None, :, None] / C2)
+        * (
+            (factor2[:, :, None] * dv / r3[:, :, None])
+            + (7.0 / 2.0 * a_newt[None, :, :] / r[:, :, None])
+        ),
+        axis=1,
+        where=mask[:, :, None],
+    )
+    jax.debug.print("part 2: {x}", x=z[0][0])
+
+    # jax.debug.print("init err: {x}", x=a_const[0][0]--0.002159817549947915)
+    jax.debug.print("a_const: {x}", x=a_const[0][0])
 
     def iteration_step(a_curr):
         rdota = jnp.sum(dx * a_curr[None, :, :], axis=-1)  # (N,N)
         non_const = jnp.sum(
-            (gms[None, :, None] / (2 * C2))
+            (gms[None, :, None] / (2.0 * C2))
             * (
                 (dx * rdota[:, :, None] / r3[:, :, None])
-                + (7 * a_curr[None, :, :] / r[:, :, None])
+                + (7.0 * a_curr[None, :, :] / r[:, :, None])
             ),
             axis=1,
             where=mask[:, :, None],
@@ -176,11 +205,14 @@ def gr_full(
         return a_const + non_const
 
     def do_nothing(carry):
+        # jax.debug.print("doing nothing")
         return carry
 
     def do_iteration(carry):
-        jax.debug.print("doing iteration")
+        # jax.debug.print("doing iteration")
         a_prev, a_curr, _ = carry
+        # jax.debug.print("{x}", x=a_curr[0][0])
+        # jax.debug.print("err: {x}", x=a_curr[0][0]--0.002159817549947915)
         a_next = iteration_step(a_curr)
         ratio = jnp.max(jnp.abs((a_next - a_curr) / a_next))
         return (a_curr, a_next, ratio)
@@ -189,7 +221,7 @@ def gr_full(
         a_prev, a_curr, ratio = carry
 
         # Use cond to either continue iteration or return current state
-        should_continue = ratio > jnp.finfo(jnp.float64).eps
+        should_continue = ratio > 2.220446049250313e-16  #
         new_carry = jax.lax.cond(should_continue, do_iteration, do_nothing, carry)
 
         return new_carry, None
