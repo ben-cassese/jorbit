@@ -17,15 +17,13 @@ from functools import partial
 from jorbit.data.constants import SPEED_OF_LIGHT
 
 
-# equivalent of rebx_calculate_gr_full in reboundx
-@partial(jax.jit, static_argnames=["max_iterations"])
-def gr_full(
+@jax.jit
+def constant_terms(
     x: jnp.ndarray,  # positions (N,3)
     v: jnp.ndarray,  # velocities (N,3)
     gms: jnp.ndarray,  # masses (N,)
-    max_iterations: int = 10,
     c2: float = SPEED_OF_LIGHT**2,
-) -> jnp.ndarray:
+):
 
     N = x.shape[0]
 
@@ -94,6 +92,20 @@ def gr_full(
 
     a_const_arr = part1_arr + part2_arr
     a_const = jnp.sum(a_const_arr, axis=1, where=mask[:, :, None])
+    return a_newt, a_const
+
+
+# equivalent of rebx_calculate_gr_full in reboundx
+@partial(jax.jit, static_argnames=["max_iterations"])
+def gr_full(
+    x: jnp.ndarray,  # positions (N,3)
+    v: jnp.ndarray,  # velocities (N,3)
+    gms: jnp.ndarray,  # masses (N,)
+    max_iterations: int = 10,
+    c2: float = SPEED_OF_LIGHT**2,
+) -> jnp.ndarray:
+
+    a_newt, a_const = constant_terms(x, v, gms, c2)
 
     def iteration_step(a_curr):
         rdota = jnp.sum(dx * a_curr[None, :, :], axis=-1)  # (N,N)

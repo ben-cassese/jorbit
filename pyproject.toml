@@ -12,6 +12,8 @@ dependencies = [
     "astroquery>=0.4.7",
     "jax>=0.4.35",
     "jplephem>=2.22",
+    "pandas>=2.2.3",
+    "tqdm>=4.67.1",
 ]
 
 [build-system]
