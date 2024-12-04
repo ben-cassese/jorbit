@@ -21,7 +21,8 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
 
     """
     # Calculate pairwise differences
-    dx = x[:, None, :] - x[None, :, :]  # (N,N,3)
+    N = inputs.positions.shape[0]
+    dx = inputs.positions[:, None, :] - inputs.positions[None, :, :]  # (N,N,3)
     r2 = jnp.sum(dx * dx, axis=-1)  # (N,N)
     r = jnp.sqrt(r2)  # (N,N)
     r3 = r2 * r  # (N,N)
@@ -31,5 +32,7 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
 
     prefac = 1.0 / r3
     prefac = jnp.where(mask, prefac, 0.0)
-    a_newt = -jnp.sum(prefac[:, :, None] * dx * gms[None, :, None], axis=1)  # (N,3)
+    a_newt = -jnp.sum(
+        prefac[:, :, None] * dx * jnp.exp(inputs.log_gms[None, :, None]), axis=1
+    )  # (N,3)
     return a_newt

@@ -12,11 +12,11 @@ class SystemState:
         self,
         positions,
         velocities,
-        gms,
+        log_gms,
         time=JORBIT_EPOCH,
         acceleration_func_kwargs=None,
     ):
-        self.gms = gms
+        self.log_gms = log_gms
         self.positions = positions
         self.velocities = velocities
         self.time = time
@@ -26,7 +26,7 @@ class SystemState:
         children = (
             self.positions,
             self.velocities,
-            self.gms,
+            self.log_gms,
             self.time,
             self.acceleration_func_kwargs,
         )
@@ -56,7 +56,7 @@ class LikelihoodState:
         self,
         positions,
         velocities,
-        gms,
+        log_gms,
         acceleration_func_kwargs,
         ind_of_observed_particle,
         gradient_masks,
@@ -66,7 +66,7 @@ class LikelihoodState:
     ):
         self.positions = positions
         self.velocities = velocities
-        self.gms = gms
+        self.log_gms = log_gms
         self.acceleration_func_kwargs = acceleration_func_kwargs
         self.ind_of_observed_particle = ind_of_observed_particle
         self.gradient_masks = gradient_masks
@@ -78,7 +78,7 @@ class LikelihoodState:
         children = (
             self.positions,
             self.velocities,
-            self.gms,
+            self.log_gms,
             self.time,
             self.acceleration_func_kwargs,
         )
