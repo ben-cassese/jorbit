@@ -18,7 +18,7 @@ INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
 
 DEFAULT_PLANET_EPHEMERIS_URL = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
 DEFAULT_ASTEROID_EPHEMERIS_URL = (
-    "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de440.bsp"
+    "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
 )
 
 # These are NOT from the JPL ephemeris comments, and are in units of AU^3 / day^2

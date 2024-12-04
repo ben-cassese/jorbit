@@ -15,14 +15,14 @@ class Particle:
         v=None,
         elements=None,
         time=None,
-        gm=0,
+        log_gm=0,
         observations=None,
         name="",
     ):
         self.x = x
         self.v = v
         self.elements = elements
-        self.gm = gm
+        self.log_gm = log_gm
         self.time = time
         self.observations = observations
         self.name = name

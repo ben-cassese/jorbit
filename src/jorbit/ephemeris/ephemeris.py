@@ -177,7 +177,11 @@ class Ephemeris:
 
         new_coeff = jnp.array(extra_padded)
 
-        return FunctionalEphemeris(new_inits, sso_intlen, new_coeff, self.sso_log_gms)
+        log_gms = []
+        for name in self.ssos:
+            log_gms.append(self.sso_log_gms[name])
+        log_gms = jnp.array(log_gms)
+        return FunctionalEphemeris(new_inits, sso_intlen, new_coeff, log_gms)
 
     def state(self, time):
         xs, vs, accs = self.FunctionalEphemeris.state(time.tdb.jd)
