@@ -198,7 +198,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -219,7 +219,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -242,7 +242,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -266,7 +266,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -293,7 +293,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -323,7 +323,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -361,7 +361,7 @@ def ias15_step(
         acc_state = SystemState(
             positions=x,
             velocities=v,
-            gms=initial_system_state.gms,
+            log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         )
@@ -507,7 +507,7 @@ def ias15_step(
     new_system_state = SystemState(
         positions=x0,
         velocities=v0,
-        gms=initial_system_state.gms,
+        log_gms=initial_system_state.log_gms,
         time=t_beginning + dt_done,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
