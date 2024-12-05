@@ -354,3 +354,4 @@ IAS15_D = jnp.array(
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
 IAS15_SAFETY_FACTOR = 0.25
+IAS15_MIN_DT = 0.0
