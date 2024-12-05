@@ -3,14 +3,33 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+import erfa
+
 ################################################################################
 # Misc constants
 ################################################################################
 
-JORBIT_EPOCH = 1.0
-
 SPEED_OF_LIGHT = 173.14463267424034
 INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
+
+# no longer used- horizons "ecliptic" J2000 is just a 84381.448" rotation about
+# the ICRS x-axis
+# ICRS_TO_BARY_ROT_MAT = jnp.array(erfa.ecm06(2451545.0, 0.0))  # J2000
+# BARY_TO_ICRS_ROT_MAT = jnp.array(ICRS_TO_BARY_ROT_MAT.T)
+# from mpmath import mp
+# mp.dps = 24
+# 84381.448 / (1/(2 * mp.pi / 360 / 60 / 60)) =
+# 0.40909280422232897, then mp.cos and mp.sin of that
+ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT = jnp.array(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 0.917482062069181818110850924, 0.397777155931913719203212896],
+        [0.0, -0.397777155931913719203212896, 0.917482062069181818110850924],
+    ]
+)
+HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
+
+EPSILON = jnp.finfo(jnp.float64).eps
 
 ################################################################################
 # Ephemeris constants

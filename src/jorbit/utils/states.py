@@ -3,8 +3,6 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from jorbit.data.constants import JORBIT_EPOCH
-
 
 @jax.tree_util.register_pytree_node_class
 class SystemState:
@@ -13,7 +11,7 @@ class SystemState:
         positions,
         velocities,
         log_gms,
-        time=JORBIT_EPOCH,
+        time=0.0,
         acceleration_func_kwargs=None,
     ):
         self.log_gms = log_gms
