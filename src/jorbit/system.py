@@ -61,45 +61,18 @@ class System:
                 earliest_time=Time("1980-01-01"),
                 latest_time=Time("2100-01-01"),
                 ssos="default planets",
-                ephem_file=DEFAULT_PLANET_EPHEMERIS_URL,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(
-                eph.FunctionalEphemeris
-            )
-            self.acceleration_func = acc_func
-        elif acceleration_func == "newtonian asteroids":
-            eph = Ephemeris(
-                earliest_time=Time("1980-01-01"),
-                latest_time=Time("2100-01-01"),
-                ssos="large asteroids",
-                ephem_file=DEFAULT_ASTEROID_EPHEMERIS_URL,
-            )
-            acc_func = create_newtonian_ephemeris_acceleration_func(
-                eph.FunctionalEphemeris
-            )
+            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
             self.acceleration_func = acc_func
         elif acceleration_func == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=Time("1980-01-01"),
                 latest_time=Time("2100-01-01"),
-                ssos="default planets",
-                ephem_file=DEFAULT_PLANET_EPHEMERIS_URL,
-            )
-            acc_func1 = create_newtonian_ephemeris_acceleration_func(
-                eph.FunctionalEphemeris
+                ssos="default solar system",
             )
 
-            eph = Ephemeris(
-                earliest_time=Time("1980-01-01"),
-                latest_time=Time("2100-01-01"),
-                ssos="large asteroids",
-                ephem_file=DEFAULT_ASTEROID_EPHEMERIS_URL,
-            )
-            acc_func2 = create_newtonian_ephemeris_acceleration_func(
-                eph.FunctionalEphemeris
-            )
+            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
 
-            acc_func = jax.tree_util.Partial(lambda x: acc_func1(x) + acc_func2(x))
             self.acceleration_func = acc_func
 
     # break up the combinations of particles into "likelihood blocks", where each block

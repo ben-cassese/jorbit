@@ -5,14 +5,13 @@ import jax.numpy as jnp
 
 from jorbit.utils.states import SystemState
 from jorbit.accelerations.newtonian import newtonian_gravity
-from jorbit.ephemeris.functional_ephemeris import FunctionalEphemeris
 
 
-def create_newtonian_ephemeris_acceleration_func(functional_ephem):
+def create_newtonian_ephemeris_acceleration_func(ephem_processor):
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        perturber_xs, _, _ = functional_ephem.state(inputs.time)
-        perturber_log_gms = functional_ephem.log_gms
+        perturber_xs, _, _ = ephem_processor.state(inputs.time)
+        perturber_log_gms = ephem_processor.log_gms
 
         new_state = SystemState(
             positions=jnp.concatenate([inputs.positions, perturber_xs]),
