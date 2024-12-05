@@ -20,6 +20,11 @@ DEFAULT_PLANET_EPHEMERIS_URL = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de
 DEFAULT_ASTEROID_EPHEMERIS_URL = (
     "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
 )
+HUGE_ASTEROID_EPHEMERIS_URL = (
+    "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de441/sb441-n373.bsp"
+)
+# also here's 441
+# "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de441.bsp"
 
 # These are NOT from the JPL ephemeris comments, and are in units of AU^3 / day^2
 # They are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
@@ -87,6 +92,38 @@ LARGE_ASTEROID_IDS = {
     "davida": 2000511,
     "interamnia": 2000704,
 }
+
+ALL_PLANET_NAMES = [
+    "sun",
+    "mercury",
+    "venus",
+    "earth",
+    "mars",
+    "jupiter",
+    "saturn",
+    "uranus",
+    "neptune",
+    "pluto",
+]
+
+LARGE_ASTEROID_NAMES = [
+    "ceres",
+    "pallas",
+    "juno",
+    "vesta",
+    "iris",
+    "hygiea",
+    "eunomia",
+    "psyche",
+    "euphrosyne",
+    "europa",
+    "cybele",
+    "sylvia",
+    "thisbe",
+    "camilla",
+    "davida",
+    "interamnia",
+]
 
 ################################################################################
 # Yoshida constants

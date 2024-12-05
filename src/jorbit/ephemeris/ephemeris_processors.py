@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 
 @jax.tree_util.register_pytree_node_class
-class FunctionalEphemeris:
+class EphemerisProcessor:
     def __init__(self, init, intlen, coeffs, log_gms):
         self.init = init
         self.intlen = intlen
@@ -82,3 +82,35 @@ class FunctionalEphemeris:
             self.init, self.intlen, self.coeffs, tdb
         )
         return x, v, a
+
+
+@jax.tree_util.register_pytree_node_class
+class EphemerisPostProcessor:
+    def __init__(self, ephs, postprocessing_func):
+        self.ephs = ephs
+        self.postprocessing_func = postprocessing_func
+        log_gms = jnp.empty(0)
+        for eph in ephs:
+            log_gms = jnp.concatenate([log_gms, eph.log_gms])
+        self.log_gms = log_gms
+
+    def tree_flatten(self):
+        children = (self.ephs, self.postprocessing_func)
+        aux_data = None
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+
+    @jax.jit
+    def state(self, tdb):
+        x = jnp.empty((0, 3))
+        v = jnp.empty((0, 3))
+        a = jnp.empty((0, 3))
+        for eph in self.ephs:
+            _x, _v, _a = eph.state(tdb)
+            x = jnp.vstack([x, _x])
+            v = jnp.vstack([v, _v])
+            a = jnp.vstack([a, _a])
+        return self.postprocessing_func(x, v, a)
