@@ -48,7 +48,6 @@ HUGE_ASTEROID_EPHEMERIS_URL = (
 # These are NOT from the JPL ephemeris comments, and are in units of AU^3 / day^2
 # They are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
 # which lists Earth as apparently 1% different from its de440 and de441 value
-TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932
 ALL_PLANET_LOG_GMS = {
     "mercury": jnp.log(4.9125001948893175e-11),
     "venus": jnp.log(7.2434523326441177e-10),
@@ -80,6 +79,10 @@ LARGE_ASTEROID_LOG_GMS = {
     "davida": jnp.log(8.683625349228651e-15),
     "interamnia": jnp.log(6.311034342087888e-15),
 }
+
+# just the sum of all the planets and large asteroids above
+TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932
+
 
 ALL_PLANET_IDS = {
     "mercury": 1,

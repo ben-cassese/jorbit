@@ -75,3 +75,75 @@ def elements_to_cartesian(a, ecc, nu, inc, Omega, omega):
     v = jax.vmap(lambda x, y: jnp.matmul(x, y))(v_w, rot)
 
     return x, v
+
+
+def cartesian_to_elements(x, v):
+    r_mag = jnp.linalg.norm(x, axis=1)
+    v_mag = jnp.linalg.norm(v, axis=1)
+
+    # Specific angular momentum
+    h = jnp.cross(x, v)
+    h_mag = jnp.linalg.norm(h, axis=1)
+
+    # Eccentricity vector
+    e_vec = jnp.cross(v, h) / TOTAL_SOLAR_SYSTEM_GM - x / r_mag[:, jnp.newaxis]
+    ecc = jnp.linalg.norm(e_vec, axis=1)
+
+    # Specific orbital energy
+    specific_energy = v_mag**2 / 2 - GM / r_mag
+
+    a = -TOTAL_SOLAR_SYSTEM_GM / (2 * specific_energy)
+
+    inc = jnp.arccos(h[:, 2] / h_mag) * 180 / jnp.pi
+
+    n = jnp.cross(jnp.array([0, 0, 1]), h)
+    n_mag = jnp.linalg.norm(n, axis=1)
+
+    Omega = jnp.where(
+        n[:, 1] >= 0,
+        jnp.arccos(n[:, 0] / n_mag) * 180 / jnp.pi,
+        360.0 - jnp.arccos(n[:, 0] / n_mag) * 180 / jnp.pi,
+    )
+    Omega = jnp.where(n_mag == 0, 0, Omega)
+
+    omega = jnp.where(
+        n_mag > 0,
+        jnp.where(
+            e_vec[:, 2] >= 0,
+            jnp.arccos(
+                jnp.clip(
+                    jnp.sum(n * e_vec, axis=1)
+                    / (n_mag * jnp.linalg.norm(e_vec, axis=1)),
+                    -1,
+                    1,
+                )
+            )
+            * 180
+            / jnp.pi,
+            360
+            - jnp.arccos(
+                jnp.clip(
+                    jnp.sum(n * e_vec, axis=1)
+                    / (n_mag * jnp.linalg.norm(e_vec, axis=1)),
+                    -1,
+                    1,
+                )
+            )
+            * 180
+            / jnp.pi,
+        ),
+        0,
+    )
+
+    nu = jnp.where(
+        jnp.sum(x * v, axis=1) >= 0,
+        jnp.arccos(jnp.clip(jnp.sum(e_vec * x, axis=1) / (ecc * r_mag), -1, 1))
+        * 180
+        / jnp.pi,
+        360
+        - jnp.arccos(jnp.clip(jnp.sum(e_vec * x, axis=1) / (ecc * r_mag), -1, 1))
+        * 180
+        / jnp.pi,
+    )
+
+    return {"a": a, "ecc": ecc, "nu": nu, "inc": inc, "Omega": Omega, "omega": omega}
