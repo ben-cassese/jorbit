@@ -3,6 +3,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from jorbit.utils.states import SystemState
+from jorbit.integrators import initialize_ias15_integrator_state, ias15_evolve
+from jorbit.data.constants import INV_SPEED_OF_LIGHT
+
 
 @jax.jit
 def sky_sep(ra1, dec1, ra2, dec2):
@@ -46,14 +50,13 @@ def on_sky(
             acc_func,
             jnp.array([state.time - light_travel_time]),
             initial_integrator_state,
-            n_steps=5,
+            n_steps=3,
         )
 
         return final_system_state.positions, None
 
-    xz = jax.lax.scan(scan_func, state.positions, None, length=2)[0]
-
-    X = xz - observer_position
+    xz, _ = jax.lax.scan(scan_func, state.positions, None, length=3)
+    X = xz - observer_position[None, :]
     calc_ra = jnp.mod(jnp.arctan2(X[:, 1], X[:, 0]) + 2 * jnp.pi, 2 * jnp.pi)
     calc_dec = jnp.pi / 2 - jnp.arccos(X[:, -1] / jnp.linalg.norm(X, axis=1))
     return calc_ra, calc_dec
