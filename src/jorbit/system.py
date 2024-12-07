@@ -11,6 +11,8 @@ from jorbit.particle import Particle
 from jorbit.utils.states import SystemState
 
 from jorbit.accelerations import create_newtonian_ephemeris_acceleration_func
+from jorbit.integrators import ias15_evolve
+
 from jorbit.data.constants import (
     DEFAULT_PLANET_EPHEMERIS_URL,
     DEFAULT_ASTEROID_EPHEMERIS_URL,
@@ -23,7 +25,7 @@ class System:
         particles,
         acceleration_func="newtonian planets",
         acceleration_func_kwargs=None,
-        integrator=None,
+        integrator=ias15,
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2100-01-01"),
     ):
@@ -31,8 +33,12 @@ class System:
         self.particles = particles
         self.checks()
 
-        self.setup_acceleration_func(acceleration_func)
+        self._setup_acceleration_func(acceleration_func)
+        self._setup_integrator(integrator)
 
+        # the global state for the system, used
+        # when evolving the entire thing simultaneously
+        # to a certain time
         xs = jnp.array([p.x for p in particles])
         vs = jnp.array([p.v for p in particles])
         log_gms = jnp.array([p.log_gm for p in particles])
@@ -43,6 +49,8 @@ class System:
             time=self.epoch,
             acceleration_func_kwargs=acceleration_func_kwargs,
         )
+
+        self._likelihood_units = self._setup_likelihood_units()
 
     def __repr__(self):
         return f"*************\njorbit System\n time: {self.state.time}\n particles: {self.particles}\n*************"
@@ -55,7 +63,7 @@ class System:
         ), "All particles must have the same reference time"
         self.epoch = t0
 
-    def setup_acceleration_func(self, acceleration_func):
+    def _setup_acceleration_func(self, acceleration_func):
         if acceleration_func == "newtonian planets":
             eph = Ephemeris(
                 earliest_time=Time("1980-01-01"),
@@ -70,11 +78,45 @@ class System:
                 latest_time=Time("2100-01-01"),
                 ssos="default solar system",
             )
-
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
 
             self.acceleration_func = acc_func
 
-    # break up the combinations of particles into "likelihood blocks", where each block
-    # is the minimum number of particles needed to compute the likelihood of *1* set
-    # of observations. This is useful for parallelizing the likelihood computation.
+    def _setup_integrator(self, integrator):
+        if integrator != "ias15":
+            raise NotImplementedError(
+                "Currently only the IAS15 integrator is supported"
+            )
+
+        a0 = self.acceleration_func(self.state)
+        self.state.integrator_state = initialize_ias15_integrator_state(a0)
+        self.integrator = ias15_evolve
+
+    def _setup_likelihood_units(self):
+        num_massive_particles = 0
+
+    def _parse_likelihood(self):
+        return parse_likelihood()
+
+    def _evaluate_likelihood_chunk(self, chunk):
+        pass
+
+    def model(self, parameters):
+        # evaluate all the likelihood chunk
+        pass
+
+    def integrate(self):
+        pass
+
+
+@jax.jit
+def parse_likelihood():
+    # take in some representation of likelihood args,
+    # return them properly split into the different
+    # likelihood chunks
+    pass
+
+
+@jax.jit
+def evaluate_likelihood_chunk(chunk):
+    pass

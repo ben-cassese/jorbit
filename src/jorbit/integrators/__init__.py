@@ -185,7 +185,7 @@ def initialize_ias15_integrator_state(a0):
         csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         a0=a0,
-        dt=0.1,
+        dt=10.0,  # 10 days
         dt_last_done=0.0,
     )
 

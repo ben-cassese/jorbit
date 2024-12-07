@@ -10,16 +10,19 @@ from jorbit.data.constants import (
 )
 
 
+@jax.jit
 def icrs_to_horizons_ecliptic(xs):
     rotated_xs = jnp.dot(xs, ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T)
     return rotated_xs
 
 
+@jax.jit
 def horizons_ecliptic_to_icrs(xs):
     rotated_xs = jnp.dot(xs, HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT.T)
     return rotated_xs
 
 
+@jax.jit
 def elements_to_cartesian(a, ecc, nu, inc, Omega, omega):
     # # Each of the elements are (n_particles, )
     # # The angles are in *degrees*. Always assuming orbital element angles are in degrees
@@ -77,6 +80,7 @@ def elements_to_cartesian(a, ecc, nu, inc, Omega, omega):
     return x, v
 
 
+@jax.jit
 def cartesian_to_elements(x, v):
     r_mag = jnp.linalg.norm(x, axis=1)
     v_mag = jnp.linalg.norm(v, axis=1)
