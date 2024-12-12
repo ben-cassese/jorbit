@@ -24,6 +24,7 @@ build-backend = "hatchling.build"
 dev = [
     "black[jupyter]>=24.10.0",
     "ipykernel>=6.29.5",
+    "lightkurve>=2.5.0",
     "matplotlib>=3.9.2",
     "mpmath>=1.3.0",
     "myst-parser>=4.0.0",
