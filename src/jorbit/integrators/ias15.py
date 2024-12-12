@@ -600,9 +600,12 @@ def ias15_evolve(
         system_state, integrator_state = evolve(
             system_state, acceleration_func, final_time, integrator_state
         )
-        return (system_state, integrator_state), system_state.positions
+        return (system_state, integrator_state), (
+            system_state.positions,
+            system_state.velocities,
+        )
 
-    (final_system_state, final_integrator_state), positions = jax.lax.scan(
-        scan_func, (initial_system_state, initial_integrator_state), times
+    (final_system_state, final_integrator_state), (positions, velocities) = (
+        jax.lax.scan(scan_func, (initial_system_state, initial_integrator_state), times)
     )
-    return positions, final_system_state, final_integrator_state
+    return positions, velocities, final_system_state, final_integrator_state

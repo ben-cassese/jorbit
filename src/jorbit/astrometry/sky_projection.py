@@ -45,12 +45,14 @@ def on_sky(
         earth_distance = jnp.linalg.norm(xz - observer_position)
         light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
 
-        positions, final_system_state, final_integrator_state = ias15_evolve(
-            state,
-            acc_func,
-            jnp.array([state.time - light_travel_time]),
-            initial_integrator_state,
-            n_steps=3,
+        positions, velocities, final_system_state, final_integrator_state = (
+            ias15_evolve(
+                state,
+                acc_func,
+                jnp.array([state.time - light_travel_time]),
+                initial_integrator_state,
+                n_steps=3,
+            )
         )
 
         return final_system_state.positions, None
