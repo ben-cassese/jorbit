@@ -8,31 +8,44 @@ from jorbit.utils.states import SystemState
 
 @jax.jit
 def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
-    """
-    At an instantaneous moment in time, calculate the acceleration on a set of particles
-    due to Newtonian gravity.
+    M = inputs.massive_positions.shape[0]  # number of massive particles
+    T = inputs.tracer_positions.shape[0]  # number of tracer particles
 
-    Args:
-        inputs: AccelerationInputs object containing the positions, velocities, and GMs
-            of the particles.
+    # 1. Compute accelerations on massive particles due to other massive particles
+    dx_massive = (
+        inputs.massive_positions[:, None, :] - inputs.massive_positions[None, :, :]
+    )  # (M,M,3)
+    r2_massive = jnp.sum(dx_massive * dx_massive, axis=-1)  # (M,M)
+    r3_massive = r2_massive * jnp.sqrt(r2_massive)  # (M,M)
 
-    Returns:
-        accelerations: Accelerations on each particle due to Newtonian gravity
+    # Mask for i!=j calculations among massive particles
+    mask_massive = ~jnp.eye(M, dtype=bool)  # (M,M)
+    prefac_massive = jnp.where(mask_massive, 1.0 / r3_massive, 0.0)
 
-    """
-    # Calculate pairwise differences
-    N = inputs.positions.shape[0]
-    dx = inputs.positions[:, None, :] - inputs.positions[None, :, :]  # (N,N,3)
-    r2 = jnp.sum(dx * dx, axis=-1)  # (N,N)
-    r = jnp.sqrt(r2)  # (N,N)
-    r3 = r2 * r  # (N,N)
+    # Accelerations on massive particles from massive particles
+    a_massive = -jnp.sum(
+        prefac_massive[:, :, None]
+        * dx_massive
+        * jnp.exp(inputs.log_gms[None, :, None]),
+        axis=1,
+    )  # (M,3)
 
-    # Mask for i!=j calculations
-    mask = ~jnp.eye(N, dtype=bool)  # (N,N)
+    # 2. Compute accelerations on tracer particles due to massive particles
+    # (This will work even when T=0 due to JAX's shape polymorphism)
+    dx_tracers = (
+        inputs.tracer_positions[:, None, :] - inputs.massive_positions[None, :, :]
+    )  # (T,M,3)
+    r2_tracers = jnp.sum(dx_tracers * dx_tracers, axis=-1)  # (T,M)
+    r3_tracers = r2_tracers * jnp.sqrt(r2_tracers)  # (T,M)
 
-    prefac = 1.0 / r3
-    prefac = jnp.where(mask, prefac, 0.0)
-    a_newt = -jnp.sum(
-        prefac[:, :, None] * dx * jnp.exp(inputs.log_gms[None, :, None]), axis=1
-    )  # (N,3)
-    return a_newt
+    # Accelerations on tracer particles from massive particles
+    a_tracers = -jnp.sum(
+        (1.0 / r3_tracers)[:, :, None]
+        * dx_tracers
+        * jnp.exp(inputs.log_gms[None, :, None]),
+        axis=1,
+    )  # (T,3)
+
+    # Combine accelerations for all particles
+    # This works even when T=0 thanks to JAX's handling of zero-sized arrays
+    return jnp.concatenate([a_massive, a_tracers], axis=0)
