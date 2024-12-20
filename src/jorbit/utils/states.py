@@ -8,22 +8,28 @@ import jax.numpy as jnp
 class SystemState:
     def __init__(
         self,
-        positions,
-        velocities,
+        tracer_positions,
+        tracer_velocities,
+        massive_positions,
+        massive_velocities,
         log_gms,
         time=0.0,
         acceleration_func_kwargs=None,
     ):
+        self.tracer_positions = tracer_positions
+        self.tracer_velocities = tracer_velocities
+        self.massive_positions = massive_positions
+        self.massive_velocities = massive_velocities
         self.log_gms = log_gms
-        self.positions = positions
-        self.velocities = velocities
         self.time = time
         self.acceleration_func_kwargs = acceleration_func_kwargs
 
     def tree_flatten(self):
         children = (
-            self.positions,
-            self.velocities,
+            self.tracer_positions,
+            self.tracer_velocities,
+            self.massive_positions,
+            self.massive_velocities,
             self.log_gms,
             self.time,
             self.acceleration_func_kwargs,
