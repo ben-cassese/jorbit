@@ -123,8 +123,17 @@ def ias15_step(
 
     # for convenience, rename initial state
     t_beginning = initial_system_state.time
-    x0 = initial_system_state.positions
-    v0 = initial_system_state.velocities
+    M = initial_system_state.massive_positions.shape[0]
+    T = initial_system_state.tracer_positions.shape[0]
+    x0 = jnp.concatenate(
+        (initial_system_state.massive_positions, initial_system_state.tracer_positions)
+    )
+    v0 = jnp.concatenate(
+        (
+            initial_system_state.massive_velocities,
+            initial_system_state.tracer_velocities,
+        )
+    )
     a0 = initial_integrator_state.a0
 
     dt = initial_integrator_state.dt
@@ -196,8 +205,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -217,8 +228,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -240,8 +253,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -264,8 +279,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -291,8 +308,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -321,8 +340,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -359,8 +380,10 @@ def ias15_step(
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
         # fmt: on
         acc_state = SystemState(
-            positions=x,
-            velocities=v,
+            massive_positions=x[:M],
+            massive_velocities=v[:M],
+            tracer_positions=x[M:],
+            tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
             time=step_time,
             acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
@@ -505,8 +528,10 @@ def ias15_step(
     )
 
     new_system_state = SystemState(
-        positions=x0,
-        velocities=v0,
+        massive_positions=x0[:M],
+        massive_velocities=v0[:M],
+        tracer_positions=x0[M:],
+        tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
         time=t_beginning + dt_done,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,

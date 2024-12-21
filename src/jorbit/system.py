@@ -91,32 +91,3 @@ class System:
         a0 = self.acceleration_func(self.state)
         self.state.integrator_state = initialize_ias15_integrator_state(a0)
         self.integrator = ias15_evolve
-
-    def _setup_likelihood_units(self):
-        num_massive_particles = 0
-
-    def _parse_likelihood(self):
-        return parse_likelihood()
-
-    def _evaluate_likelihood_chunk(self, chunk):
-        pass
-
-    def model(self, parameters):
-        # evaluate all the likelihood chunk
-        pass
-
-    def integrate(self):
-        pass
-
-
-@jax.jit
-def parse_likelihood():
-    # take in some representation of likelihood args,
-    # return them properly split into the different
-    # likelihood chunks
-    pass
-
-
-@jax.jit
-def evaluate_likelihood_chunk(chunk):
-    pass

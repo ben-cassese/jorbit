@@ -18,3 +18,6 @@ if (not is_url_in_cache(DEFAULT_PLANET_EPHEMERIS_URL)) or (
         cache=True,
         show_progress=True,
     )
+
+
+from jorbit.particle import Particle
