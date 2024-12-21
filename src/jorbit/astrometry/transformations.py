@@ -94,7 +94,7 @@ def cartesian_to_elements(x, v):
     ecc = jnp.linalg.norm(e_vec, axis=1)
 
     # Specific orbital energy
-    specific_energy = v_mag**2 / 2 - GM / r_mag
+    specific_energy = v_mag**2 / 2 - TOTAL_SOLAR_SYSTEM_GM / r_mag
 
     a = -TOTAL_SOLAR_SYSTEM_GM / (2 * specific_energy)
 
@@ -150,4 +150,4 @@ def cartesian_to_elements(x, v):
         / jnp.pi,
     )
 
-    return {"a": a, "ecc": ecc, "nu": nu, "inc": inc, "Omega": Omega, "omega": omega}
+    return a, ecc, nu, inc, Omega, omega
