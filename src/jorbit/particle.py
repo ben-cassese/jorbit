@@ -9,6 +9,7 @@ from jorbit.accelerations import (
     create_newtonian_ephemeris_acceleration_func,
     create_gr_ephemeris_acceleration_func,
 )
+from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.utils.states import CartesianState, KeplerianState
 
@@ -36,13 +37,15 @@ class Particle:
         self.observations = observations
         self.name = name
         self.gravity = gravity
-        self.integrator_func = integrator
+        self.integrator = integrator
         self.earliest_time = earliest_time
         self.latest_time = latest_time
 
         self._setup()
 
         self._setup_acceleration_func()
+
+        self._setup_integrator()
 
     def __repr__(self):
         return f"Particle: {self.name}"
@@ -111,10 +114,27 @@ class Particle:
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
             self.gravity = acc_func
 
+    def _setup_integrator(self):
+        if self.integrator != "ias15":
+            raise NotImplementedError(
+                "Currently only the IAS15 integrator is supported"
+            )
+
+        a0 = self.gravity(self.cartesian_state.to_system())
+        self.integrator_state = initialize_ias15_integrator_state(a0)
+        self.integrator = jax.tree_util.Partial(ias15_evolve)
+
     def integrate(self, times, state=None):
         if state is None:
             state = self.cartesian_state
-        return _integrate(times, state, self.gravity, self.integrator_func)
+        if type(times) == Time:
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+        positions, velocities, final_system_state, final_integrator_state = _integrate(
+            times, state, self.gravity, self.integrator, self.integrator_state
+        )
+        return positions[0], velocities[0]
 
     def ephemeris(self, times=None, state=None, observer_positions=None):
         pass
@@ -141,18 +161,11 @@ def _integrate(
     particle_state,
     acc_func,
     integrator_func,
+    integrator_state,
 ):
-    state = particle_state.to_cartesian()
-    system_state = SystemState(
-        positions=jnp.array([state.x]),
-        velocities=jnp.array([state.v]),
-        log_gms=jnp.array([state.log_gm]),
-        time=state.time,
-        acceleration_func_kwargs=state.acceleration_func_kwargs,
-    )
-
+    state = particle_state.to_system()
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
-        system_state, acc_func, times, integrator_state
+        state, acc_func, times, integrator_state
     )
 
-    return positions[0], velocities[0]
+    return positions, velocities, final_system_state, final_integrator_state

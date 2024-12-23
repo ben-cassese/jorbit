@@ -36,19 +36,30 @@ class KeplerianState:
 
     def to_cartesian(self):
         x, v = elements_to_cartesian(
-            jnp.array([self.semi]),
-            jnp.array([self.ecc]),
-            jnp.array([self.inc]),
-            jnp.array([self.Omega]),
-            jnp.array([self.omega]),
-            jnp.array([self.nu]),
+            self.semi,
+            self.ecc,
+            self.nu,
+            self.inc,
+            self.Omega,
+            self.omega,
         )
-        x = icrs_to_horizons_ecliptic(x)
-        v = icrs_to_horizons_ecliptic(v)
+        x = horizons_ecliptic_to_icrs(x)
+        v = horizons_ecliptic_to_icrs(v)
         return CartesianState(x=x, v=v, time=self.time)
 
     def to_keplerian(self):
         return self
+
+    def to_system(self):
+        c = self.to_cartesian()
+        return SystemState(
+            tracer_positions=c.x,
+            tracer_velocities=c.v,
+            massive_positions=jnp.empty((0, 3)),
+            massive_velocities=jnp.empty((0, 3)),
+            log_gms=jnp.empty((0,)),
+            time=self.time,
+        )
 
 
 @chex.dataclass
@@ -58,8 +69,8 @@ class CartesianState:
     time: float
 
     def to_keplerian(self):
-        x = horizons_ecliptic_to_icrs(self.x)
-        v = horizons_ecliptic_to_icrs(self.v)
+        x = icrs_to_horizons_ecliptic(self.x)
+        v = icrs_to_horizons_ecliptic(self.v)
         a, ecc, nu, inc, Omega, omega = cartesian_to_elements(x, v)
         return KeplerianState(
             semi=a, ecc=ecc, inc=inc, Omega=Omega, omega=omega, nu=nu, time=self.time
@@ -68,133 +79,12 @@ class CartesianState:
     def to_cartesian(self):
         return self
 
-
-# @jax.tree_util.register_pytree_node_class
-# class SystemState:
-#     def __init__(
-#         self,
-#         tracer_positions,
-#         tracer_velocities,
-#         massive_positions,
-#         massive_velocities,
-#         log_gms,
-#         time=0.0,
-#         acceleration_func_kwargs=None,
-#     ):
-#         self.tracer_positions = tracer_positions
-#         self.tracer_velocities = tracer_velocities
-#         self.massive_positions = massive_positions
-#         self.massive_velocities = massive_velocities
-#         self.log_gms = log_gms
-#         self.time = time
-#         self.acceleration_func_kwargs = acceleration_func_kwargs
-
-#     def tree_flatten(self):
-#         children = (
-#             self.tracer_positions,
-#             self.tracer_velocities,
-#             self.massive_positions,
-#             self.massive_velocities,
-#             self.log_gms,
-#             self.time,
-#             self.acceleration_func_kwargs,
-#         )
-#         aux_data = None
-#         return children, aux_data
-
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, children):
-#         return cls(*children)
-
-
-# @jax.tree_util.register_pytree_node_class
-# class KeplerianState:
-#     def __init__(
-#         self,
-#         semi,
-#         ecc,
-#         inc,
-#         Omega,
-#         omega,
-#         nu,
-#         time,
-#     ):
-#         self.semi = semi
-#         self.ecc = ecc
-#         self.inc = inc
-#         self.Omega = Omega
-#         self.omega = omega
-#         self.nu = nu
-#         self.time = time
-
-#     def tree_flatten(self):
-#         children = (
-#             self.semi,
-#             self.ecc,
-#             self.inc,
-#             self.Omega,
-#             self.omega,
-#             self.nu,
-#             self.time,
-#         )
-#         aux_data = None
-#         return children, aux_data
-
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, children):
-#         return cls(*children)
-
-#     @jax.jit
-#     def to_cartesian(self):
-#         x, v = elements_to_cartesian(
-#             jnp.array([self.semi]),
-#             jnp.array([self.ecc]),
-#             jnp.array([self.inc]),
-#             jnp.array([self.Omega]),
-#             jnp.array([self.omega]),
-#             jnp.array([self.nu]),
-#         )
-#         x = icrs_to_horizons_ecliptic(x)
-#         v = icrs_to_horizons_ecliptic(v)
-#         return CartesianState(x, v, self.time)
-
-#     @jax.jit
-#     def to_keplerian(self):
-#         return self
-
-
-# @jax.tree_util.register_pytree_node_class
-# class CartesianState:
-#     def __init__(
-#         self,
-#         x,
-#         v,
-#         time,
-#     ):
-#         self.x = x
-#         self.v = v
-#         self.time = time
-
-#     def tree_flatten(self):
-#         children = (
-#             self.x,
-#             self.v,
-#             self.time,
-#         )
-#         aux_data = None
-#         return children, aux_data
-
-#     @classmethod
-#     def tree_unflatten(cls, aux_data, children):
-#         return cls(*children)
-
-#     @jax.jit
-#     def to_keplerian(self):
-#         x = horizons_ecliptic_to_icrs(self.x)
-#         v = horizons_ecliptic_to_icrs(self.v)
-#         a, ecc, nu, inc, Omega, omega = cartesian_to_elements(x, v)
-#         return KeplerianState(a, ecc, inc, Omega, omega, nu, self.time)
-
-#     @jax.jit
-#     def to_cartesian(self):
-#         return self
+    def to_system(self):
+        return SystemState(
+            tracer_positions=self.x,
+            tracer_velocities=self.v,
+            massive_positions=jnp.empty((0, 3)),
+            massive_velocities=jnp.empty((0, 3)),
+            log_gms=jnp.empty((0,)),
+            time=self.time,
+        )

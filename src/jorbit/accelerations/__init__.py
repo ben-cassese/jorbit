@@ -17,7 +17,7 @@ def create_newtonian_ephemeris_acceleration_func(ephem_processor):
         new_state = SystemState(
             massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
             massive_velocities=jnp.concatenate(
-                [jnp.zeros_like(perturber_xs), inputs.velocities]
+                [jnp.zeros_like(perturber_xs), inputs.massive_velocities]
             ),
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
@@ -42,7 +42,9 @@ def create_gr_ephemeris_acceleration_func(ephem_processor):
 
         new_state = SystemState(
             massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
-            massive_velocities=jnp.concatenate([perturber_vs, inputs.velocities]),
+            massive_velocities=jnp.concatenate(
+                [perturber_vs, inputs.massive_velocities]
+            ),
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
             log_gms=jnp.concatenate([perturber_log_gms, inputs.log_gms]),
