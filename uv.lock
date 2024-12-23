@@ -8,6 +8,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "absl-py"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/8f/fc001b92ecc467cc32ab38398bd0bfb45df46e7523bf33c2ad22a505f06e/absl-py-2.1.0.tar.gz", hash = "sha256:7820790efbb316739cde8b4e19357243fc3608a152024288513dd968d7d959ff", size = 118055 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a2/ad/e0d3c824784ff121c03cc031f944bc7e139a8f1870ffd2845cc2dd76f6c4/absl_py-2.1.0-py3-none-any.whl", hash = "sha256:526a04eadab8b4ee719ce68f204172ead1027549089702d99b9059f129ff1308", size = 133706 },
+]
+
+[[package]]
 name = "accessible-pygments"
 version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -355,6 +364,24 @@ wheels = [
 ]
 
 [[package]]
+name = "chex"
+version = "0.1.88"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "numpy" },
+    { name = "setuptools", marker = "python_full_version >= '3.12'" },
+    { name = "toolz" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/7a/3b8ca1c693a5ab0a03e48837c6da8659a0dd9f742248d69c4d8beae13d27/chex-0.1.88.tar.gz", hash = "sha256:565de897b1373232cdfca5e699f50fa49403d2c7d23f6c5a75a97ef713d2fe36", size = 90366 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/a0/e4bebe76bdd0a68077030f1b5e48b545597473ae1b773c84150311152efc/chex-0.1.88-py3-none-any.whl", hash = "sha256:234b61a5baa8132802e4b9c5657167d6c8a911d90a59a0bec47d537567e41b75", size = 99684 },
+]
+
+[[package]]
 name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
@@ -544,6 +571,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ae/ed/aefcc8cd0ba62a0560c3c18c33925362d46c6075480bfa4df87b28e169a9/docutils-0.21.2.tar.gz", hash = "sha256:3a6b18732edf182daa3cd12775bbb338cf5691468f91eeeb109deff6ebfa986f", size = 2204444 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/d7/9322c609343d929e75e7e5e6255e614fcc67572cfd083959cdef3b7aad79/docutils-0.21.2-py3-none-any.whl", hash = "sha256:dafca5b9e384f0e419294eb4d2ff9fa826435bf15f15b7bd45723e8ad76811b2", size = 587408 },
+]
+
+[[package]]
+name = "equinox"
+version = "0.11.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxtyping" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/5d/62425721b7062c484112cac064a1ecae99b642c04979c75f36d3443bf157/equinox-0.11.10.tar.gz", hash = "sha256:f3e7d5545b71e427859a28050526d09adb6b20285c47476a606328a0b96c9509", size = 140418 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/af/411e94c165229882eb2d0a329114826aa52c7c61ef3108d0d3d8ad7189ed/equinox-0.11.10-py3-none-any.whl", hash = "sha256:ee6809e31664b92487b247f811fca48a2107f7ec958084b2294af2ee8a750e3b", size = 178939 },
 ]
 
 [[package]]
@@ -806,6 +847,15 @@ wheels = [
 ]
 
 [[package]]
+name = "jaxtyping"
+version = "0.2.36"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/cc/76e38d7d24e590d1a819c9b203b537e5c6416e1c1aebc8c25f598a00d474/jaxtyping-0.2.36.tar.gz", hash = "sha256:781ac44a3cf8982063d7ee48b5008ccfad7b13793bf878eb3058d5319aa08f0f", size = 45171 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/99/c83c6a97f4382caf1c9bfeeeca935d3eb1f479f711665aeadf4408048107/jaxtyping-0.2.36-py3-none-any.whl", hash = "sha256:b19bcbd4009df8734602203402483a4066ad2eb3382904432e370588e9c9707d", size = 55823 },
+]
+
+[[package]]
 name = "jedi"
 version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -845,6 +895,7 @@ source = { editable = "." }
 dependencies = [
     { name = "astropy" },
     { name = "astroquery" },
+    { name = "chex" },
     { name = "jax" },
     { name = "jplephem" },
 ]
@@ -856,6 +907,7 @@ dev = [
     { name = "matplotlib" },
     { name = "myst-parser" },
     { name = "nbsphinx" },
+    { name = "optimistix" },
     { name = "pre-commit" },
     { name = "rebound" },
     { name = "reboundx" },
@@ -869,6 +921,7 @@ dev = [
 requires-dist = [
     { name = "astropy", specifier = ">=6.1.6" },
     { name = "astroquery", specifier = ">=0.4.7" },
+    { name = "chex", specifier = ">=0.1.88" },
     { name = "jax", specifier = ">=0.4.35" },
     { name = "jplephem", specifier = ">=2.22" },
 ]
@@ -880,6 +933,7 @@ dev = [
     { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "myst-parser", specifier = ">=4.0.0" },
     { name = "nbsphinx", specifier = ">=0.9.5" },
+    { name = "optimistix", specifier = ">=0.0.9" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "rebound", specifier = ">=4.4.3" },
     { name = "reboundx", specifier = ">=4.4.0" },
@@ -1061,6 +1115,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/81/e1/c64f50987f85b68b1c52b464bb5bf73e71570c0f7782d626d1eb283ad620/kiwisolver-1.4.7-pp310-pypy310_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a91b5f9f1205845d488c928e8570dcb62b893372f63b8b6e98b863ebd2368ff2", size = 80906 },
     { url = "https://files.pythonhosted.org/packages/fd/71/1687c5c0a0be2cee39a5c9c389e546f9c6e215e46b691d00d9f646892083/kiwisolver-1.4.7-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:40fa14dbd66b8b8f470d5fc79c089a66185619d31645f9b0773b88b19f7223c4", size = 79951 },
     { url = "https://files.pythonhosted.org/packages/ea/8b/d7497df4a1cae9367adf21665dd1f896c2a7aeb8769ad77b662c5e2bcce7/kiwisolver-1.4.7-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:eb542fe7933aa09d8d8f9d9097ef37532a7df6497819d16efe4359890a2f417a", size = 55715 },
+]
+
+[[package]]
+name = "lineax"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "equinox" },
+    { name = "jax" },
+    { name = "jaxtyping" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/3b/8a35825d11b2b52e8204c2d195decac43dcc4196e9fa7082275959582a73/lineax-0.0.7.tar.gz", hash = "sha256:e43549a8d202432d4668afe54866741a0214ccb363487bacb2a980f72840ea48", size = 44663 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/7e/3404d9c62795777c537de076f06828d80e24284efbcbeb6000f33220e401/lineax-0.0.7-py3-none-any.whl", hash = "sha256:c261977fd2104010ff34b7353deef22961da3ca46f341f158567dc2bbb8c2372", size = 67277 },
 ]
 
 [[package]]
@@ -1445,6 +1514,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/8c/b9/2ac072041e899a52f20cf9510850ff58295003aa75525e58343591b0cbfb/opt_einsum-3.4.0.tar.gz", hash = "sha256:96ca72f1b886d148241348783498194c577fa30a8faac108586b14f1ba4473ac", size = 63004 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/23/cd/066e86230ae37ed0be70aae89aabf03ca8d9f39c8aea0dec8029455b5540/opt_einsum-3.4.0-py3-none-any.whl", hash = "sha256:69bb92469f86a1565195ece4ac0323943e83477171b91d24c35afe028a90d7cd", size = 71932 },
+]
+
+[[package]]
+name = "optimistix"
+version = "0.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "equinox" },
+    { name = "jax" },
+    { name = "jaxtyping" },
+    { name = "lineax" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/b1/53e589b35d33785fac4b6ee4e8bf475505cd56c52651fe0da43456e96287/optimistix-0.0.9.tar.gz", hash = "sha256:b5e3ce9e6d111f399269c7565c68125bdf6bae9b8ff6cacf30232231159354ef", size = 54613 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/94/1726f0a89ff40760ec2c789b4d5aba6fa283082208f23a707f3c01140f92/optimistix-0.0.9-py3-none-any.whl", hash = "sha256:d47d47ef520a4c4e37ff050c89793401cb7142009ef917a986bdc55f9d5db2aa", size = 83587 },
 ]
 
 [[package]]
@@ -2068,6 +2153,15 @@ wheels = [
 ]
 
 [[package]]
+name = "setuptools"
+version = "75.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/43/54/292f26c208734e9a7f067aea4a7e282c080750c4546559b58e2e45413ca0/setuptools-75.6.0.tar.gz", hash = "sha256:8199222558df7c86216af4f84c30e9b34a61d8ba19366cc914424cdbd28252f6", size = 1337429 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/21/47d163f615df1d30c094f6c8bbb353619274edccf0327b185cc2493c2c33/setuptools-75.6.0-py3-none-any.whl", hash = "sha256:ce74b49e8f7110f9bf04883b730f4765b774ef3ef28f722cce7c273d253aaf7d", size = 1224032 },
+]
+
+[[package]]
 name = "six"
 version = "1.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2255,6 +2349,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/1e/e4/1b6cbcc82d8832dd0ce34767d5c560df8a3547ad8cbc427f34601415930a/tomli-2.1.0.tar.gz", hash = "sha256:3f646cae2aec94e17d04973e4249548320197cfabdf130015d023de4b74d8ab8", size = 16622 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/f7/4da0ffe1892122c9ea096c57f64c2753ae5dd3ce85488802d11b0992cc6d/tomli-2.1.0-py3-none-any.whl", hash = "sha256:a5c57c3d1c56f5ccdf89f6523458f60ef716e210fc47c4cfb188c5ba473e0391", size = 13750 },
+]
+
+[[package]]
+name = "toolz"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/0b/d80dfa675bf592f636d1ea0b835eab4ec8df6e9415d8cfd766df54456123/toolz-1.0.0.tar.gz", hash = "sha256:2c86e3d9a04798ac556793bced838816296a2f085017664e4995cb40a1047a02", size = 66790 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/98/eb27cc78ad3af8e302c9d8ff4977f5026676e130d28dd7578132a457170c/toolz-1.0.0-py3-none-any.whl", hash = "sha256:292c8f1c4e7516bf9086f8850935c799a874039c8bcf959d47b600e4c44a6236", size = 56383 },
 ]
 
 [[package]]
