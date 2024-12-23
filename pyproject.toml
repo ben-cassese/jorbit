@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "astropy>=6.1.6",
     "astroquery>=0.4.7",
+    "chex>=0.1.88",
     "jax>=0.4.35",
     "jplephem>=2.22",
 ]
@@ -25,6 +26,7 @@ dev = [
     "matplotlib>=3.9.2",
     "myst-parser>=4.0.0",
     "nbsphinx>=0.9.5",
+    "optimistix>=0.0.9",
     "pre-commit>=4.0.1",
     "rebound>=4.4.3",
     "reboundx>=4.4.0",
