@@ -29,7 +29,7 @@ ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT = jnp.array(
 )
 HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
 
-EPSILON = jnp.finfo(jnp.float64).eps
+EPSILON = jnp.array(jnp.finfo(jnp.float64).eps)
 
 ################################################################################
 # Ephemeris constants
