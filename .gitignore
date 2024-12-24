@@ -11,3 +11,5 @@ wheels/
 
 # Docs
 docs/_build/
+
+*.DS_Store

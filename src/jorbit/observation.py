@@ -57,55 +57,22 @@ class Observations:
         return len(self._ra)
 
     def __add__(self, newobs):
-        old_times = [t for t in self._times]
-        old_ra = [r for r in self._ra]
-        old_dec = [d for d in self._dec]
-        old_obs_precision = [p for p in self.astrometric_uncertainties]
-        old_observer_positions = [o for o in self.observer_positions]
+        t = jnp.concatenate([self._times, newobs.times])
+        ra = jnp.concatenate([self._ra, newobs.ra])
+        dec = jnp.concatenate([self._dec, newobs.dec])
+        obs_precision = jnp.concatenate(
+            [self._astrometric_uncertainties, newobs.astrometric_uncertainties]
+        )
+        observer_positions = jnp.concatenate(
+            [self._observer_positions, newobs.observer_positions]
+        )
 
-        new_times = [t for t in newobs.times]
-        new_ra = [r for r in newobs.ra]
-        new_dec = [d for d in newobs.dec]
-        new_obs_precision = [p for p in newobs.astrometric_uncertainties]
-        new_observer_positions = [o for o in newobs.observer_positions]
-
-        times = []
-        ras = []
-        decs = []
-        obs_precision = []
-        observer_positions = []
-        for i in range(len(old_times) + len(new_times)):
-            if len(old_times) == 0:
-                times.append(new_times.pop(0))
-                ras.append(new_ra.pop(0))
-                decs.append(new_dec.pop(0))
-                obs_precision.append(new_obs_precision.pop(0))
-                observer_positions.append(new_observer_positions.pop(0))
-            elif len(new_times) == 0:
-                times.append(old_times.pop(0))
-                ras.append(old_ra.pop(0))
-                decs.append(old_dec.pop(0))
-                obs_precision.append(old_obs_precision.pop(0))
-                observer_positions.append(old_observer_positions.pop(0))
-            elif old_times[0] < new_times[0]:
-                times.append(old_times.pop(0))
-                ras.append(old_ra.pop(0))
-                decs.append(old_dec.pop(0))
-                obs_precision.append(old_obs_precision.pop(0))
-                observer_positions.append(old_observer_positions.pop(0))
-            else:
-                times.append(new_times.pop(0))
-                ras.append(new_ra.pop(0))
-                decs.append(new_dec.pop(0))
-                obs_precision.append(new_obs_precision.pop(0))
-                observer_positions.append(new_observer_positions.pop(0))
-
-        s = SkyCoord(ra=ras, dec=decs, unit=u.rad)
+        order = jnp.argsort(t)
         return Observations(
-            observed_coordinates=s,
-            times=jnp.array(times),
-            observatories=jnp.array(observer_positions),
-            astrometric_uncertainties=jnp.array(obs_precision),
+            observed_coordinates=SkyCoord(ra=ra[order], dec=dec[order], unit=u.rad),
+            times=t[order],
+            observatories=observer_positions[order],
+            astrometric_uncertainties=obs_precision[order],
             verbose=self._verbose,
             mpc_file=None,
         )
@@ -233,7 +200,6 @@ class Observations:
                         )
                     )
 
-            observatories = observatories
             observer_positions = get_observer_positions(
                 times=Time(times, format="jd", scale="tdb"),
                 observatory_codes=observatories,
