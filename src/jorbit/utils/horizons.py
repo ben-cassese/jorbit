@@ -29,10 +29,13 @@ class HorizonsQueryConfig:
     """Configuration for Horizons API queries."""
 
     HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
+    # hard limit from the Horizons api
     MAX_TIMESTEPS = 10_000
+    # kinda arbitrary, have gotten it to work with ~50 but seems like it can be finicky
+    ASTROQUERY_MAX_TIMESTEPS = 25
 
     VECTOR_COLUMNS = [
-        "JDTDB",
+        "JD_TDB",
         "Cal",
         "x",
         "y",
@@ -47,27 +50,26 @@ class HorizonsQueryConfig:
     ]
 
     ASTROMETRY_COLUMNS = [
-        "Cal",
+        "JD_UTC",
         "twilight_flag",
         "moon_flag",
         "RA",
-        "Dec",
-        "RA 3sig",
-        "DEC 3sig",
-        "SMAA_3sig",
-        "SMIA_3sig",
-        "Theta",
-        "Area_3sig",
+        "DEC",
+        "RA_3sigma",
+        "DEC_3sigma",
+        "SMAA_3sigma",
+        "SMIA_3sigma",
+        "Theta_3sigma",
+        "Area_3sigma",
         "_",
     ]
 
 
 def horizons_query_string(
-    target: str, center: str, query_type: str, times: Time
+    target: str, center: str, query_type: str, times: Time, skip_daylight: bool = False
 ) -> str:
 
-    if isinstance(times.jd, float):
-        times = [times]
+    assert len(times) > HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS
 
     if len(times) > HorizonsQueryConfig.MAX_TIMESTEPS:
         raise ValueError(
@@ -143,6 +145,10 @@ def parse_horizons_response(
 
         df = pd.read_csv(io.StringIO("\n".join(cleaned)), header=None, names=columns)
         df = df.drop(columns="_")
+        if "twilight_flag" in df.columns:
+            df = df.drop(columns="twilight_flag")
+        if "moon_flag" in df.columns:
+            df = df.drop(columns="moon_flag")
         return df
     except ValueError as e:
         raise ValueError("Failed to parse Horizons response: invalid format") from e
@@ -170,7 +176,8 @@ def horizons_bulk_vector_query(
 
     if isinstance(times.jd, float):
         times = [times]
-    if len(times) < 25:
+    if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
+        # note that astrometry queries use utc, vector use tdb...
         horizons_obj = Horizons(
             id=target, location=center, epochs=[t.tdb.jd for t in times]
         )
@@ -215,42 +222,70 @@ def horizons_bulk_vector_query(
         raise ValueError(f"Vector query failed: {str(e)}")
 
 
-# def horizons_bulk_astrometry_query(
-#     target: str, center: str, times: Time, skip_daylight: bool = False
-# ) -> pd.DataFrame:
-#     """
-#     Query the JPL Horizons system for astrometric data of a celestial body.
+def horizons_bulk_astrometry_query(
+    target: str, center: str, times: Time, skip_daylight: bool = False
+) -> pd.DataFrame:
+    """
+    Query the JPL Horizons system for astrometric data of a celestial body.
 
-#     Args:
-#         target: The target body identifier
-#         center: The center body identifier
-#         times: List of Time objects for the query
-#         skip_daylight: Whether to skip daylight observations
+    Args:
+        target: The target body identifier
+        center: The center body identifier
+        times: List of Time objects for the query
+        skip_daylight: Whether to skip daylight observations
 
-#     Returns:
-#         pd.DataFrame: DataFrame containing the astrometric data
-#     """
+    Returns:
+        pd.DataFrame: DataFrame containing the astrometric data
+    """
 
-#     try:
-#         # Build query
-#         query = horizons_query_string(target, center, "OBSERVER", times)
+    if isinstance(times.jd, float):
+        times = [times]
+    if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
+        # note that astrometry queries use utc, vector use tdb...
+        horizons_obj = Horizons(
+            id=target, location=center, epochs=[t.utc.jd for t in times]
+        )
+        horizons_table = horizons_obj.ephemerides(
+            quantities="1,36,37", extra_precision=True
+        )
+        horizons_table = horizons_table[
+            [
+                "datetime_jd",
+                "RA",
+                "DEC",
+                "RA_3sigma",
+                "DEC_3sigma",
+                "SMAA_3sigma",
+                "SMIA_3sigma",
+                "Theta_3sigma",
+                "Area_3sigma",
+            ]
+        ].to_pandas()
+        horizons_table.rename(
+            columns={
+                "datetime_jd": "JD_UTC",
+            },
+            inplace=True,
+        )
+        return horizons_table
 
-#         # Execute query using StringIO
-#         with horizons_query_context(query) as query_content:
-#             response_text = make_horizons_request(query_content)
-#             data = parse_horizons_response(
-#                 response_text, HorizonsQueryConfig.ASTROMETRY_COLUMNS, skip_empty=True
-#             )
+    try:
+        # Build query
+        query = horizons_query_string(
+            target, center, "OBSERVER", times, skip_daylight=skip_daylight
+        )
 
-#         if len(data) != len(times):
-#             raise ValueError(
-#                 "Some requested times were skipped, check skip_daylight flag"
-#             )
+        # Execute query using StringIO
+        with horizons_query_context(query) as query_content:
+            response_text = make_horizons_request(query_content)
+            data = parse_horizons_response(
+                response_text, HorizonsQueryConfig.ASTROMETRY_COLUMNS, skip_empty=True
+            )
 
-#         return data
+        return data
 
-#     except Exception as e:
-#         raise ValueError(f"Astrometry query failed: {str(e)}")
+    except Exception as e:
+        raise ValueError(f"Astrometry query failed: {str(e)}")
 
 
 def get_observer_positions(times, observatory_codes, verbose):
@@ -280,68 +315,3 @@ def get_observer_positions(times, observatory_codes, verbose):
 
     postions = emb_from_ssb - emb_from_observer
     return postions
-
-
-def old_horizons_bulk_vector_query(target, center, times):
-    if type(times) == type(Time("2023-01-01")):
-        times = times.tdb.jd
-    if isinstance(times, float):
-        times = [times]
-    assert (
-        len(times) < 10_000
-    ), "Horizons batch api can only accept less than 10,000 timesteps at a time"
-
-    def construct_horizons_query(target, center, times):
-        query = io.StringIO()
-        query.write("!$$SOF\n")
-        query.write(f'COMMAND= "{target}"\n')
-        query.write("OBJ_DATA='NO'\n")
-        query.write("MAKE_EPHEM='YES'\n")
-        query.write("TABLE_TYPE='VECTOR'\n")
-        query.write(f"CENTER='{center}'\n")
-        query.write("REF_PLANE='FRAME'\n")
-        query.write("CSV_FORMAT='YES'\n")
-        query.write("OUT_UNITS='AU-D'\n")
-        query.write("CAL_FORMAT='JD'\n")
-        query.write("TLIST=\n")
-        for t in times:
-            query.write(f"'{t}'\n")
-        query.seek(0)
-        return query
-
-    try:
-        # Construct the query and get an in-memory file object
-        query_file = construct_horizons_query(target, center, times)
-
-        # Use the in-memory file with requests
-        url = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
-        r = requests.post(url, data={"format": "text"}, files={"input": query_file})
-        l = r.text.split("\n")
-        start = l.index("$$SOE")
-        end = l.index("$$EOE")
-        data = pd.read_csv(
-            io.StringIO("\n".join(l[start + 1 : end])),
-            header=None,
-            names=[
-                "JDTDB",
-                "Cal",
-                "x",
-                "y",
-                "z",
-                "vx",
-                "vy",
-                "vz",
-                "LT",
-                "RG",
-                "RR",
-                "_",
-            ],
-        )
-        query_file.close()
-        return data
-    except:
-        try:
-            query_file.close()
-        except:
-            pass
-        raise ValueError("Vectors query failed, check inputs.")
