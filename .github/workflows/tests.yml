@@ -31,7 +31,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv tool install tox
+          uv pip install tox tox-gh-actions tox-uv
           uv run tox
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for Ubuntu
