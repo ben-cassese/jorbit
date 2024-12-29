@@ -252,27 +252,14 @@ class Observations:
             ), "Observations must be in ascending chronological order."
             t = self._times[i]
 
-    @property
-    def ra(self):
-        return self._ra
 
-    @property
-    def dec(self):
-        return self._dec
+class Observer:
+    def __init__(self, observatory_code):
+        self._observatory_code = observatory_code
 
-    @property
-    def times(self):
-        # return Time(self._times, format='jd', scale='tdb').utc
-        return self._times
-
-    @property
-    def observer_positions(self):
-        return self._observer_positions
-
-    @property
-    def astrometric_uncertainties(self):
-        return self._astrometric_uncertainties
-
-    @property
-    def observatories(self):
-        return self._observatories
+    def get_positions(self, times):
+        return get_observer_positions(
+            times=times,
+            observatory_codes=self._observatory_code,
+            verbose=False,
+        )
