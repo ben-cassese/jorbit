@@ -29,11 +29,7 @@ jobs:
           enable-cache: "true"
           cache-suffix: ${{ matrix.python-version }}
 
-      # - name: Install dependencies
-      #   run: |
-      #     uv sync --python ${{ matrix.python-version }} --group dev
-
-      - name: Run tests
+      - name: Run tests # dependencies are installed by tox
         run: |
           uv run tox
 
