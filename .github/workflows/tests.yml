@@ -31,7 +31,7 @@ jobs:
 
       - name: Run tests
         run: |
-          uv venv
+          uv venv --python ${{ matrix.python-version }}
           uv tool install tox --with tox-uv
           uv pip install tox-gh-actions
           uv run tox
