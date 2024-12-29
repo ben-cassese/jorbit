@@ -6,8 +6,10 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
+# Virtual environments/testing
 .venv
+.tox
+coverage.xml
 
 # Docs
 docs/_build/
