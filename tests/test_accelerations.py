@@ -2,7 +2,6 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from jax import disable_jit
 
 import numpy as np
 import rebound
@@ -125,11 +124,3 @@ def test_newton_agreement_w_rebound():
     _newton_agreement_w_rebound(
         10_000, 20, 4
     )  # this is about the limit of reasonable for rebound, but jorbit's can go up to >1e6 tracer particles
-
-    # # trying again without jit, both for consistency and for codecov
-    # with disable_jit():
-    #     _newton_agreement_w_rebound(1, 1, 0)
-    #     _newton_agreement_w_rebound(100, 1, 1)
-    #     _newton_agreement_w_rebound(100, 10, 2)
-    #     _newton_agreement_w_rebound(100, 100, 3)
-    #     _newton_agreement_w_rebound(10_000, 20, 4)
