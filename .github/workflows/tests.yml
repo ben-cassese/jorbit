@@ -32,8 +32,6 @@ jobs:
       - name: Run tests # dependencies are installed by tox
         # https://github.com/dtamayo/reboundx/issues/39, having trouble with importing reboundx
         run: |
-          uv pip install rebound
-          uv pip install reboundx
           uv run tox
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
