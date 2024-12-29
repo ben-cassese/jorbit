@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest] # issues w/ reboundx dependency on windows
         python-version: ["3.10", "3.11", "3.12", "3.13"]
       fail-fast: false
     steps:

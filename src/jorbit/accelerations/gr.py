@@ -26,7 +26,7 @@ def ppn_gravity(
     max_iterations: int = 10,
 ) -> jnp.ndarray:
 
-    c2 = SystemState.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
+    c2 = inputs.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
 
     # same as newtonian_gravity:
     M = inputs.massive_positions.shape[0]  # number of massive particles
