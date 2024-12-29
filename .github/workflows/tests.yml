@@ -1,3 +1,4 @@
+# based on https://github.com/fpgmaas/cookiecutter-uv/blob/1e083e824879e06003e82ad79e52f45eccde7561/.github/workflows/main.yml
 name: Tests
 
 on:
@@ -16,10 +17,17 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Set up the environment
-        uses: ./.github/actions/setup-python-env
+      - name: Set up python
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: 0.5.9
+          enable-cache: "true"
+          cache-suffix: ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run tox
