@@ -1014,6 +1014,8 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
+    { name = "rebound" },
+    { name = "reboundx" },
     { name = "sphinx" },
     { name = "sphinx-automodapi" },
     { name = "sphinx-book-theme" },
@@ -1046,6 +1048,8 @@ dev = [
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
+    { name = "rebound", specifier = ">=4.4.5" },
+    { name = "reboundx", specifier = ">=4.4.0" },
     { name = "sphinx", specifier = ">=8.1.3" },
     { name = "sphinx-automodapi", specifier = ">=0.18.0" },
     { name = "sphinx-book-theme", specifier = ">=1.1.3" },
@@ -2183,6 +2187,52 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/71/43/91fa4ff25bbfdc914ab6bafa0f03241d69370ef31a761d16bb859f346582/pyzmq-26.2.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2c4a71d5d6e7b28a47a394c0471b7e77a0661e2d651e7ae91e0cab0a587859ca", size = 752775 },
     { url = "https://files.pythonhosted.org/packages/ec/d2/3b2ab40f455a256cb6672186bea95cd97b459ce4594050132d71e76f0d6f/pyzmq-26.2.0-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:90412f2db8c02a3864cbfc67db0e3dcdbda336acf1c469526d3e869394fe001c", size = 550762 },
 ]
+
+[[package]]
+name = "rebound"
+version = "4.4.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/85/c3/552ee4e553c32253b7ab0298c459748738f1d2a1b31f54c7b43b9fdd66a2/rebound-4.4.5.tar.gz", hash = "sha256:ab54dbd475734e7f93ed311562e54bf7dce98a816e7cb865a7772735c1667d20", size = 322100 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/34/e8052b717f8f937287b3514fb1611db18184f44879c0f631fb6ae416c214/rebound-4.4.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:72f1a017743d8cca2d99d15282df560721a1057efce3b29bea5a5b7eaf2e01af", size = 283493 },
+    { url = "https://files.pythonhosted.org/packages/57/78/de4e5eeb5a2c30d63bba53c4232e50c4bb1f97c74f139921a8e02e34e1e6/rebound-4.4.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:685cfb64bc201b6e10239996f61a5b1f69e2aa24c9e7be201c67f7dd8ab65feb", size = 257251 },
+    { url = "https://files.pythonhosted.org/packages/13/4d/1ddb46d072bba0cc8c6f546b648e10159811f8d0c92e57d113873b34ed6a/rebound-4.4.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:331e7d973e0652a52d07b9e46dad9e94d61dae6c819a5b91ad0073b1277522b0", size = 785917 },
+    { url = "https://files.pythonhosted.org/packages/4b/11/1bcf1053ffb9fee5e12765e477f5acfaacba849e4f9368c5b16bd43b5026/rebound-4.4.5-cp310-cp310-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:b6600156206827dd09342a8c5b5af9af9dcd34ba842493f9479bda03d45a28cd", size = 712502 },
+    { url = "https://files.pythonhosted.org/packages/90/78/1f341cbdc9ea9f961ef3f7bd5a944e90a5df7156b7e3a4c2766e4f56f0bf/rebound-4.4.5-cp310-cp310-musllinux_1_1_i686.whl", hash = "sha256:b9238f1f03006be2b050c24c7ffcb8a0c4144e52a9fba152ef3daa1a42144d56", size = 659528 },
+    { url = "https://files.pythonhosted.org/packages/94/af/f211a94e21e4662b8d7687e163e8328befa1ade1b7ee19715b5dc0cc2025/rebound-4.4.5-cp310-cp310-musllinux_1_1_x86_64.whl", hash = "sha256:97376fe0cb77acfec2b262a9d3b95d87604dfc933641553e8abf917104fe9588", size = 731974 },
+    { url = "https://files.pythonhosted.org/packages/e2/ed/7c4fad26de97c648de14823561d687773e4a64b9cca46b7ba94452adbb3c/rebound-4.4.5-cp310-cp310-win32.whl", hash = "sha256:dfeb40f42936585f46ce42bfbf47a89234ba3f63e14d2b27d92f8fef88c92bb4", size = 254311 },
+    { url = "https://files.pythonhosted.org/packages/0c/d3/87e37d82863d08b567af99a6032ad36f123ce773f78b543e9dcbf4baaf55/rebound-4.4.5-cp310-cp310-win_amd64.whl", hash = "sha256:c8478b3437a6d7d7d9a9860cf6676d8d46b58ba6fe3824be349fcb5ff1756b07", size = 296860 },
+    { url = "https://files.pythonhosted.org/packages/6a/bd/75b46a0769f20e80439df5f573f53652662bef84805ffe91c42cab978b1a/rebound-4.4.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:9f330d7ddf729ead66ae3c4f1aa04e47be3fcacb7553aa4eda0bd6adb65092c3", size = 283490 },
+    { url = "https://files.pythonhosted.org/packages/0f/db/62b08ab1ff1106f13e454a705d555bc727a20e0373b3f1b7701f8af3e9c1/rebound-4.4.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:056bd3a8e588dd9b4a8f889f8d50aa21fefd5fb6632bb5917c9c3739f7c6795a", size = 257243 },
+    { url = "https://files.pythonhosted.org/packages/db/17/05444ad5ece6a3104ba86bd9716660ce36c6df36db9e33ecd48b7d0c8c30/rebound-4.4.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d946b85f23877a8ab19968700618cb1abeec805a0424e8864fb81a59493343da", size = 785916 },
+    { url = "https://files.pythonhosted.org/packages/b6/57/24764ff732fb84194329cb28f1da3483f130d0c42ba912e7f3fc2be38548/rebound-4.4.5-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:a104631ddabd81a22d255d72e0754ecdf74eb5ce56aa227586f79f9113114c43", size = 712504 },
+    { url = "https://files.pythonhosted.org/packages/0b/67/3fda4f50505041aa48e1307b12ed9842bf533968d9df1e13eea8df008a77/rebound-4.4.5-cp311-cp311-musllinux_1_1_i686.whl", hash = "sha256:457d9d5e626fee17231fabc7523d2721e2c5377e99a6c82b886589318daf37ba", size = 659531 },
+    { url = "https://files.pythonhosted.org/packages/ff/7c/f228856a2cbd3bab6d5e70a6e43be637738190e6fe4d90fe8c87f0f5f57d/rebound-4.4.5-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:65f54b8e87eb23d3c572c75335f6f0b21f95b7aa54edb681bc24c44190fa3677", size = 731978 },
+    { url = "https://files.pythonhosted.org/packages/36/74/ebb13f281aa0f25d77c81be49de577a392ba49d21bb6c90bcadb2aec13dc/rebound-4.4.5-cp311-cp311-win32.whl", hash = "sha256:e46bf67c80aaaf909cae7b4b6b69754272028920cb3af0e7a19a068021f387b6", size = 254310 },
+    { url = "https://files.pythonhosted.org/packages/b1/52/b6bdad34fadb789e9eee2e13797f6ccad0d6ca3fe6ef8e3e4d1082f3c018/rebound-4.4.5-cp311-cp311-win_amd64.whl", hash = "sha256:d715abb185f7d2d60bec0cbddaad09961a60f265192ce7d20aba92c92c6ce80c", size = 296860 },
+    { url = "https://files.pythonhosted.org/packages/54/e7/e963440dcb7d7f38aebb4c4b0b5cb106718d98745705820a39f7cdcedc60/rebound-4.4.5-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:1b16f8704bbe14313f3028ebe411e44774ab86bc07c03e2654cbffb917f2f16e", size = 283490 },
+    { url = "https://files.pythonhosted.org/packages/9d/0b/1a5f4a9bf85037d83ee17a163a4f563462ee24dcaf770bbcbf00044e8c6c/rebound-4.4.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4a0a14cd6da259d8a70bef609b7ccceff378c66e59abc85580e2d46f04fffc99", size = 257248 },
+    { url = "https://files.pythonhosted.org/packages/12/8d/b3c8a2680605f52e43cae3d33c1bd4d52649fd91ec12134321d46fb01d7e/rebound-4.4.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d2a13f110ab2bcaacf56969bab2f0d460643ab07a58fa00e12ae44024d51f728", size = 785930 },
+    { url = "https://files.pythonhosted.org/packages/44/53/3d973f73b84fbe4ff2bc51f97874676b064e0110bdba9ee3ed0920b34354/rebound-4.4.5-cp312-cp312-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:feaafca54f1813dca2f95a7bd6ca177b37961461cbfbec9d7107d333c1ff2e81", size = 712489 },
+    { url = "https://files.pythonhosted.org/packages/c5/28/6b8c87611bc0742f0ec29ef87607da4ea3e177e0244871a197cb3d9ad58d/rebound-4.4.5-cp312-cp312-musllinux_1_1_i686.whl", hash = "sha256:4dd6fbcb9c4e10bad2e2ac047823a6ab6db77ffb05b85164a67e5d457ac6d7c7", size = 659525 },
+    { url = "https://files.pythonhosted.org/packages/35/35/edf7a3432a78cd56621cf6174c9950990c483a21a7f182f21a306556026c/rebound-4.4.5-cp312-cp312-musllinux_1_1_x86_64.whl", hash = "sha256:9cadb767cdb22c6188bdc344bfd6d8da602d79c298b2123ba442cc09bd6a7ece", size = 732170 },
+    { url = "https://files.pythonhosted.org/packages/39/2c/348bcddbd9279d39dfadb5fa51cc2b4cc0d537f54866008f1c0b70100f00/rebound-4.4.5-cp312-cp312-win32.whl", hash = "sha256:243eda1374f188f9a5d777d9bd84f0fbf976bfe954e9e13b33423865d2dfef01", size = 254312 },
+    { url = "https://files.pythonhosted.org/packages/bf/60/44a180ca2f857c26360a57c028fdc5f66ecb664f7eec34ab600d58e57cc5/rebound-4.4.5-cp312-cp312-win_amd64.whl", hash = "sha256:ba2b384867979adac495daa953811635eebacdffe82e7c779065fd1283c8f5ff", size = 296861 },
+    { url = "https://files.pythonhosted.org/packages/6c/9d/0210d2e1939e8f4106c5122fd60960adbace8662f2d3148801daa688e626/rebound-4.4.5-pp310-pypy310_pp73-macosx_10_9_x86_64.whl", hash = "sha256:e7b951dbb55121db1fa577e28a416fd3c5701cc03a2c05fb6b99b9e21eb41aff", size = 276783 },
+    { url = "https://files.pythonhosted.org/packages/80/0f/01baf53f691078d68f006ebabc0a85cddc7273a3c0c3ab07be5118639911/rebound-4.4.5-pp310-pypy310_pp73-macosx_11_0_arm64.whl", hash = "sha256:6e211b56f4084155ce90208542a72bde7f256c954c1da5cb08af6de27df4d3f9", size = 249997 },
+    { url = "https://files.pythonhosted.org/packages/8c/43/3c5654546e6df18f6902b46a7f9980993dca8beaac1cb3ae7c98dfbee125/rebound-4.4.5-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ee05c0410b8af4afb3babf2d46a133fd53392678f9cad92bd69b39131a4d7010", size = 323440 },
+    { url = "https://files.pythonhosted.org/packages/6c/53/fd73c238a33e2a0f93b0ef9310fa40dab291bca808679bf9a096e06546e8/rebound-4.4.5-pp310-pypy310_pp73-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:0be5cf485578d61e074a75bad712a47d795711049148d3b7fdd00eec413df69b", size = 302005 },
+    { url = "https://files.pythonhosted.org/packages/60/d9/63f17030e4a5800907a94bca32f72aae69f4607c20ad391edf613e21078c/rebound-4.4.5-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:5d45e73263a1bd18612a04dd4ed35fc24cb7190b0a889be8d7d54dbd41653c36", size = 296892 },
+]
+
+[[package]]
+name = "reboundx"
+version = "4.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rebound" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/88/fa/6ea0c7138d17c242141d370ca8da6c93cd1b5277c695d879edd42da349ea/reboundx-4.4.0.tar.gz", hash = "sha256:d6297430e2709a2f6dcfd1f7af1be2f874d3c8f0f201a4d6e14a87e24497e3dc", size = 93995 }
 
 [[package]]
 name = "referencing"
