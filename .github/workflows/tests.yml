@@ -30,7 +30,9 @@ jobs:
           cache-suffix: ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run tox
+        run: |
+          uv tool install tox
+          uv run tox
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for Ubuntu
         uses: codecov/codecov-action@v5
