@@ -64,24 +64,24 @@ class EphemerisProcessor:
         v /= intlen
         v *= 2.0  # in km/s here
 
-        # Acceleration
-        a = self.eval_cheby(4 * Q[1], s)[0] - 2 * Q[1][-1]
-        a /= intlen**2
-        a *= 4.0  # in km/s^2 here
+        # # Acceleration
+        # a = self.eval_cheby(4 * Q[1], s)[0] - 2 * Q[1][-1]
+        # a /= intlen**2
+        # a *= 4.0  # in km/s^2 here
 
         # Convert to AU, AU/day, AU/day^2
         return (
             x.T * 6.684587122268446e-09,
             v.T * 0.0005775483273639937,
-            a.T * 49.900175484249054,
+            # a.T * 49.900175484249054,
         )
 
     @jax.jit
     def state(self, tdb):
-        x, v, a = jax.vmap(self._individual_state, in_axes=(0, 0, 0, None))(
+        x, v = jax.vmap(self._individual_state, in_axes=(0, 0, 0, None))(
             self.init, self.intlen, self.coeffs, tdb
         )
-        return x, v, a
+        return x, v
 
 
 @jax.tree_util.register_pytree_node_class
@@ -107,10 +107,10 @@ class EphemerisPostProcessor:
     def state(self, tdb):
         x = jnp.empty((0, 3))
         v = jnp.empty((0, 3))
-        a = jnp.empty((0, 3))
+        # a = jnp.empty((0, 3))
         for eph in self.ephs:
-            _x, _v, _a = eph.state(tdb)
+            _x, _v = eph.state(tdb)
             x = jnp.vstack([x, _x])
             v = jnp.vstack([v, _v])
-            a = jnp.vstack([a, _a])
-        return self.postprocessing_func(x, v, a)
+            # a = jnp.vstack([a, _a])
+        return self.postprocessing_func(x, v)  # , a)
