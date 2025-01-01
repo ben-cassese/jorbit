@@ -111,16 +111,18 @@ def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
     assert jnp.allclose(jorb_res, reb_res, atol=1e-14, rtol=1e-14)
 
 
-# def test_gr_agreement_w_reboundx():
-#     # _agreement_w_reboundx(1, 5, 1)
-#     _gr_agreement_w_reboundx(100, 10, 0)
+def test_gr_agreement_w_reboundx():
+    _gr_agreement_w_reboundx(n_tracer=1, n_massive=1, seed=0)
+    _gr_agreement_w_reboundx(n_tracer=100, n_massive=1, seed=1)
+    _gr_agreement_w_reboundx(n_tracer=100, n_massive=10, seed=2)
+    _gr_agreement_w_reboundx(n_tracer=100, n_massive=100, seed=3)
 
 
 def test_newton_agreement_w_rebound():
-    _newton_agreement_w_rebound(1, 1, 0)
-    _newton_agreement_w_rebound(100, 1, 1)
-    _newton_agreement_w_rebound(100, 10, 2)
-    _newton_agreement_w_rebound(100, 100, 3)
+    _newton_agreement_w_rebound(n_tracer=1, n_massive=1, seed=0)
+    _newton_agreement_w_rebound(n_tracer=100, n_massive=1, seed=1)
+    _newton_agreement_w_rebound(n_tracer=100, n_massive=10, seed=2)
+    _newton_agreement_w_rebound(n_tracer=100, n_massive=100, seed=3)
     _newton_agreement_w_rebound(
-        10_000, 20, 4
+        n_tracer=10_000, n_massive=20, seed=4
     )  # this is about the limit of reasonable for rebound, but jorbit's can go up to >1e6 tracer particles
