@@ -72,11 +72,13 @@ class Ephemeris:
                 },
             ]
 
-            def postprocessing_func(x, v, a):
+            def postprocessing_func(
+                x, v
+            ):  # , a): # the asteroids are all relative to the sun, not the barycenter
                 x = x.at[-16:].set(x[-16:] + x[0])
                 v = v.at[-16:].set(v[-16:] + v[0])
-                a = a.at[-16:].set(0.0)
-                return x, v, a
+                # a = a.at[-16:].set(0.0)
+                return x, v  # , a
 
             postprocessing_func = jax.tree_util.Partial(postprocessing_func)
 
@@ -115,13 +117,13 @@ class Ephemeris:
             self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
     def state(self, time: Time):
-        x, v, a = self.processor.state(time.tdb.jd)
+        x, v = self.processor.state(time.tdb.jd)
         s = {}
         for n in range(len(self._combined_names)):
             s[self._combined_names[n]] = {
                 "x": x[n] * u.au,
                 "v": v[n] * u.au / u.day,
-                "a": a[n] * u.au / u.day**2,
+                # "a": a[n] * u.au / u.day**2,
                 "log_gm": self._combined_log_gms[n],
             }
         return s

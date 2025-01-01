@@ -12,6 +12,8 @@ from jorbit.astrometry.transformations import (
     horizons_ecliptic_to_icrs,
 )
 
+from jorbit.data.constants import SPEED_OF_LIGHT
+
 
 @chex.dataclass
 class SystemState:
@@ -21,7 +23,7 @@ class SystemState:
     massive_velocities: jnp.ndarray
     log_gms: jnp.ndarray
     time: float
-    acceleration_func_kwargs: dict = None
+    acceleration_func_kwargs: dict(default_factory=lambda: {"c2": SPEED_OF_LIGHT**2})
 
 
 @chex.dataclass
@@ -59,6 +61,7 @@ class KeplerianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            acceleration_func_kwargs={},
         )
 
 
@@ -87,4 +90,5 @@ class CartesianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            acceleration_func_kwargs={},
         )

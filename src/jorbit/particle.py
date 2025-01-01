@@ -8,6 +8,7 @@ from astropy.time import Time
 from jorbit.accelerations import (
     create_newtonian_ephemeris_acceleration_func,
     create_gr_ephemeris_acceleration_func,
+    create_default_ephemeris_acceleration_func,
 )
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.ephemeris.ephemeris import Ephemeris
@@ -27,19 +28,19 @@ class Particle:
         gravity="newtonian planets",
         integrator="ias15",
         earliest_time=Time("1980-01-01"),
-        latest_time=Time("2100-01-01"),
+        latest_time=Time("2050-01-01"),
     ):
-        self.x = x
-        self.v = v
-        self.elements = elements
-        self.log_gm = log_gm
-        self.time = time
-        self.observations = observations
-        self.name = name
+        self._x = x
+        self._v = v
+        self._elements = elements
+        self._log_gm = log_gm
+        self._time = time
+        self._observations = observations
+        self._name = name
         self.gravity = gravity
-        self.integrator = integrator
-        self.earliest_time = earliest_time
-        self.latest_time = latest_time
+        self._integrator = integrator
+        self._earliest_time = earliest_time
+        self._latest_time = latest_time
 
         self._setup()
 
@@ -48,91 +49,101 @@ class Particle:
         self._setup_integrator()
 
     def __repr__(self):
-        return f"Particle: {self.name}"
+        return f"Particle: {self._name}"
 
     def _setup(self):
 
-        assert self.time is not None, "Must provide an epoch for the particle"
-        if isinstance(self.time, type(Time("2023-01-01"))):
-            self.time = self.time.tdb.jd
+        assert self._time is not None, "Must provide an epoch for the particle"
+        if isinstance(self._time, type(Time("2023-01-01"))):
+            self._time = self._time.tdb.jd
 
-        if self.elements is not None:
-            assert self.x is None, "Cannot provide both x and elements"
-            assert self.v is None, "Cannot provide both v and elements"
+        if self._elements is not None:
+            assert self._x is None, "Cannot provide both x and elements"
+            assert self._v is None, "Cannot provide both v and elements"
 
-            if isinstance(self.elements, dict):
-                self.keplerian_state = KeplerianState(**self.elements, time=self.time)
+            if isinstance(self._elements, dict):
+                self._keplerian_state = KeplerianState(
+                    **self._elements, time=self._time
+                )
 
-            self.cartesian_state = self.keplerian_state.to_cartesian()
-        elif self.x is not None:
-            assert self.v is not None, "Must provide both x and v"
+            self._cartesian_state = self._keplerian_state.to_cartesian()
+        elif self._x is not None:
+            assert self._v is not None, "Must provide both x and v"
 
-            self.cartesian_state = CartesianState(
-                x=jnp.array([self.x]), v=jnp.array([self.v]), time=self.time
+            self._cartesian_state = CartesianState(
+                x=jnp.array([self._x]), v=jnp.array([self._v]), time=self._time
             )
-            self.keplerian_state = self.cartesian_state.to_keplerian()
+            self._keplerian_state = self._cartesian_state.to_keplerian()
         else:
             raise ValueError(
                 "time must be either astropy.time.Time or float (interpreted as JD in"
                 " TDB)"
             )
 
-        if self.name == "":
-            self.name = "unnamed"
+        if self._name == "":
+            self._name = "unnamed"
 
     def _setup_acceleration_func(self):
         if self.gravity == "newtonian planets":
             eph = Ephemeris(
-                earliest_time=self.earliest_time,
-                latest_time=self.latest_time,
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
                 ssos="default planets",
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
             self.gravity = acc_func
         elif self.gravity == "newtonian solar system":
             eph = Ephemeris(
-                earliest_time=self.earliest_time,
-                latest_time=self.latest_time,
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
                 ssos="default solar system",
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
             self.gravity = acc_func
         elif self.gravity == "gr planets":
             eph = Ephemeris(
-                earliest_time=self.earliest_time,
-                latest_time=self.latest_time,
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
                 ssos="default planets",
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
             self.gravity = acc_func
         elif self.gravity == "gr solar system":
             eph = Ephemeris(
-                earliest_time=self.earliest_time,
-                latest_time=self.latest_time,
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
                 ssos="default solar system",
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
             self.gravity = acc_func
+        elif self.gravity == "default solar system":
+            eph = Ephemeris(
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
+                ssos="default solar system",
+            )
+            acc_func = create_default_ephemeris_acceleration_func(eph.processor)
+            self.gravity = acc_func
 
     def _setup_integrator(self):
-        if self.integrator != "ias15":
+        if self._integrator != "ias15":
             raise NotImplementedError(
                 "Currently only the IAS15 integrator is supported"
             )
 
-        a0 = self.gravity(self.cartesian_state.to_system())
-        self.integrator_state = initialize_ias15_integrator_state(a0)
-        self.integrator = jax.tree_util.Partial(ias15_evolve)
+        a0 = self.gravity(self._cartesian_state.to_system())
+        self._integrator_state = initialize_ias15_integrator_state(a0)
+        self._integrator = jax.tree_util.Partial(ias15_evolve)
 
     def integrate(self, times, state=None):
         if state is None:
-            state = self.cartesian_state
+            state = self._cartesian_state
         if type(times) == Time:
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
             times = jnp.array([times])
         positions, velocities, final_system_state, final_integrator_state = _integrate(
-            times, state, self.gravity, self.integrator, self.integrator_state
+            times, state, self.gravity, self._integrator, self._integrator_state
         )
         return positions[0], velocities[0]
 
