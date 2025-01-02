@@ -33,10 +33,22 @@ def sky_sep(ra1, dec1, ra2, dec2):
 
 @jax.jit
 def on_sky(
-    state: SystemState,
-    acc_func,
+    x,
+    v,
+    time,
     observer_position,
+    acc_func,
 ):
+    # has to be one particle at one time to get the light travel time right
+    state = SystemState(
+        massive_positions=jnp.empty((0, 3)),
+        massive_velocities=jnp.empty((0, 3)),
+        tracer_positions=jnp.array([x]),
+        tracer_velocities=jnp.array([v]),
+        log_gms=jnp.empty(0),
+        time=time,
+        acceleration_func_kwargs=None,
+    )
     a0 = acc_func(state)
     initial_integrator_state = initialize_ias15_integrator_state(a0)
 
@@ -51,14 +63,19 @@ def on_sky(
                 acc_func,
                 jnp.array([state.time - light_travel_time]),
                 initial_integrator_state,
-                n_steps=3,
             )
         )
 
-        return final_system_state.positions, None
+        return final_system_state.tracer_positions[0], None
 
-    xz, _ = jax.lax.scan(scan_func, state.positions, None, length=3)
-    X = xz - observer_position[None, :]
-    calc_ra = jnp.mod(jnp.arctan2(X[:, 1], X[:, 0]) + 2 * jnp.pi, 2 * jnp.pi)
-    calc_dec = jnp.pi / 2 - jnp.arccos(X[:, -1] / jnp.linalg.norm(X, axis=1))
+    xz, _ = jax.lax.scan(
+        scan_func,
+        state.tracer_positions[0],
+        None,
+        length=3,
+    )
+
+    X = xz - observer_position
+    calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
+    calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
     return calc_ra, calc_dec
