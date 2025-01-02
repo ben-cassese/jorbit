@@ -36,9 +36,9 @@ from jorbit.data.constants import (
 class Ephemeris:
     def __init__(
         self,
-        earliest_time=Time("1980-01-01"),
-        latest_time=Time("2100-01-01"),
         ssos="default planets",
+        earliest_time=Time("1980-01-01"),
+        latest_time=Time("2050-01-01"),
         postprocessing_func=None,
     ):
 

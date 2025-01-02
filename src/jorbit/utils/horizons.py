@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from typing import Union, List
 
 
-from jorbit.data.observatory_codes import observatory_codes
+from jorbit.data.observatory_codes import OBSERVATORY_CODES
 
 
 @dataclass
@@ -225,18 +225,6 @@ def horizons_bulk_vector_query(
 def horizons_bulk_astrometry_query(
     target: str, center: str, times: Time, skip_daylight: bool = False
 ) -> pd.DataFrame:
-    """
-    Query the JPL Horizons system for astrometric data of a celestial body.
-
-    Args:
-        target: The target body identifier
-        center: The center body identifier
-        times: List of Time objects for the query
-        skip_daylight: Whether to skip daylight observations
-
-    Returns:
-        pd.DataFrame: DataFrame containing the astrometric data
-    """
 
     if isinstance(times.jd, float):
         times = [times]
@@ -288,30 +276,42 @@ def horizons_bulk_astrometry_query(
         raise ValueError(f"Astrometry query failed: {str(e)}")
 
 
-def get_observer_positions(times, observatory_codes, verbose):
-    assert len(times) == len(observatory_codes)
+def get_observer_positions(times, observatories):
+    if isinstance(times.jd, float):
+        times = [times]
+    if isinstance(observatories, str):
+        observatories = [observatories]
+    assert len(times) == len(observatories)
+    times = Time([t.utc.jd for t in times], format="jd", scale="utc")
 
-    if verbose:
-        print("Downloading observer positions from Horizons...")
     emb_from_ssb = horizons_bulk_vector_query("3", "500@0", times)
     emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
 
-    if len(set(observatory_codes)) == 1:
-        emb_from_observer = horizons_bulk_vector_query("3", observatory_codes[0], times)
-        emb_from_observer = jnp.array(emb_from_observer[["x", "y", "z"]].values)
-
-    else:
-        for obs in set(observatory_codes):
-            idxs = [i for i, x in enumerate(observatory_codes) if x == obs]
-            _emb_from_observer = horizons_bulk_vector_query("3", obs, times[idxs])
-            _emb_from_observer = jnp.array(_emb_from_observer[["x", "y", "z"]].values)
-            if obs == observatory_codes[0]:
-                emb_from_observer_all = _emb_from_observer
+    _times = []
+    emb_from_observer_all = jnp.empty((0, 3))
+    for obs in set(observatories):
+        idxs = [i for i, x in enumerate(observatories) if x == obs]
+        if "@" not in obs:
+            if obs.lower() in OBSERVATORY_CODES.keys():
+                obs = OBSERVATORY_CODES[obs.lower()]
             else:
-                emb_from_observer_all = jnp.concatenate(
-                    [emb_from_observer_all, _emb_from_observer]
+                raise ValueError(
+                    "Observer location '{}' is not a recognized observatory. Please"
+                    " refer to"
+                    " https://minorplanetcenter.net/iau/lists/ObsCodesF.html".format(
+                        obs
+                    )
                 )
-        emb_from_observer = jnp.array(emb_from_observer_all)[jnp.argsort(times)]
+
+        _emb_from_observer = horizons_bulk_vector_query("3", obs, times[idxs])
+        _emb_from_observer = jnp.array(_emb_from_observer[["x", "y", "z"]].values)
+
+        emb_from_observer_all = jnp.concatenate(
+            [emb_from_observer_all, _emb_from_observer]
+        )
+        _times.extend(times[idxs])
+    _times = jnp.array([t.tdb.jd for t in _times])
+    emb_from_observer = jnp.array(emb_from_observer_all)[jnp.argsort(_times)]
 
     postions = emb_from_ssb - emb_from_observer
     return postions

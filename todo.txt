@@ -1,4 +1,3 @@
-ditch the acceleration calculation on the ephem
 swap all velocities to km/s from au/day
 standardize outputs of the integrators
-mix of newtonian and ppn from ephem
+separate earth and moon

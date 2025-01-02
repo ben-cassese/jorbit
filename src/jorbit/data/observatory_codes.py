@@ -1,4 +1,4 @@
-observatory_codes = {
+OBSERVATORY_CODES = {
     "greenwich": "000@399",
     "crowborough": "001@399",
     "rayleigh": "002@399",
