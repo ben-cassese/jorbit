@@ -84,97 +84,126 @@ IAS15_D19 = DoubleDouble.from_string("2.24858876076915979339268952600833")
 IAS15_D20 = DoubleDouble.from_string("2.75581271977204583144215883481380")
 
 
-# H1AX = 7.0 * IAS15_H1 / 9.0
-# H1BX = 3.0 * IAS15_H1 / 4.0
-# H1CX = 5.0 * IAS15_H1 / 7.0
-# H1DX = 2.0 * IAS15_H1 / 3.0
-# H1EX = 3.0 * IAS15_H1 / 5.0
-# H1FX = IAS15_H1 / 2.0
-# H1GX = IAS15_H1 / 3.0
-# H1AV = 7.0 * IAS15_H1 / 8.0
-# H1BV = 6.0 * IAS15_H1 / 7.0
-# H1CV = 5.0 * IAS15_H1 / 6.0
-# H1DV = 4.0 * IAS15_H1 / 5.0
-# H1EV = 3.0 * IAS15_H1 / 4.0
-# H1FV = 2.0 * IAS15_H1 / 3.0
-# H2AX = 7.0 * IAS15_H2 / 9.0
-# H2BX = 3.0 * IAS15_H2 / 4.0
-# H2CX = 5.0 * IAS15_H2 / 7.0
-# H2DX = 2.0 * IAS15_H2 / 3.0
-# H2EX = 3.0 * IAS15_H2 / 5.0
-# H2FX = IAS15_H2 / 2.0
-# H2GX = IAS15_H2 / 3.0
-# H2AV = 7.0 * IAS15_H2 / 8.0
-# H2BV = 6.0 * IAS15_H2 / 7.0
-# H2CV = 5.0 * IAS15_H2 / 6.0
-# H2DV = 4.0 * IAS15_H2 / 5.0
-# H2EV = 3.0 * IAS15_H2 / 4.0
-# H2FV = 2.0 * IAS15_H2 / 3.0
-# H3AX = 7.0 * IAS15_H3 / 9.0
-# H3BX = 3.0 * IAS15_H3 / 4.0
-# H3CX = 5.0 * IAS15_H3 / 7.0
-# H3DX = 2.0 * IAS15_H3 / 3.0
-# H3EX = 3.0 * IAS15_H3 / 5.0
-# H3FX = IAS15_H3 / 2.0
-# H3GX = IAS15_H3 / 3.0
-# H3AV = 7.0 * IAS15_H3 / 8.0
-# H3BV = 6.0 * IAS15_H3 / 7.0
-# H3CV = 5.0 * IAS15_H3 / 6.0
-# H3DV = 4.0 * IAS15_H3 / 5.0
-# H3EV = 3.0 * IAS15_H3 / 4.0
-# H3FV = 2.0 * IAS15_H3 / 3.0
-# H4AX = 7.0 * IAS15_H4 / 9.0
-# H4BX = 3.0 * IAS15_H4 / 4.0
-# H4CX = 5.0 * IAS15_H4 / 7.0
-# H4DX = 2.0 * IAS15_H4 / 3.0
-# H4EX = 3.0 * IAS15_H4 / 5.0
-# H4FX = IAS15_H4 / 2.0
-# H4GX = IAS15_H4 / 3.0
-# H4AV = 7.0 * IAS15_H4 / 8.0
-# H4BV = 6.0 * IAS15_H4 / 7.0
-# H4CV = 5.0 * IAS15_H4 / 6.0
-# H4DV = 4.0 * IAS15_H4 / 5.0
-# H4EV = 3.0 * IAS15_H4 / 4.0
-# H4FV = 2.0 * IAS15_H4 / 3.0
-# H5AX = 7.0 * IAS15_H5 / 9.0
-# H5BX = 3.0 * IAS15_H5 / 4.0
-# H5CX = 5.0 * IAS15_H5 / 7.0
-# H5DX = 2.0 * IAS15_H5 / 3.0
-# H5EX = 3.0 * IAS15_H5 / 5.0
-# H5FX = IAS15_H5 / 2.0
-# H5GX = IAS15_H5 / 3.0
-# H5AV = 7.0 * IAS15_H5 / 8.0
-# H5BV = 6.0 * IAS15_H5 / 7.0
-# H5CV = 5.0 * IAS15_H5 / 6.0
-# H5DV = 4.0 * IAS15_H5 / 5.0
-# H5EV = 3.0 * IAS15_H5 / 4.0
-# H5FV = 2.0 * IAS15_H5 / 3.0
-# H6AX = 7.0 * IAS15_H6 / 9.0
-# H6BX = 3.0 * IAS15_H6 / 4.0
-# H6CX = 5.0 * IAS15_H6 / 7.0
-# H6DX = 2.0 * IAS15_H6 / 3.0
-# H6EX = 3.0 * IAS15_H6 / 5.0
-# H6FX = IAS15_H6 / 2.0
-# H6GX = IAS15_H6 / 3.0
-# H6AV = 7.0 * IAS15_H6 / 8.0
-# H6BV = 6.0 * IAS15_H6 / 7.0
-# H6CV = 5.0 * IAS15_H6 / 6.0
-# H6DV = 4.0 * IAS15_H6 / 5.0
-# H6EV = 3.0 * IAS15_H6 / 4.0
-# H6FV = 2.0 * IAS15_H6 / 3.0
-# H7AX = 7.0 * IAS15_H7 / 9.0
-# H7BX = 3.0 * IAS15_H7 / 4.0
-# H7CX = 5.0 * IAS15_H7 / 7.0
-# H7DX = 2.0 * IAS15_H7 / 3.0
-# H7EX = 3.0 * IAS15_H7 / 5.0
-# H7FX = IAS15_H7 / 2.0
-# H7GX = IAS15_H7 / 3.0
-# H7AV = 7.0 * IAS15_H7 / 8.0
-# H7BV = 6.0 * IAS15_H7 / 7.0
-# H7CV = 5.0 * IAS15_H7 / 6.0
-# H7DV = 4.0 * IAS15_H7 / 5.0
-# H7EV = 3.0 * IAS15_H7 / 4.0
-# H7FV = 2.0 * IAS15_H7 / 3.0
+H1AX = DoubleDouble(7.0) * IAS15_H1 / DoubleDouble(9.0)
+H1BX = DoubleDouble(3.0) * IAS15_H1 / DoubleDouble(4.0)
+H1CX = DoubleDouble(5.0) * IAS15_H1 / DoubleDouble(7.0)
+H1DX = DoubleDouble(2.0) * IAS15_H1 / DoubleDouble(3.0)
+H1EX = DoubleDouble(3.0) * IAS15_H1 / DoubleDouble(5.0)
+H1FX = IAS15_H1 / DoubleDouble(2.0)
+H1GX = IAS15_H1 / DoubleDouble(3.0)
+H1AV = DoubleDouble(7.0) * IAS15_H1 / DoubleDouble(8.0)
+H1BV = DoubleDouble(6.0) * IAS15_H1 / DoubleDouble(7.0)
+H1CV = DoubleDouble(5.0) * IAS15_H1 / DoubleDouble(6.0)
+H1DV = DoubleDouble(4.0) * IAS15_H1 / DoubleDouble(5.0)
+H1EV = DoubleDouble(3.0) * IAS15_H1 / DoubleDouble(4.0)
+H1FV = DoubleDouble(2.0) * IAS15_H1 / DoubleDouble(3.0)
+H2AX = DoubleDouble(7.0) * IAS15_H2 / DoubleDouble(9.0)
+H2BX = DoubleDouble(3.0) * IAS15_H2 / DoubleDouble(4.0)
+H2CX = DoubleDouble(5.0) * IAS15_H2 / DoubleDouble(7.0)
+H2DX = DoubleDouble(2.0) * IAS15_H2 / DoubleDouble(3.0)
+H2EX = DoubleDouble(3.0) * IAS15_H2 / DoubleDouble(5.0)
+H2FX = IAS15_H2 / DoubleDouble(2.0)
+H2GX = IAS15_H2 / DoubleDouble(3.0)
+H2AV = DoubleDouble(7.0) * IAS15_H2 / DoubleDouble(8.0)
+H2BV = DoubleDouble(6.0) * IAS15_H2 / DoubleDouble(7.0)
+H2CV = DoubleDouble(5.0) * IAS15_H2 / DoubleDouble(6.0)
+H2DV = DoubleDouble(4.0) * IAS15_H2 / DoubleDouble(5.0)
+H2EV = DoubleDouble(3.0) * IAS15_H2 / DoubleDouble(4.0)
+H2FV = DoubleDouble(2.0) * IAS15_H2 / DoubleDouble(3.0)
+H3AX = DoubleDouble(7.0) * IAS15_H3 / DoubleDouble(9.0)
+H3BX = DoubleDouble(3.0) * IAS15_H3 / DoubleDouble(4.0)
+H3CX = DoubleDouble(5.0) * IAS15_H3 / DoubleDouble(7.0)
+H3DX = DoubleDouble(2.0) * IAS15_H3 / DoubleDouble(3.0)
+H3EX = DoubleDouble(3.0) * IAS15_H3 / DoubleDouble(5.0)
+H3FX = IAS15_H3 / DoubleDouble(2.0)
+H3GX = IAS15_H3 / DoubleDouble(3.0)
+H3AV = DoubleDouble(7.0) * IAS15_H3 / DoubleDouble(8.0)
+H3BV = DoubleDouble(6.0) * IAS15_H3 / DoubleDouble(7.0)
+H3CV = DoubleDouble(5.0) * IAS15_H3 / DoubleDouble(6.0)
+H3DV = DoubleDouble(4.0) * IAS15_H3 / DoubleDouble(5.0)
+H3EV = DoubleDouble(3.0) * IAS15_H3 / DoubleDouble(4.0)
+H3FV = DoubleDouble(2.0) * IAS15_H3 / DoubleDouble(3.0)
+H4AX = DoubleDouble(7.0) * IAS15_H4 / DoubleDouble(9.0)
+H4BX = DoubleDouble(3.0) * IAS15_H4 / DoubleDouble(4.0)
+H4CX = DoubleDouble(5.0) * IAS15_H4 / DoubleDouble(7.0)
+H4DX = DoubleDouble(2.0) * IAS15_H4 / DoubleDouble(3.0)
+H4EX = DoubleDouble(3.0) * IAS15_H4 / DoubleDouble(5.0)
+H4FX = IAS15_H4 / DoubleDouble(2.0)
+H4GX = IAS15_H4 / DoubleDouble(3.0)
+H4AV = DoubleDouble(7.0) * IAS15_H4 / DoubleDouble(8.0)
+H4BV = DoubleDouble(6.0) * IAS15_H4 / DoubleDouble(7.0)
+H4CV = DoubleDouble(5.0) * IAS15_H4 / DoubleDouble(6.0)
+H4DV = DoubleDouble(4.0) * IAS15_H4 / DoubleDouble(5.0)
+H4EV = DoubleDouble(3.0) * IAS15_H4 / DoubleDouble(4.0)
+H4FV = DoubleDouble(2.0) * IAS15_H4 / DoubleDouble(3.0)
+H5AX = DoubleDouble(7.0) * IAS15_H5 / DoubleDouble(9.0)
+H5BX = DoubleDouble(3.0) * IAS15_H5 / DoubleDouble(4.0)
+H5CX = DoubleDouble(5.0) * IAS15_H5 / DoubleDouble(7.0)
+H5DX = DoubleDouble(2.0) * IAS15_H5 / DoubleDouble(3.0)
+H5EX = DoubleDouble(3.0) * IAS15_H5 / DoubleDouble(5.0)
+H5FX = IAS15_H5 / DoubleDouble(2.0)
+H5GX = IAS15_H5 / DoubleDouble(3.0)
+H5AV = DoubleDouble(7.0) * IAS15_H5 / DoubleDouble(8.0)
+H5BV = DoubleDouble(6.0) * IAS15_H5 / DoubleDouble(7.0)
+H5CV = DoubleDouble(5.0) * IAS15_H5 / DoubleDouble(6.0)
+H5DV = DoubleDouble(4.0) * IAS15_H5 / DoubleDouble(5.0)
+H5EV = DoubleDouble(3.0) * IAS15_H5 / DoubleDouble(4.0)
+H5FV = DoubleDouble(2.0) * IAS15_H5 / DoubleDouble(3.0)
+H6AX = DoubleDouble(7.0) * IAS15_H6 / DoubleDouble(9.0)
+H6BX = DoubleDouble(3.0) * IAS15_H6 / DoubleDouble(4.0)
+H6CX = DoubleDouble(5.0) * IAS15_H6 / DoubleDouble(7.0)
+H6DX = DoubleDouble(2.0) * IAS15_H6 / DoubleDouble(3.0)
+H6EX = DoubleDouble(3.0) * IAS15_H6 / DoubleDouble(5.0)
+H6FX = IAS15_H6 / DoubleDouble(2.0)
+H6GX = IAS15_H6 / DoubleDouble(3.0)
+H6AV = DoubleDouble(7.0) * IAS15_H6 / DoubleDouble(8.0)
+H6BV = DoubleDouble(6.0) * IAS15_H6 / DoubleDouble(7.0)
+H6CV = DoubleDouble(5.0) * IAS15_H6 / DoubleDouble(6.0)
+H6DV = DoubleDouble(4.0) * IAS15_H6 / DoubleDouble(5.0)
+H6EV = DoubleDouble(3.0) * IAS15_H6 / DoubleDouble(4.0)
+H6FV = DoubleDouble(2.0) * IAS15_H6 / DoubleDouble(3.0)
+H7AX = DoubleDouble(7.0) * IAS15_H7 / DoubleDouble(9.0)
+H7BX = DoubleDouble(3.0) * IAS15_H7 / DoubleDouble(4.0)
+H7CX = DoubleDouble(5.0) * IAS15_H7 / DoubleDouble(7.0)
+H7DX = DoubleDouble(2.0) * IAS15_H7 / DoubleDouble(3.0)
+H7EX = DoubleDouble(3.0) * IAS15_H7 / DoubleDouble(5.0)
+H7FX = IAS15_H7 / DoubleDouble(2.0)
+H7GX = IAS15_H7 / DoubleDouble(3.0)
+H7AV = DoubleDouble(7.0) * IAS15_H7 / DoubleDouble(8.0)
+H7BV = DoubleDouble(6.0) * IAS15_H7 / DoubleDouble(7.0)
+H7CV = DoubleDouble(5.0) * IAS15_H7 / DoubleDouble(6.0)
+H7DV = DoubleDouble(4.0) * IAS15_H7 / DoubleDouble(5.0)
+H7EV = DoubleDouble(3.0) * IAS15_H7 / DoubleDouble(4.0)
+H7FV = DoubleDouble(2.0) * IAS15_H7 / DoubleDouble(3.0)
+
+inv_IAS15_RR00 = DoubleDouble(1.0) / IAS15_RR00
+inv_IAS15_RR01 = DoubleDouble(1.0) / IAS15_RR01
+inv_IAS15_RR02 = DoubleDouble(1.0) / IAS15_RR02
+inv_IAS15_RR03 = DoubleDouble(1.0) / IAS15_RR03
+inv_IAS15_RR04 = DoubleDouble(1.0) / IAS15_RR04
+inv_IAS15_RR05 = DoubleDouble(1.0) / IAS15_RR05
+inv_IAS15_RR06 = DoubleDouble(1.0) / IAS15_RR06
+inv_IAS15_RR07 = DoubleDouble(1.0) / IAS15_RR07
+inv_IAS15_RR08 = DoubleDouble(1.0) / IAS15_RR08
+inv_IAS15_RR09 = DoubleDouble(1.0) / IAS15_RR09
+inv_IAS15_RR10 = DoubleDouble(1.0) / IAS15_RR10
+inv_IAS15_RR11 = DoubleDouble(1.0) / IAS15_RR11
+inv_IAS15_RR12 = DoubleDouble(1.0) / IAS15_RR12
+inv_IAS15_RR13 = DoubleDouble(1.0) / IAS15_RR13
+inv_IAS15_RR14 = DoubleDouble(1.0) / IAS15_RR14
+inv_IAS15_RR15 = DoubleDouble(1.0) / IAS15_RR15
+inv_IAS15_RR16 = DoubleDouble(1.0) / IAS15_RR16
+inv_IAS15_RR17 = DoubleDouble(1.0) / IAS15_RR17
+inv_IAS15_RR18 = DoubleDouble(1.0) / IAS15_RR18
+inv_IAS15_RR19 = DoubleDouble(1.0) / IAS15_RR19
+inv_IAS15_RR20 = DoubleDouble(1.0) / IAS15_RR20
+inv_IAS15_RR21 = DoubleDouble(1.0) / IAS15_RR21
+inv_IAS15_RR22 = DoubleDouble(1.0) / IAS15_RR22
+inv_IAS15_RR23 = DoubleDouble(1.0) / IAS15_RR23
+inv_IAS15_RR24 = DoubleDouble(1.0) / IAS15_RR24
+inv_IAS15_RR25 = DoubleDouble(1.0) / IAS15_RR25
+inv_IAS15_RR26 = DoubleDouble(1.0) / IAS15_RR26
+inv_IAS15_RR27 = DoubleDouble(1.0) / IAS15_RR27
 
 
 @jax.tree_util.register_pytree_node_class
@@ -224,8 +253,11 @@ def acceleration_func(x):
     return -x
 
 
-def step(x0, v0, b):
+@jax.jit
+def step(x0, v0, a0, b):
 
+    t_beginning = DoubleDouble(0.0)
+    dt = DoubleDouble(0.01)
     g = initialize_ias15_helper(1)
 
     # get the initial g terms from the b terms
@@ -254,200 +286,221 @@ def step(x0, v0, b):
     g.p5 = b.p6 * IAS15_D20 + b.p5
     g.p6 = b.p6
 
-    return g
-
     # set up the predictor-corrector loop
     def do_nothing(b, g, predictor_corrector_error):
         # print("just chillin")
         return b, g, predictor_corrector_error, predictor_corrector_error
 
-    def predictor_corrector_iteration(b, csb, g, predictor_corrector_error):
+    def predictor_corrector_iteration(b, g, predictor_corrector_error):
+        predictor_corrector_error_last = predictor_corrector_error
+        predictor_corrector_error = 0.0
+
         # loop over each subinterval
         ################################################################################
         n = 1
         step_time = t_beginning + dt * IAS15_H1
         # get the new acceleration value at predicted position
         # fmt: off
-        x = x0 + ((((((((b.p6*H1AX + b.p5)*H1BX + b.p4)*H1CX + b.p3)*H1DX + b.p2)*H1EX + b.p1)*H1FX + b.p0)* + a0)*dt*H1FX + v0)*dt*IAS15_H1
+        x = x0 + ((((((((b.p6*H1AX + b.p5)*H1BX + b.p4)*H1CX + b.p3)*H1DX + b.p2)*H1EX + b.p1)*H1FX + b.p0)*H1GX + a0)*dt*H1FX + v0)*dt*IAS15_H1
         v = v0 + (((((((b.p6*H1AV + b.p5)*H1BV + b.p4)*H1CV + b.p3)*H1DV + b.p2)*H1EV + b.p1)*H1FV + b.p0)*H1FX + a0)*dt*IAS15_H1
         # fmt: on
-
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
         at = acceleration_func(x)
 
         tmp = g.p0
         gk = at - a0
-        g.p0 = gk / IAS15_RR[0]
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, g.p0 - tmp)
+        g.p0 = gk * inv_IAS15_RR00
+        b.p0 = b.p0 + g.p0 - tmp
 
         ################################################################################
         n = 2
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H2
         # fmt: off
-        x = x0 + ((((((((b.p6*H2AX + b.p5)*H2BX + b.p4)*H2CX + b.p3)*H2DX + b.p2)*H2EX + b.p1)*H2FX + b.p0)* + a0)*dt*H2FX + v0)*dt*IAS15_H2
+        x = x0 + ((((((((b.p6*H2AX + b.p5)*H2BX + b.p4)*H2CX + b.p3)*H2DX + b.p2)*H2EX + b.p1)*H2FX + b.p0)*H2GX + a0)*dt*H2FX + v0)*dt*IAS15_H2
         v = v0 + (((((((b.p6*H2AV + b.p5)*H2BV + b.p4)*H2CV + b.p3)*H2DV + b.p2)*H2EV + b.p1)*H2FV + b.p0)*H2FX + a0)*dt*IAS15_H2
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p1
         gk = at - a0
-        g.p1 = (gk / IAS15_RR[1] - g.p0) / IAS15_RR[2]
+        g.p1 = (gk * inv_IAS15_RR01 - g.p0) * inv_IAS15_RR02
         tmp = g.p1 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[0])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C00
+        b.p1 = b.p1 + tmp
 
         ################################################################################
         n = 3
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H3
         # fmt: off
-        x = x0 + ((((((((b.p6*H3AX + b.p5)*H3BX + b.p4)*H3CX + b.p3)*H3DX + b.p2)*H3EX + b.p1)*H3FX + b.p0)* + a0)*dt*H3FX + v0)*dt*IAS15_H3
+        x = x0 + ((((((((b.p6*H3AX + b.p5)*H3BX + b.p4)*H3CX + b.p3)*H3DX + b.p2)*H3EX + b.p1)*H3FX + b.p0)*H3GX + a0)*dt*H3FX + v0)*dt*IAS15_H3
         v = v0 + (((((((b.p6*H3AV + b.p5)*H3BV + b.p4)*H3CV + b.p3)*H3DV + b.p2)*H3EV + b.p1)*H3FV + b.p0)*H3FX + a0)*dt*IAS15_H3
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p2
         gk = at - a0
-        g.p2 = ((gk / IAS15_RR[3] - g.p0) / IAS15_RR[4] - g.p1) / IAS15_RR[5]
+        g.p2 = ((gk * inv_IAS15_RR03 - g.p0) * inv_IAS15_RR04 - g.p1) * inv_IAS15_RR05
         tmp = g.p2 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[1])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[2])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C01
+        b.p1 = b.p1 + tmp * IAS15_C02
+        b.p2 = b.p2 + tmp
 
         ################################################################################
         n = 4
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H4
         # fmt: off
-        x = x0 + ((((((((b.p6*H4AX + b.p5)*H4BX + b.p4)*H4CX + b.p3)*H4DX + b.p2)*H4EX + b.p1)*H4FX + b.p0)* + a0)*dt*H4FX + v0)*dt*IAS15_H4
+        x = x0 + ((((((((b.p6*H4AX + b.p5)*H4BX + b.p4)*H4CX + b.p3)*H4DX + b.p2)*H4EX + b.p1)*H4FX + b.p0)*H4GX + a0)*dt*H4FX + v0)*dt*IAS15_H4
         v = v0 + (((((((b.p6*H4AV + b.p5)*H4BV + b.p4)*H4CV + b.p3)*H4DV + b.p2)*H4EV + b.p1)*H4FV + b.p0)*H4FX + a0)*dt*IAS15_H4
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p3
         gk = at - a0
         g.p3 = (
-            ((gk / IAS15_RR[6] - g.p0) / IAS15_RR[7] - g.p1) / IAS15_RR[8] - g.p2
-        ) / IAS15_RR[9]
+            ((gk * inv_IAS15_RR06 - g.p0) * inv_IAS15_RR07 - g.p1) * inv_IAS15_RR08
+            - g.p2
+        ) * inv_IAS15_RR09
         tmp = g.p3 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[3])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[4])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[5])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C03
+        b.p1 = b.p1 + tmp * IAS15_C04
+        b.p2 = b.p2 + tmp * IAS15_C05
+        b.p3 = b.p3 + tmp
 
         ################################################################################
         n = 5
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H5
         # fmt: off
-        x = x0 + ((((((((b.p6*H5AX + b.p5)*H5BX + b.p4)*H5CX + b.p3)*H5DX + b.p2)*H5EX + b.p1)*H5FX + b.p0)* + a0)*dt*H5FX + v0)*dt*IAS15_H5
+        x = x0 + ((((((((b.p6*H5AX + b.p5)*H5BX + b.p4)*H5CX + b.p3)*H5DX + b.p2)*H5EX + b.p1)*H5FX + b.p0)*H5GX + a0)*dt*H5FX + v0)*dt*IAS15_H5
         v = v0 + (((((((b.p6*H5AV + b.p5)*H5BV + b.p4)*H5CV + b.p3)*H5DV + b.p2)*H5EV + b.p1)*H5FV + b.p0)*H5FX + a0)*dt*IAS15_H5
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p4
         gk = at - a0
         g.p4 = (
-            (((gk / IAS15_RR[10] - g.p0) / IAS15_RR[11] - g.p1) / IAS15_RR[12] - g.p2)
-            / IAS15_RR[13]
+            (
+                ((gk * inv_IAS15_RR10 - g.p0) * inv_IAS15_RR11 - g.p1) * inv_IAS15_RR12
+                - g.p2
+            )
+            * inv_IAS15_RR13
             - g.p3
-        ) / IAS15_RR[14]
+        ) * inv_IAS15_RR14
         tmp = g.p4 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[6])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[7])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[8])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[9])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C06
+        b.p1 = b.p1 + tmp * IAS15_C07
+        b.p2 = b.p2 + tmp * IAS15_C08
+        b.p3 = b.p3 + tmp * IAS15_C09
+        b.p4 = b.p4 + tmp
 
         ################################################################################
         n = 6
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H6
         # fmt: off
-        x = x0 + ((((((((b.p6*H6AX + b.p5)*H6BX + b.p4)*H6CX + b.p3)*H6DX + b.p2)*H6EX + b.p1)*H6FX + b.p0)* + a0)*dt*H6FX + v0)*dt*IAS15_H6
+        x = x0 + ((((((((b.p6*H6AX + b.p5)*H6BX + b.p4)*H6CX + b.p3)*H6DX + b.p2)*H6EX + b.p1)*H6FX + b.p0)*H6GX + a0)*dt*H6FX + v0)*dt*IAS15_H6
         v = v0 + (((((((b.p6*H6AV + b.p5)*H6BV + b.p4)*H6CV + b.p3)*H6DV + b.p2)*H6EV + b.p1)*H6FV + b.p0)*H6FX + a0)*dt*IAS15_H6
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p5
         gk = at - a0
         g.p5 = (
             (
                 (
-                    ((gk / IAS15_RR[15] - g.p0) / IAS15_RR[16] - g.p1) / IAS15_RR[17]
+                    ((gk * inv_IAS15_RR15 - g.p0) * inv_IAS15_RR16 - g.p1)
+                    * inv_IAS15_RR17
                     - g.p2
                 )
-                / IAS15_RR[18]
+                * inv_IAS15_RR18
                 - g.p3
             )
-            / IAS15_RR[19]
+            * inv_IAS15_RR19
             - g.p4
-        ) / IAS15_RR[20]
+        ) * inv_IAS15_RR20
         tmp = g.p5 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[10])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[11])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[12])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[13])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp * IAS15_C[14])
-        b.p5, csb.p5 = add_cs(b.p5, csb.p5, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C10
+        b.p1 = b.p1 + tmp * IAS15_C11
+        b.p2 = b.p2 + tmp * IAS15_C12
+        b.p3 = b.p3 + tmp * IAS15_C13
+        b.p4 = b.p4 + tmp * IAS15_C14
+        b.p5 = b.p5 + tmp
 
         ################################################################################
         n = 7
-        step_time = t_beginning + dt * IAS15_H[n]
+        step_time = t_beginning + dt * IAS15_H7
         # fmt: off
-        x = x0 + ((((((((b.p6*H7AX + b.p5)*H7BX + b.p4)*H7CX + b.p3)*H7DX + b.p2)*H7EX + b.p1)*H7FX + b.p0)* + a0)*dt*H7FX + v0)*dt*IAS15_H7
+        x = x0 + ((((((((b.p6*H7AX + b.p5)*H7BX + b.p4)*H7CX + b.p3)*H7DX + b.p2)*H7EX + b.p1)*H7FX + b.p0)*H7GX + a0)*dt*H7FX + v0)*dt*IAS15_H7
         v = v0 + (((((((b.p6*H7AV + b.p5)*H7BV + b.p4)*H7CV + b.p3)*H7DV + b.p2)*H7EV + b.p1)*H7FV + b.p0)*H7FX + a0)*dt*IAS15_H7
         # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
+        # acc_state = SystemState(
+        #     massive_positions=x[:M],
+        #     massive_velocities=v[:M],
+        #     tracer_positions=x[M:],
+        #     tracer_velocities=v[M:],
+        #     log_gms=initial_system_state.log_gms,
+        #     time=step_time,
+        #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        # )
+        # at = acceleration_func(acc_state)
+        at = acceleration_func(x)
 
         tmp = g.p6
         gk = at - a0
@@ -455,31 +508,67 @@ def step(x0, v0, b):
             (
                 (
                     (
-                        ((gk / IAS15_RR[21] - g.p0) / IAS15_RR[22] - g.p1)
-                        / IAS15_RR[23]
+                        ((gk * inv_IAS15_RR21 - g.p0) * inv_IAS15_RR22 - g.p1)
+                        * inv_IAS15_RR23
                         - g.p2
                     )
-                    / IAS15_RR[24]
+                    * inv_IAS15_RR24
                     - g.p3
                 )
-                / IAS15_RR[25]
+                * inv_IAS15_RR25
                 - g.p4
             )
-            / IAS15_RR[26]
+            * inv_IAS15_RR26
             - g.p5
-        ) / IAS15_RR[27]
+        ) * inv_IAS15_RR27
         tmp = g.p6 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[15])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[16])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[17])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[18])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp * IAS15_C[19])
-        b.p5, csb.p5 = add_cs(b.p5, csb.p5, tmp * IAS15_C[20])
-        b.p6, csb.p6 = add_cs(b.p6, csb.p6, tmp)
+        b.p0 = b.p0 + tmp * IAS15_C15
+        b.p1 = b.p1 + tmp * IAS15_C16
+        b.p2 = b.p2 + tmp * IAS15_C17
+        b.p3 = b.p3 + tmp * IAS15_C18
+        b.p4 = b.p4 + tmp * IAS15_C19
+        b.p5 = b.p5 + tmp * IAS15_C20
+        b.p6 = b.p6 + tmp
 
-        maxa = jnp.max(jnp.abs(at))
-        maxb6tmp = jnp.max(jnp.abs(tmp))
+        # maxa = jnp.max(jnp.abs(at))
+        maxa = DoubleDouble.dd_max(abs(at))  # abs is overloaded for DoubleDouble
+        # maxb6tmp = jnp.max(jnp.abs(tmp))
+        maxb6tmp = DoubleDouble.dd_max(abs(tmp))
 
-        predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
+        # predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
+        predictor_corrector_error = abs(maxb6tmp / maxa)
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
+
+    def scan_func(carry, scan_over):
+        b, g, predictor_corrector_error, predictor_corrector_error_last = carry
+
+        # condition = (predictor_corrector_error < EPSILON) | (
+        #     (scan_over > 2)
+        #     & (predictor_corrector_error > predictor_corrector_error_last)
+        # )
+
+        # carry = jax.lax.cond(
+        #     condition,
+        #     do_nothing,
+        #     predictor_corrector_iteration,
+        #     b,
+        #     csb,
+        #     g,
+        #     predictor_corrector_error,
+        # )
+
+        carry = predictor_corrector_iteration(b, g, predictor_corrector_error)
+        jax.debug.print("{x}, {y}", x=carry[2].hi, y=carry[2].lo)
+        return carry, None
+
+    predictor_corrector_error = DoubleDouble(1e300)
+    predictor_corrector_error_last = DoubleDouble(2.0)
+
+    (b, g, predictor_corrector_error, predictor_corrector_error_last), _ = jax.lax.scan(
+        scan_func,
+        (b, g, predictor_corrector_error, predictor_corrector_error_last),
+        jnp.arange(10),
+    )
+
+    return b, g, predictor_corrector_error, predictor_corrector_error_last
