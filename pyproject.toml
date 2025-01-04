@@ -42,4 +42,5 @@ dev = [
     "tox-uv>=1.16.2",
     "rebound>=4.4.5",
     "reboundx>=4.4.0",
+    "mpmath>=1.3.0",
 ]
