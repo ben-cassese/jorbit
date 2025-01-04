@@ -3,6 +3,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from functools import partial
 from typing import Any, Tuple, Optional
 
 
@@ -112,6 +113,7 @@ class DoubleDouble:
     def __repr__(self):
         return f"DoubleDouble({self.hi}, {self.lo})"
 
+    @jax.jit
     def __add__(self, other):
         # add2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi + other.hi
@@ -127,6 +129,7 @@ class DoubleDouble:
     def __neg__(self):
         return DoubleDouble(-self.hi, -self.lo)
 
+    @jax.jit
     def __sub__(self, other):
         # sub2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi - other.hi
@@ -140,6 +143,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
         self
 
+    @jax.jit
     def __mul__(self, other):
         # mul2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = DoubleDouble._mul12(self.hi, other.hi)
@@ -150,6 +154,7 @@ class DoubleDouble:
 
         return DoubleDouble(z, zz)
 
+    @jax.jit
     def __truediv__(self, other):
         # div2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = self.hi / other.hi
@@ -158,6 +163,44 @@ class DoubleDouble:
         z = c + cc
         zz = c - z + cc
         return DoubleDouble(z, zz)
+
+    @jax.jit
+    def __abs__(self):
+        new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
+        new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
+        return DoubleDouble(new_hi, new_lo)
+        # return jax.lax.cond(
+        #     self.hi < 0,
+        #     lambda x: DoubleDouble(-self.hi, -self.lo),
+        #     lambda x: self,
+        #     operand=None,
+        # )
+
+    @jax.jit
+    def dd_exp(self):
+        raise
+        # not strictly a DoubleDouble-compatible operation:
+        # just exp the hi and lo parts separately, then add them
+        # with a DoubleDouble-compatible addition
+
+        # can do better w/ a Taylor series?
+
+        exp_hi = jnp.exp(self.hi)
+        exp_lo = jnp.exp(self.lo)
+
+        # from here, same as __mul__
+        c = DoubleDouble._mul12(self.hi, other.hi)
+        cc = self.hi * other.lo + self.lo * other.hi + c.lo
+
+        z = c.hi + cc
+        zz = c.hi - z + cc
+
+    @partial(jax.jit, static_argnums=(1,))
+    def dd_max(self, axis: Optional[int] = None):
+        hi_max = jnp.max(self.hi, axis=axis)
+        max_mask = self.hi == hi_max
+        lo_max = jnp.max(jnp.where(max_mask, self.lo, -jnp.inf), axis=axis)
+        return DoubleDouble(hi_max, lo_max)
 
     def tree_flatten(self):
         """Implementation for JAX pytree."""

@@ -25,6 +25,7 @@ from jorbit.data.constants import (
     IAS15_MIN_DT,
     IAS15_SAFETY_FACTOR,
     EPSILON,
+    IAS15_EPS_Modified,
 )
 
 
@@ -482,8 +483,7 @@ def ias15_step(
     timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
     min_timescale2 = jnp.nanmin(timescale2)
 
-    # 0.1750670293218999748586614182797188957 = sqrt7(r->ri_ias15.epsilon*5040.0)
-    dt_new = jnp.sqrt(min_timescale2) * dt_done * 0.1750670293218999749
+    dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
     # not checking for a min dt, since rebound default is 0.0 anyway
     # and we're willing to let it get tiny
 
@@ -1030,8 +1030,7 @@ def ias15_step(
 #     timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
 #     min_timescale2 = jnp.nanmin(timescale2)
 
-#     # 0.1750670293218999748586614182797188957 = sqrt7(r->ri_ias15.epsilon*5040.0)
-#     dt_new = jnp.sqrt(min_timescale2) * dt_done * 0.1750670293218999749
+#     dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
 #     # not checking for a min dt, since rebound default is 0.0 anyway
 #     # and we're willing to let it get tiny
 
