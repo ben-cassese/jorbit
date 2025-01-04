@@ -178,7 +178,7 @@ class DoubleDouble:
 
     @jax.jit
     def dd_exp(self):
-        raise
+        raise NotImplementedError
         # not strictly a DoubleDouble-compatible operation:
         # just exp the hi and lo parts separately, then add them
         # with a DoubleDouble-compatible addition
@@ -195,13 +195,6 @@ class DoubleDouble:
         z = c.hi + cc
         zz = c.hi - z + cc
 
-    @partial(jax.jit, static_argnums=(1,))
-    def dd_max(self, axis: Optional[int] = None):
-        hi_max = jnp.max(self.hi, axis=axis)
-        max_mask = self.hi == hi_max
-        lo_max = jnp.max(jnp.where(max_mask, self.lo, -jnp.inf), axis=axis)
-        return DoubleDouble(hi_max, lo_max)
-
     def tree_flatten(self):
         """Implementation for JAX pytree."""
         children = (self.hi, self.lo)
@@ -212,3 +205,17 @@ class DoubleDouble:
     def tree_unflatten(cls, aux_data, children):
         """Implementation for JAX pytree."""
         return cls(*children)
+
+
+@jax.jit
+def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
+    hi_max = jnp.max(x.hi, axis=axis)
+    max_mask = x.hi == hi_max
+    lo_max = jnp.max(jnp.where(max_mask, self.lo, -jnp.inf), axis=axis)
+    return DoubleDouble(hi_max, lo_max)
+
+
+@jax.jit
+def dd_polyval(p: DoubleDouble, x: DoubleDouble) -> DoubleDouble:
+    y, _ = jax.lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr)
+    return y

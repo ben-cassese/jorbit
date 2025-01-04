@@ -116,6 +116,30 @@ def predict_next_step(ratio, _e, _b):
     return e, b
 
 
+# TODO:
+# note, the manual Horner method here isn't really necessary: jnp.polyval does that
+# internally. Could equivalently swap the x, v calculations at each substep w/:
+# b_len = 7
+# b_x_denoms = (1+jnp.arange(1, b_len + 1, 1)) * (2+jnp.arange(1, b_len + 1, 1))
+# b_v_denoms = jnp.arange(2, b_len + 2, 1)
+
+# xcoeffs = jnp.zeros(b_len + 3)
+# xcoeffs = xcoeffs.at[3:].set(bp * dt * dt / b_x_denoms)
+# xcoeffs = xcoeffs.at[2].set(a0 * dt * dt / 2.0)
+# xcoeffs = xcoeffs.at[1].set(v0 * dt)
+# xcoeffs = xcoeffs.at[0].set(x0)
+# xcoeffs = xcoeffs[::-1]
+
+# vcoeffs = jnp.zeros(b_len + 2)
+# vcoeffs = vcoeffs.at[2:].set(bp * dt / b_v_denoms)
+# vcoeffs = vcoeffs.at[1].set(a0 * dt)
+# vcoeffs = vcoeffs.at[0].set(v0)
+# vcoeffs = vcoeffs[::-1]
+
+# new_x = jnp.polyval(xcoeffs, h)
+# new_v = jnp.polyval(vcoeffs, h)
+
+
 @jax.jit
 def ias15_step(
     initial_system_state: SystemState,
