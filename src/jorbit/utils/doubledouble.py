@@ -25,36 +25,6 @@ class DoubleDouble:
         self.hi = hi
         self.lo = jnp.zeros_like(hi) if lo is None else lo
 
-    # @staticmethod
-    # def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    #     s = a + b
-    #     v = s - a
-    #     e = (a - (s - v)) + (b - v)
-    #     return s, e
-
-    # @staticmethod
-    # def _split(a: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    #     t = 2**27 * a
-    #     a_hi = t - (t - a)
-    #     a_lo = a - a_hi
-    #     return a_hi, a_lo
-
-    # @staticmethod
-    # def _two_prod(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    #     # https://andrewthall.org/papers/df64_qf128.pdf
-    #     x = a * b
-
-    #     a_hi, a_lo = DoubleDouble._split(a)
-    #     b_hi, b_lo = DoubleDouble._split(b)
-
-    #     err1 = x - (a_hi * b_hi)
-    #     err2 = err1 - (a_lo * b_hi)
-    #     err3 = err2 - (a_hi * b_lo)
-
-    #     y = (a_lo * b_lo) - err3
-
-    #     return x, y
-
     @staticmethod
     def _mul12(x: jnp.ndarray, y: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         # mul12 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
@@ -76,42 +46,27 @@ class DoubleDouble:
 
     @classmethod
     def from_string(cls, s: str) -> "DoubleDouble":
-        """Alternative method using decimal arithmetic for string conversion.
-
-        This method is useful when numpy float128 is not available or for even higher precision.
-
-        Args:
-            s: String representation of a number
-
-        Returns:
-            DoubleDouble: High-precision representation of the number
-        """
         from decimal import Decimal, getcontext
 
-        # Set precision high enough to capture all digits
-        getcontext().prec = 40
+        getcontext().prec = 50
 
-        # Convert string to Decimal
         d = Decimal(s)
-
-        # Extract hi part (first ~15-16 digits)
         hi = float(str(d))
-
-        # Compute lo part
         lo = float(str(d - Decimal(str(hi))))
-
-        # Convert to JAX arrays
         return cls(jnp.array(hi), jnp.array(lo))
 
     def __str__(self) -> str:
-        from decimal import Decimal
-
-        hi_dec = Decimal(str(float(self.hi)))
-        lo_dec = Decimal(str(float(self.lo)))
-        return str(hi_dec + lo_dec)
+        return f"{self.hi} + {self.lo}"
 
     def __repr__(self):
         return f"DoubleDouble({self.hi}, {self.lo})"
+
+    def __getitem__(self, index):
+        return DoubleDouble(self.hi[index], self.lo[index])
+
+    def __setitem__(self, index, value):
+        self.hi = self.hi.at[index].set(value.hi)
+        self.lo = self.lo.at[index].set(value.lo)
 
     @jax.jit
     def __add__(self, other):
@@ -168,13 +123,6 @@ class DoubleDouble:
     def __abs__(self):
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
-        return DoubleDouble(new_hi, new_lo)
-        # return jax.lax.cond(
-        #     self.hi < 0,
-        #     lambda x: DoubleDouble(-self.hi, -self.lo),
-        #     lambda x: self,
-        #     operand=None,
-        # )
 
     @jax.jit
     def dd_exp(self):
@@ -215,7 +163,58 @@ def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
     return DoubleDouble(hi_max, lo_max)
 
 
-@jax.jit
-def dd_polyval(p: DoubleDouble, x: DoubleDouble) -> DoubleDouble:
-    y, _ = jax.lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr)
-    return y
+# @jax.jit
+# def dd_polyval(p: DoubleDouble, x: DoubleDouble) -> DoubleDouble:
+#     y = DoubleDouble(jnp.zeros_like(x.hi))
+#     y, _ = jax.lax.scan(lambda y, _p: (y * x + _p, None), y, p)
+#     return y
+
+
+@partial(jax.jit, static_argnames=("axis",))
+def dd_sum(x, axis=None):
+    # needed to respect DoubleDouble addition rules when doing sums
+    # again- this is *not* compensated summation, but summation at "DoubleDouble" precision
+    if axis is None:
+        x = DoubleDouble(x.hi.flatten(), x.lo.flatten())
+        axis = 0
+
+    # Move the axis to be summed to the front
+    transposed = DoubleDouble(jnp.swapaxes(x.hi, 0, axis), jnp.swapaxes(x.lo, 0, axis))
+
+    def scan_fn(carry, x):
+        return carry + x, None
+
+    result, _ = jax.lax.scan(scan_fn, transposed[0], transposed[1:])
+
+    return result
+
+
+# @staticmethod
+# def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+#     s = a + b
+#     v = s - a
+#     e = (a - (s - v)) + (b - v)
+#     return s, e
+
+# @staticmethod
+# def _split(a: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+#     t = 2**27 * a
+#     a_hi = t - (t - a)
+#     a_lo = a - a_hi
+#     return a_hi, a_lo
+
+# @staticmethod
+# def _two_prod(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+#     # https://andrewthall.org/papers/df64_qf128.pdf
+#     x = a * b
+
+#     a_hi, a_lo = DoubleDouble._split(a)
+#     b_hi, b_lo = DoubleDouble._split(b)
+
+#     err1 = x - (a_hi * b_hi)
+#     err2 = err1 - (a_lo * b_hi)
+#     err3 = err2 - (a_hi * b_lo)
+
+#     y = (a_lo * b_lo) - err3
+
+#     return x, y

@@ -49,7 +49,7 @@ def create_gauss_radau_spacings(internal_points: int):
     return sols
 
 
-def create_ias15_r_array(h: List[mpmath.mpf]) -> List[mpmath.mpf]:
+def create_iasnn_r_array(h: List[mpmath.mpf]) -> List[mpmath.mpf]:
     mpmath.mp.dps = 75
     n = len(h)
     r = []
@@ -62,7 +62,7 @@ def create_ias15_r_array(h: List[mpmath.mpf]) -> List[mpmath.mpf]:
     return r
 
 
-def create_ias15_c_d_arrays(
+def create_iasnn_c_d_arrays(
     h: List[mpmath.mpf],
 ) -> Tuple[List[mpmath.mpf], List[mpmath.mpf]]:
     mpmath.mp.dps = 75
@@ -103,13 +103,13 @@ def create_ias15_c_d_arrays(
     return c, d
 
 
-def create_ias15_constants(
+def create_iasnn_constants(
     n_internal_points: int,
 ) -> Tuple[List[mpmath.mpf], List[mpmath.mpf], List[mpmath.mpf], List[mpmath.mpf]]:
     mpmath.mp.dps = 75
     h = create_gauss_radau_spacings(n_internal_points)
-    r = create_ias15_r_array(h)
-    c, d = create_ias15_c_d_arrays(h)
+    r = create_iasnn_r_array(h)
+    c, d = create_iasnn_c_d_arrays(h)
 
     return h, r, c, d
 
