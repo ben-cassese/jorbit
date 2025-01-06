@@ -6,128 +6,55 @@ import jax.numpy as jnp
 from jorbit.utils.doubledouble import DoubleDouble, dd_sum
 from jorbit.utils.generate_coefficients import create_iasnn_constants
 
-# IAS15_RR00 = DoubleDouble.from_string("0.05626256053692214646565219103180")
-# IAS15_RR01 = DoubleDouble.from_string("0.18024069173689236498757994278000")
-# IAS15_RR02 = DoubleDouble.from_string("0.12397813119997021852192775174820")
-# IAS15_RR03 = DoubleDouble.from_string("0.35262471711316963737390776964800")
-# IAS15_RR04 = DoubleDouble.from_string("0.29636215657624749090825557861620")
-# IAS15_RR05 = DoubleDouble.from_string("0.17238402537627727238632782686800")
-# IAS15_RR06 = DoubleDouble.from_string("0.54715362633055538300144855476600")
-# IAS15_RR07 = DoubleDouble.from_string("0.49089106579363323653579636373420")
-# IAS15_RR08 = DoubleDouble.from_string("0.36691293459366301801386861198600")
-# IAS15_RR09 = DoubleDouble.from_string("0.19452890921738574562754078511800")
-# IAS15_RR10 = DoubleDouble.from_string("0.73421017721541053152321060555800")
-# IAS15_RR11 = DoubleDouble.from_string("0.67794761667848838505755841452620")
-# IAS15_RR12 = DoubleDouble.from_string("0.55396948547851816653563066277800")
-# IAS15_RR13 = DoubleDouble.from_string("0.38158546010224089414930283591000")
-# IAS15_RR14 = DoubleDouble.from_string("0.18705655088485514852176205079200")
-# IAS15_RR15 = DoubleDouble.from_string("0.88532094683909576809035977103000")
-# IAS15_RR16 = DoubleDouble.from_string("0.82905838630217362162470757999820")
-# IAS15_RR17 = DoubleDouble.from_string("0.70508025510220340310277982825000")
-# IAS15_RR18 = DoubleDouble.from_string("0.53269622972592613071645200138200")
-# IAS15_RR19 = DoubleDouble.from_string("0.33816732050854038508891121626400")
-# IAS15_RR20 = DoubleDouble.from_string("0.15111076962368523656714916547200")
-# IAS15_RR21 = DoubleDouble.from_string("0.97752061356128750189117448862600")
-# IAS15_RR22 = DoubleDouble.from_string("0.92125805302436535542552229759420")
-# IAS15_RR23 = DoubleDouble.from_string("0.79727992182439513690359454584600")
-# IAS15_RR24 = DoubleDouble.from_string("0.62489589644811786451726671897800")
-# IAS15_RR25 = DoubleDouble.from_string("0.43036698723073211888972593386000")
-# IAS15_RR26 = DoubleDouble.from_string("0.24331043634587697036796388306800")
-# IAS15_RR27 = DoubleDouble.from_string("0.09219966672219173380081471759600")
-# IAS15_C00 = DoubleDouble.from_string("-0.05626256053692214646565219103180")
-# IAS15_C01 = DoubleDouble.from_string("0.01014080283006362998648180478597")
-# IAS15_C02 = DoubleDouble.from_string("-0.23650325227381451145323213381180")
-# IAS15_C03 = DoubleDouble.from_string("-0.00357589772925161759493445889941")
-# IAS15_C04 = DoubleDouble.from_string("0.09353769525946206589574846114536")
-# IAS15_C05 = DoubleDouble.from_string("-0.58912796938698414882713990345980")
-# IAS15_C06 = DoubleDouble.from_string("0.00195656540994722107690056706032")
-# IAS15_C07 = DoubleDouble.from_string("-0.05475538688906868644080842943942")
-# IAS15_C08 = DoubleDouble.from_string("0.41588120008230686168862191119100")
-# IAS15_C09 = DoubleDouble.from_string("-1.13628159571753953182858845822580")
-# IAS15_C10 = DoubleDouble.from_string("-0.00143653023637089154244595529986")
-# IAS15_C11 = DoubleDouble.from_string("0.04215852772126870770729734703561")
-# IAS15_C12 = DoubleDouble.from_string("-0.36009959650205681228976646105759")
-# IAS15_C13 = DoubleDouble.from_string("1.25015071184069102585054407510960")
-# IAS15_C14 = DoubleDouble.from_string("-1.87049177293295006335179906378380")
-# IAS15_C15 = DoubleDouble.from_string("0.00127179030902686774929431161483")
-# IAS15_C16 = DoubleDouble.from_string("-0.03876035791590677036990462482059")
-# IAS15_C17 = DoubleDouble.from_string("0.36096224345284598322533980803401")
-# IAS15_C18 = DoubleDouble.from_string("-1.46688420840042696437015525831000")
-# IAS15_C19 = DoubleDouble.from_string("2.90613625930842930142379130729013")
-# IAS15_C20 = DoubleDouble.from_string("-2.75581271977204583144215883481380")
-
-
-# inv_IAS15_RR00 = DoubleDouble(1.0) / IAS15_RR00
-# inv_IAS15_RR01 = DoubleDouble(1.0) / IAS15_RR01
-# inv_IAS15_RR02 = DoubleDouble(1.0) / IAS15_RR02
-# inv_IAS15_RR03 = DoubleDouble(1.0) / IAS15_RR03
-# inv_IAS15_RR04 = DoubleDouble(1.0) / IAS15_RR04
-# inv_IAS15_RR05 = DoubleDouble(1.0) / IAS15_RR05
-# inv_IAS15_RR06 = DoubleDouble(1.0) / IAS15_RR06
-# inv_IAS15_RR07 = DoubleDouble(1.0) / IAS15_RR07
-# inv_IAS15_RR08 = DoubleDouble(1.0) / IAS15_RR08
-# inv_IAS15_RR09 = DoubleDouble(1.0) / IAS15_RR09
-# inv_IAS15_RR10 = DoubleDouble(1.0) / IAS15_RR10
-# inv_IAS15_RR11 = DoubleDouble(1.0) / IAS15_RR11
-# inv_IAS15_RR12 = DoubleDouble(1.0) / IAS15_RR12
-# inv_IAS15_RR13 = DoubleDouble(1.0) / IAS15_RR13
-# inv_IAS15_RR14 = DoubleDouble(1.0) / IAS15_RR14
-# inv_IAS15_RR15 = DoubleDouble(1.0) / IAS15_RR15
-# inv_IAS15_RR16 = DoubleDouble(1.0) / IAS15_RR16
-# inv_IAS15_RR17 = DoubleDouble(1.0) / IAS15_RR17
-# inv_IAS15_RR18 = DoubleDouble(1.0) / IAS15_RR18
-# inv_IAS15_RR19 = DoubleDouble(1.0) / IAS15_RR19
-# inv_IAS15_RR20 = DoubleDouble(1.0) / IAS15_RR20
-# inv_IAS15_RR21 = DoubleDouble(1.0) / IAS15_RR21
-# inv_IAS15_RR22 = DoubleDouble(1.0) / IAS15_RR22
-# inv_IAS15_RR23 = DoubleDouble(1.0) / IAS15_RR23
-# inv_IAS15_RR24 = DoubleDouble(1.0) / IAS15_RR24
-# inv_IAS15_RR25 = DoubleDouble(1.0) / IAS15_RR25
-# inv_IAS15_RR26 = DoubleDouble(1.0) / IAS15_RR26
-# inv_IAS15_RR27 = DoubleDouble(1.0) / IAS15_RR27
-
 
 # not jitted, not using pure jax here
-def setup_iasnn_integrator(n_internal_evals):
+def setup_iasnn_integrator(n_internal_points):
 
     # taylor expansion coefficients
-    b_x_denoms = (1.0 + jnp.arange(1, n_internal_evals + 1, 1, dtype=jnp.float64)) * (
-        2.0 + jnp.arange(1, n_internal_evals + 1, 1, dtype=jnp.float64)
+    b_x_denoms = (1.0 + jnp.arange(1, n_internal_points + 1, 1, dtype=jnp.float64)) * (
+        2.0 + jnp.arange(1, n_internal_points + 1, 1, dtype=jnp.float64)
     )
-    b_v_denoms = jnp.arange(2, n_internal_evals + 2, 1, dtype=jnp.float64)
+    b_v_denoms = jnp.arange(2, n_internal_points + 2, 1, dtype=jnp.float64)
 
     # generate the constant arrays- here they're lists of mpmath.mpf objects
-    h, r, c, d = create_iasnn_constants(n_internal_evals)
+    h, r, c, d = create_iasnn_constants(n_internal_points)
 
     # convert h to a DoubleDouble, nothing fancy needed
     his = jnp.array([DoubleDouble.from_string(str(x)).hi for x in h])
     los = jnp.array([DoubleDouble.from_string(str(x)).lo for x in h])
     h = DoubleDouble(his, los)
 
+    # same for r, except we only ever need the inverses,
+    # so might as well do the division here
+    his = jnp.array([DoubleDouble.from_string(str(x)).hi for x in r])
+    los = jnp.array([DoubleDouble.from_string(str(x)).lo for x in r])
+    r = DoubleDouble(his, los)
+    r = DoubleDouble(1.0) / r
+
     # convert d into a matrix to initialize the g coefficients
     his = jnp.array([DoubleDouble.from_string(str(x)).hi for x in d])
     los = jnp.array([DoubleDouble.from_string(str(x)).lo for x in d])
     d = DoubleDouble(his, los)
 
-    d_matrix_his = jnp.zeros((n_internal_evals, n_internal_evals))
-    indices = jnp.tril_indices(n_internal_evals, k=-1)
+    d_matrix_his = jnp.zeros((n_internal_points, n_internal_points))
+    indices = jnp.tril_indices(n_internal_points, k=-1)
     d_matrix_his = d_matrix_his.at[indices].set(d.hi)
-    d_matrix_his = d_matrix_his.at[jnp.diag_indices(n_internal_evals)].set(1.0)
+    d_matrix_his = d_matrix_his.at[jnp.diag_indices(n_internal_points)].set(1.0)
     d_matrix_his = d_matrix_his.T
 
-    d_matrix_los = jnp.zeros((n_internal_evals, n_internal_evals))
-    indices = jnp.tril_indices(n_internal_evals, k=-1)
+    d_matrix_los = jnp.zeros((n_internal_points, n_internal_points))
+    indices = jnp.tril_indices(n_internal_points, k=-1)
     d_matrix_los = d_matrix_los.at[indices].set(d.lo)
     d_matrix_los = d_matrix_los.T
 
     d = DoubleDouble(d_matrix_his, d_matrix_los)
 
-    return DoubleDouble(b_x_denoms), DoubleDouble(b_v_denoms), h, d
+    return DoubleDouble(b_x_denoms), DoubleDouble(b_v_denoms), h, r, d
 
 
 def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     # bp is *not* an IAS15Helper, it's just a DoubleDouble w/ shape
-    # (n_internal_evals, n_particles, 3)
+    # (n_internal_points, n_particles, 3)
     # aiming to stay shape-agnostic, enable higher or lower order scheme
 
     # these are all DoubleDoubles
@@ -158,6 +85,23 @@ def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     return estimated_x, estimated_v
 
 
+@partial(jax.jit, static_argnums=(0,))
+def refine_intermediate_g(substep_num, g, r, at, a0):
+    # substep_num starts at 1, 1->h1, etc
+    substep_num -= 1
+
+    def scan_body(carry, idx):
+        result, start_pos = carry
+        result = (result - g[idx]) * r[start_pos + idx + 1]
+        return (result, start_pos), result
+
+    start_pos = (substep_num * (substep_num + 1)) // 2
+    initial_result = (at - a0) * r[start_pos]
+    indices = jnp.arange(substep_num)
+    (final_result, _), _ = jax.lax.scan(scan_body, (initial_result, start_pos), indices)
+    return final_result
+
+
 def acceleration_func(x):
     return -x
 
@@ -166,16 +110,16 @@ def acceleration_func(x):
 def step(x0, v0, a0, b, precompued_setup):
     # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
-    # b is (n_internal_evals, n_particles, 3)
+    # b is (n_internal_points, n_particles, 3)
 
-    b_x_denoms, b_v_denoms, h, d_matrix = precompued_setup
+    b_x_denoms, b_v_denoms, h, r, d_matrix = precompued_setup
 
     # TODO
     t_beginning = DoubleDouble(0.0)
     dt = DoubleDouble(0.01)
     # end TODO
 
-    n_internal_evals = b.hi.shape[0]
+    n_internal_points = b.hi.shape[0]
     estimate_x_v_from_b = jax.tree_util.Partial(
         _estimate_x_v_from_b, a0, v0, x0, dt, b_x_denoms, b_v_denoms
     )
