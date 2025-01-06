@@ -451,6 +451,8 @@ def ias15_step(
 
         return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
 
+    return predictor_corrector_iteration(b, csb, g, 1e300)
+
     def scan_func(carry, scan_over):
         b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
 
