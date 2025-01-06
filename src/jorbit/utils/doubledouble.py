@@ -81,6 +81,7 @@ class DoubleDouble:
         zz = r - z + s
         return DoubleDouble(z, zz)
 
+    @jax.jit
     def __neg__(self):
         return DoubleDouble(-self.hi, -self.lo)
 
@@ -124,24 +125,9 @@ class DoubleDouble:
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
 
-    @jax.jit
-    def dd_exp(self):
-        raise NotImplementedError
-        # not strictly a DoubleDouble-compatible operation:
-        # just exp the hi and lo parts separately, then add them
-        # with a DoubleDouble-compatible addition
-
-        # can do better w/ a Taylor series?
-
-        exp_hi = jnp.exp(self.hi)
-        exp_lo = jnp.exp(self.lo)
-
-        # from here, same as __mul__
-        c = DoubleDouble._mul12(self.hi, other.hi)
-        cc = self.hi * other.lo + self.lo * other.hi + c.lo
-
-        z = c.hi + cc
-        zz = c.hi - z + cc
+    @property
+    def shape(self):
+        return self.hi.shape
 
     def tree_flatten(self):
         """Implementation for JAX pytree."""
@@ -163,13 +149,6 @@ def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
     return DoubleDouble(hi_max, lo_max)
 
 
-# @jax.jit
-# def dd_polyval(p: DoubleDouble, x: DoubleDouble) -> DoubleDouble:
-#     y = DoubleDouble(jnp.zeros_like(x.hi))
-#     y, _ = jax.lax.scan(lambda y, _p: (y * x + _p, None), y, p)
-#     return y
-
-
 @partial(jax.jit, static_argnames=("axis",))
 def dd_sum(x, axis=None):
     # needed to respect DoubleDouble addition rules when doing sums
@@ -187,6 +166,17 @@ def dd_sum(x, axis=None):
     result, _ = jax.lax.scan(scan_fn, transposed[0], transposed[1:])
 
     return result
+
+
+@jax.jit
+def dd_sqrt(x):
+    # sqrt2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
+    c = jnp.sqrt(x.hi)
+    u = DoubleDouble._mul12(c, c)
+    c_lo = (x.hi - u.hi - u.lo + x.lo) / (2 * c)
+    y = c + c_lo
+    yy = c - y + c_lo
+    return DoubleDouble(y, yy)
 
 
 # @staticmethod

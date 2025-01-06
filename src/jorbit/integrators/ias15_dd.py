@@ -3,6 +3,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from functools import partial
+
 from jorbit.utils.doubledouble import DoubleDouble, dd_sum
 from jorbit.utils.generate_coefficients import create_iasnn_constants
 
@@ -23,6 +25,11 @@ def setup_iasnn_integrator(n_internal_points):
     his = jnp.array([DoubleDouble.from_string(str(x)).hi for x in h])
     los = jnp.array([DoubleDouble.from_string(str(x)).lo for x in h])
     h = DoubleDouble(his, los)
+
+    # same for c
+    his = jnp.array([DoubleDouble.from_string(str(x)).hi for x in c])
+    los = jnp.array([DoubleDouble.from_string(str(x)).lo for x in c])
+    c = DoubleDouble(his, los)
 
     # same for r, except we only ever need the inverses,
     # so might as well do the division here
@@ -49,7 +56,7 @@ def setup_iasnn_integrator(n_internal_points):
 
     d = DoubleDouble(d_matrix_his, d_matrix_los)
 
-    return DoubleDouble(b_x_denoms), DoubleDouble(b_v_denoms), h, r, d
+    return DoubleDouble(b_x_denoms), DoubleDouble(b_v_denoms), h, r, c, d
 
 
 def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
@@ -102,6 +109,31 @@ def refine_intermediate_g(substep_num, g, r, at, a0):
     return final_result
 
 
+@partial(jax.jit, static_argnums=(7, 8))
+def _refine_b_and_g(r, c, d, b, g, at, a0, substep_num, return_g_diff=False):
+    old_g = g
+    new_g = refine_intermediate_g(substep_num=substep_num, g=g, r=r, at=at, a0=a0)
+    g_diff = new_g - old_g[substep_num - 1]
+    g[substep_num - 1] = new_g
+
+    c_start = (substep_num - 1) * (substep_num - 2) // 2
+    c_vals = DoubleDouble(jnp.ones(substep_num, dtype=jnp.float64))
+    c_vals[: substep_num - 1] = c[c_start : c_start + substep_num - 1]
+
+    def scan_func(carry, scan_over):
+        b_array = carry
+        idx = scan_over
+        b_array[idx, :] = b_array[idx] + (g_diff * c_vals[idx])
+        return b_array, None
+
+    b_indices = jnp.arange(substep_num)
+    final_b, _ = jax.lax.scan(scan_func, b, b_indices)
+
+    if return_g_diff:
+        return final_b, g, g_diff
+    return final_b, g
+
+
 def acceleration_func(x):
     return -x
 
@@ -112,247 +144,82 @@ def step(x0, v0, a0, b, precompued_setup):
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)
 
-    b_x_denoms, b_v_denoms, h, r, d_matrix = precompued_setup
+    b_x_denoms, b_v_denoms, h, r, c, d_matrix = precompued_setup
 
     # TODO
     t_beginning = DoubleDouble(0.0)
     dt = DoubleDouble(0.01)
-    # end TODO
 
     n_internal_points = b.hi.shape[0]
     estimate_x_v_from_b = jax.tree_util.Partial(
         _estimate_x_v_from_b, a0, v0, x0, dt, b_x_denoms, b_v_denoms
     )
+    refine_b_and_g = jax.tree_util.Partial(_refine_b_and_g, r, c, d_matrix)
 
     # initialize the g coefficients
     g = dd_sum((b[None, :, :, :] * d_matrix[:, :, None, None]), axis=1)
 
-    x_est, v_est = estimate_x_v_from_b(h[-1], b)
-
-    return g, x_est, v_est
+    # get the initial acceleration
+    a0 = acceleration_func(x0)
 
     # # set up the predictor-corrector loop
     # def do_nothing(b, g, predictor_corrector_error):
     #     # print("just chillin")
     #     return b, g, predictor_corrector_error, predictor_corrector_error
 
-    # def predictor_corrector_iteration(b, g, predictor_corrector_error):
-    #     predictor_corrector_error_last = predictor_corrector_error
-    #     predictor_corrector_error = 0.0
+    def predictor_corrector_iteration(b, g, predictor_corrector_error):
+        predictor_corrector_error_last = predictor_corrector_error
+        predictor_corrector_error = 0.0
 
-    #     # loop over each subinterval
-    #     ################################################################################
-    #     n = 1
-    #     step_time = t_beginning + dt * IAS15_H1
-    #     # get the new acceleration value at predicted position
-    #     x, v = estimate_x_v_from_b(IAS15_H1, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
+        # loop over each subinterval
+        ################################################################################
+        n = 1
+        step_time = t_beginning + dt * h[1]
+        x, v = estimate_x_v_from_b(h[1], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     tmp = g.p0
-    #     gk = at - a0
-    #     g.p0 = gk * inv_IAS15_RR00
-    #     b.p0 = b.p0 + g.p0 - tmp
+        n = 2
+        step_time = t_beginning + dt * h[2]
+        x, v = estimate_x_v_from_b(h[2], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     ################################################################################
-    #     n = 2
-    #     step_time = t_beginning + dt * IAS15_H2
-    #     x, v = estimate_x_v_from_b(IAS15_H2, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
+        n = 3
+        step_time = t_beginning + dt * h[3]
+        x, v = estimate_x_v_from_b(h[3], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     tmp = g.p1
-    #     gk = at - a0
-    #     g.p1 = (gk * inv_IAS15_RR01 - g.p0) * inv_IAS15_RR02
-    #     tmp = g.p1 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C00
-    #     b.p1 = b.p1 + tmp
+        n = 4
+        step_time = t_beginning + dt * h[4]
+        x, v = estimate_x_v_from_b(h[4], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     ################################################################################
-    #     n = 3
-    #     step_time = t_beginning + dt * IAS15_H3
-    #     x, v = estimate_x_v_from_b(IAS15_H3, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
+        n = 5
+        step_time = t_beginning + dt * h[5]
+        x, v = estimate_x_v_from_b(h[5], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     tmp = g.p2
-    #     gk = at - a0
-    #     g.p2 = ((gk * inv_IAS15_RR03 - g.p0) * inv_IAS15_RR04 - g.p1) * inv_IAS15_RR05
-    #     tmp = g.p2 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C01
-    #     b.p1 = b.p1 + tmp * IAS15_C02
-    #     b.p2 = b.p2 + tmp
+        n = 6
+        step_time = t_beginning + dt * h[6]
+        x, v = estimate_x_v_from_b(h[6], b)
+        at = acceleration_func(x)
+        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
 
-    #     ################################################################################
-    #     n = 4
-    #     step_time = t_beginning + dt * IAS15_H4
-    #     x, v = estimate_x_v_from_b(IAS15_H4, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
+        n = 7
+        step_time = t_beginning + dt * h[7]
+        x, v = estimate_x_v_from_b(h[7], b)
+        at = acceleration_func(x)
+        b, g, g_diff = refine_b_and_g(
+            b=b, g=g, at=at, a0=a0, substep_num=n, return_g_diff=True
+        )
 
-    #     tmp = g.p3
-    #     gk = at - a0
-    #     g.p3 = (
-    #         ((gk * inv_IAS15_RR06 - g.p0) * inv_IAS15_RR07 - g.p1) * inv_IAS15_RR08
-    #         - g.p2
-    #     ) * inv_IAS15_RR09
-    #     tmp = g.p3 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C03
-    #     b.p1 = b.p1 + tmp * IAS15_C04
-    #     b.p2 = b.p2 + tmp * IAS15_C05
-    #     b.p3 = b.p3 + tmp
+        return b, g, g_diff
 
-    #     ################################################################################
-    #     n = 5
-    #     step_time = t_beginning + dt * IAS15_H5
-    #     x, v = estimate_x_v_from_b(IAS15_H5, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
-
-    #     tmp = g.p4
-    #     gk = at - a0
-    #     g.p4 = (
-    #         (
-    #             ((gk * inv_IAS15_RR10 - g.p0) * inv_IAS15_RR11 - g.p1) * inv_IAS15_RR12
-    #             - g.p2
-    #         )
-    #         * inv_IAS15_RR13
-    #         - g.p3
-    #     ) * inv_IAS15_RR14
-    #     tmp = g.p4 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C06
-    #     b.p1 = b.p1 + tmp * IAS15_C07
-    #     b.p2 = b.p2 + tmp * IAS15_C08
-    #     b.p3 = b.p3 + tmp * IAS15_C09
-    #     b.p4 = b.p4 + tmp
-
-    #     ################################################################################
-    #     n = 6
-    #     step_time = t_beginning + dt * IAS15_H6
-    #     x, v = estimate_x_v_from_b(IAS15_H6, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
-
-    #     tmp = g.p5
-    #     gk = at - a0
-    #     g.p5 = (
-    #         (
-    #             (
-    #                 ((gk * inv_IAS15_RR15 - g.p0) * inv_IAS15_RR16 - g.p1)
-    #                 * inv_IAS15_RR17
-    #                 - g.p2
-    #             )
-    #             * inv_IAS15_RR18
-    #             - g.p3
-    #         )
-    #         * inv_IAS15_RR19
-    #         - g.p4
-    #     ) * inv_IAS15_RR20
-    #     tmp = g.p5 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C10
-    #     b.p1 = b.p1 + tmp * IAS15_C11
-    #     b.p2 = b.p2 + tmp * IAS15_C12
-    #     b.p3 = b.p3 + tmp * IAS15_C13
-    #     b.p4 = b.p4 + tmp * IAS15_C14
-    #     b.p5 = b.p5 + tmp
-
-    #     ################################################################################
-    #     n = 7
-    #     step_time = t_beginning + dt * IAS15_H7
-    #     x, v = estimate_x_v_from_b(IAS15_H7, b)
-    #     # acc_state = SystemState(
-    #     #     massive_positions=x[:M],
-    #     #     massive_velocities=v[:M],
-    #     #     tracer_positions=x[M:],
-    #     #     tracer_velocities=v[M:],
-    #     #     log_gms=initial_system_state.log_gms,
-    #     #     time=step_time,
-    #     #     acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-    #     # )
-    #     # at = acceleration_func(acc_state)
-    #     at = acceleration_func(x)
-
-    #     tmp = g.p6
-    #     gk = at - a0
-    #     g.p6 = (
-    #         (
-    #             (
-    #                 (
-    #                     ((gk * inv_IAS15_RR21 - g.p0) * inv_IAS15_RR22 - g.p1)
-    #                     * inv_IAS15_RR23
-    #                     - g.p2
-    #                 )
-    #                 * inv_IAS15_RR24
-    #                 - g.p3
-    #             )
-    #             * inv_IAS15_RR25
-    #             - g.p4
-    #         )
-    #         * inv_IAS15_RR26
-    #         - g.p5
-    #     ) * inv_IAS15_RR27
-    #     tmp = g.p6 - tmp
-    #     b.p0 = b.p0 + tmp * IAS15_C15
-    #     b.p1 = b.p1 + tmp * IAS15_C16
-    #     b.p2 = b.p2 + tmp * IAS15_C17
-    #     b.p3 = b.p3 + tmp * IAS15_C18
-    #     b.p4 = b.p4 + tmp * IAS15_C19
-    #     b.p5 = b.p5 + tmp * IAS15_C20
-    #     b.p6 = b.p6 + tmp
+    return predictor_corrector_iteration(b, g, None)
 
     #     # maxa = jnp.max(jnp.abs(at))
     #     maxa = DoubleDouble.dd_max(abs(at))  # abs is overloaded for DoubleDouble
