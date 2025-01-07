@@ -5,8 +5,9 @@ import jax.numpy as jnp
 
 from functools import partial
 
-from jorbit.utils.doubledouble import DoubleDouble, dd_sum
+from jorbit.utils.doubledouble import DoubleDouble, dd_sum, dd_max, dd_norm
 from jorbit.utils.generate_coefficients import create_iasnn_constants
+from jorbit.data.constants import IASNN_DD_EPSILON
 
 
 # not jitted, not using pure jax here
@@ -109,8 +110,8 @@ def refine_intermediate_g(substep_num, g, r, at, a0):
     return final_result
 
 
-@partial(jax.jit, static_argnums=(7, 8))
-def _refine_b_and_g(r, c, d, b, g, at, a0, substep_num, return_g_diff=False):
+@partial(jax.jit, static_argnums=(6, 7))
+def _refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
     old_g = g
     new_g = refine_intermediate_g(substep_num=substep_num, g=g, r=r, at=at, a0=a0)
     g_diff = new_g - old_g[substep_num - 1]
@@ -134,12 +135,14 @@ def _refine_b_and_g(r, c, d, b, g, at, a0, substep_num, return_g_diff=False):
     return final_b, g
 
 
+@jax.jit
 def acceleration_func(x):
-    return -x
+    r = dd_norm(x, axis=1)
+    return -x / (r * r * r)
 
 
 @jax.jit
-def step(x0, v0, a0, b, precompued_setup):
+def step(x0, v0, b, dt, precompued_setup):
     # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)
@@ -148,13 +151,14 @@ def step(x0, v0, a0, b, precompued_setup):
 
     # TODO
     t_beginning = DoubleDouble(0.0)
-    dt = DoubleDouble(0.01)
+    a0 = acceleration_func(x0)
 
+    # misc setup, make partialized versions of the helpers that bake in the constants
     n_internal_points = b.hi.shape[0]
     estimate_x_v_from_b = jax.tree_util.Partial(
         _estimate_x_v_from_b, a0, v0, x0, dt, b_x_denoms, b_v_denoms
     )
-    refine_b_and_g = jax.tree_util.Partial(_refine_b_and_g, r, c, d_matrix)
+    refine_b_and_g = jax.tree_util.Partial(_refine_b_and_g, r, c)
 
     # initialize the g coefficients
     g = dd_sum((b[None, :, :, :] * d_matrix[:, :, None, None]), axis=1)
@@ -162,10 +166,10 @@ def step(x0, v0, a0, b, precompued_setup):
     # get the initial acceleration
     a0 = acceleration_func(x0)
 
-    # # set up the predictor-corrector loop
-    # def do_nothing(b, g, predictor_corrector_error):
-    #     # print("just chillin")
-    #     return b, g, predictor_corrector_error, predictor_corrector_error
+    # set up the predictor-corrector loop
+    def do_nothing(b, g, predictor_corrector_error):
+        # jax.debug.print("just chillin")
+        return b, g, predictor_corrector_error, predictor_corrector_error
 
     def predictor_corrector_iteration(b, g, predictor_corrector_error):
         predictor_corrector_error_last = predictor_corrector_error
@@ -173,93 +177,63 @@ def step(x0, v0, a0, b, precompued_setup):
 
         # loop over each subinterval
         ################################################################################
-        n = 1
-        step_time = t_beginning + dt * h[1]
-        x, v = estimate_x_v_from_b(h[1], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
+        # really not loving this as a for loop, worried about compile times
+        # but, struggled too long to get it to work with scan, even if things are marked
+        # static in the subfunctions the scan doesn't like that
+        for n in range(1, n_internal_points):
+            step_time = t_beginning + dt * h[n]
+            x, v = estimate_x_v_from_b(h[n], b)
+            at = acceleration_func(x)
+            b, g = refine_b_and_g(b, g, at, a0, n, False)
 
-        n = 2
-        step_time = t_beginning + dt * h[2]
-        x, v = estimate_x_v_from_b(h[2], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
-
-        n = 3
-        step_time = t_beginning + dt * h[3]
-        x, v = estimate_x_v_from_b(h[3], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
-
-        n = 4
-        step_time = t_beginning + dt * h[4]
-        x, v = estimate_x_v_from_b(h[4], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
-
-        n = 5
-        step_time = t_beginning + dt * h[5]
-        x, v = estimate_x_v_from_b(h[5], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
-
-        n = 6
-        step_time = t_beginning + dt * h[6]
-        x, v = estimate_x_v_from_b(h[6], b)
-        at = acceleration_func(x)
-        b, g = refine_b_and_g(b=b, g=g, at=at, a0=a0, substep_num=n)
-
-        n = 7
-        step_time = t_beginning + dt * h[7]
-        x, v = estimate_x_v_from_b(h[7], b)
+        # last iteration is different only so we can get the change in the last g value
+        # to evaluate convergence
+        n = n_internal_points
+        step_time = t_beginning + dt * h[n]
+        x, v = estimate_x_v_from_b(h[n], b)
         at = acceleration_func(x)
         b, g, g_diff = refine_b_and_g(
             b=b, g=g, at=at, a0=a0, substep_num=n, return_g_diff=True
         )
 
-        return b, g, g_diff
+        maxa = dd_max(abs(at))  # abs is overloaded for DoubleDouble
+        maxb6tmp = dd_max(abs(g_diff))
+        predictor_corrector_error = abs(maxb6tmp / maxa)
 
-    return predictor_corrector_iteration(b, g, None)
+        return b, g, predictor_corrector_error, predictor_corrector_error_last
 
-    #     # maxa = jnp.max(jnp.abs(at))
-    #     maxa = DoubleDouble.dd_max(abs(at))  # abs is overloaded for DoubleDouble
-    #     # maxb6tmp = jnp.max(jnp.abs(tmp))
-    #     maxb6tmp = DoubleDouble.dd_max(abs(tmp))
+    def scan_func(carry, scan_over):
+        b, g, predictor_corrector_error, predictor_corrector_error_last = carry
 
-    #     # predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
-    #     predictor_corrector_error = abs(maxb6tmp / maxa)
+        condition = (predictor_corrector_error < IASNN_DD_EPSILON) | (
+            (scan_over > 2)
+            & (predictor_corrector_error > predictor_corrector_error_last)
+        )
 
-    #     return b, g, predictor_corrector_error, predictor_corrector_error_last
+        carry = jax.lax.cond(
+            condition,
+            do_nothing,
+            predictor_corrector_iteration,
+            b,
+            g,
+            predictor_corrector_error,
+        )
 
-    # def scan_func(carry, scan_over):
-    #     b, g, predictor_corrector_error, predictor_corrector_error_last = carry
+        carry = predictor_corrector_iteration(b, g, predictor_corrector_error)
+        # jax.debug.print("{x}, {y}", x=carry[2].hi, y=carry[2].lo)
+        return carry, None
 
-    #     # condition = (predictor_corrector_error < EPSILON) | (
-    #     #     (scan_over > 2)
-    #     #     & (predictor_corrector_error > predictor_corrector_error_last)
-    #     # )
+    predictor_corrector_error = DoubleDouble(1e300)
+    predictor_corrector_error_last = DoubleDouble(2.0)
 
-    #     # carry = jax.lax.cond(
-    #     #     condition,
-    #     #     do_nothing,
-    #     #     predictor_corrector_iteration,
-    #     #     b,
-    #     #     csb,
-    #     #     g,
-    #     #     predictor_corrector_error,
-    #     # )
+    (b, g, predictor_corrector_error, predictor_corrector_error_last), _ = jax.lax.scan(
+        scan_func,
+        (b, g, predictor_corrector_error, predictor_corrector_error_last),
+        jnp.arange(10),
+    )
 
-    #     carry = predictor_corrector_iteration(b, g, predictor_corrector_error)
-    #     jax.debug.print("{x}, {y}", x=carry[2].hi, y=carry[2].lo)
-    #     return carry, None
+    # bits about timescales
 
-    # predictor_corrector_error = DoubleDouble(1e300)
-    # predictor_corrector_error_last = DoubleDouble(2.0)
+    x, v = estimate_x_v_from_b(DoubleDouble(1.0), b)
 
-    # (b, g, predictor_corrector_error, predictor_corrector_error_last), _ = jax.lax.scan(
-    #     scan_func,
-    #     (b, g, predictor_corrector_error, predictor_corrector_error_last),
-    #     jnp.arange(10),
-    # )
-
-    # return b, g, predictor_corrector_error, predictor_corrector_error_last
+    return x, v, b
