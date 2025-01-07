@@ -124,6 +124,19 @@ class DoubleDouble:
     def __abs__(self):
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
+        return DoubleDouble(new_hi, new_lo)
+
+    def __lt__(self, other):
+        return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo < other.lo))
+
+    def __le__(self, other):
+        return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo <= other.lo))
+
+    def __gt__(self, other):
+        return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo > other.lo))
+
+    def __ge__(self, other):
+        return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo >= other.lo))
 
     @property
     def shape(self):
@@ -145,7 +158,7 @@ class DoubleDouble:
 def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
     hi_max = jnp.max(x.hi, axis=axis)
     max_mask = x.hi == hi_max
-    lo_max = jnp.max(jnp.where(max_mask, self.lo, -jnp.inf), axis=axis)
+    lo_max = jnp.max(jnp.where(max_mask, x.lo, -jnp.inf), axis=axis)
     return DoubleDouble(hi_max, lo_max)
 
 
@@ -177,6 +190,14 @@ def dd_sqrt(x):
     y = c + c_lo
     yy = c - y + c_lo
     return DoubleDouble(y, yy)
+
+
+@partial(jax.jit, static_argnames=("axis",))
+def dd_norm(x, axis=None):
+    if axis is None:
+        x = DoubleDouble(x.hi.flatten(), x.lo.flatten())
+        axis = 0
+    return dd_sqrt(dd_sum(x * x, axis=axis))
 
 
 # @staticmethod
