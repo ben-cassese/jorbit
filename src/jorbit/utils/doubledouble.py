@@ -9,11 +9,6 @@ from typing import Any, Tuple, Optional
 
 @jax.tree_util.register_pytree_node_class
 class DoubleDouble:
-    """A double-double precision number representation for JAX.
-
-    Represents a high-precision number as a sum of two IEEE doubles (hi + lo),
-    where |lo| <= ulp(hi)/2. This gives roughly twice the precision of a regular double.
-    """
 
     def __init__(self, hi, lo=None):
         """Initialize a DoubleDouble number.
@@ -22,8 +17,25 @@ class DoubleDouble:
             hi: High part (jnp.ndarray)
             lo: Low part (jnp.ndarray, optional). If None, lo is set to 0
         """
-        self.hi = hi
-        self.lo = jnp.zeros_like(hi) if lo is None else lo
+        if isinstance(hi, (int, float)) & (lo is None):
+            self.hi, self.lo = DoubleDouble._split(jnp.array(hi))
+        else:
+            self.hi = jnp.array(hi)
+            self.lo = jnp.zeros_like(hi) if lo is None else lo
+
+    @staticmethod
+    def _split(a: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        t = (2**27 + 1) * a
+        a_hi = t - (t - a)
+        a_lo = a - a_hi
+        return a_hi, a_lo
+
+    @staticmethod
+    def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        s = a + b
+        v = s - a
+        e = (a - (s - v)) + (b - v)
+        return s, e
 
     @staticmethod
     def _mul12(x: jnp.ndarray, y: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -46,13 +58,17 @@ class DoubleDouble:
 
     @classmethod
     def from_string(cls, s: str) -> "DoubleDouble":
+        assert isinstance(s, str)
         from decimal import Decimal, getcontext
 
         getcontext().prec = 50
 
         d = Decimal(s)
-        hi = float(str(d))
-        lo = float(str(d - Decimal(str(hi))))
+        hi = float(d)
+        # Compute low part using exact subtraction
+        lo = float(d - Decimal(hi))
+        # Normalize the components
+        hi, lo = DoubleDouble._two_sum(hi, lo)
         return cls(jnp.array(hi), jnp.array(lo))
 
     def __str__(self) -> str:
@@ -68,7 +84,7 @@ class DoubleDouble:
         self.hi = self.hi.at[index].set(value.hi)
         self.lo = self.lo.at[index].set(value.lo)
 
-    @jax.jit
+    # @jax.jit
     def __add__(self, other):
         # add2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi + other.hi
@@ -81,11 +97,11 @@ class DoubleDouble:
         zz = r - z + s
         return DoubleDouble(z, zz)
 
-    @jax.jit
+    # @jax.jit
     def __neg__(self):
         return DoubleDouble(-self.hi, -self.lo)
 
-    @jax.jit
+    # @jax.jit
     def __sub__(self, other):
         # sub2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi - other.hi
@@ -99,7 +115,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
         self
 
-    @jax.jit
+    # @jax.jit
     def __mul__(self, other):
         # mul2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = DoubleDouble._mul12(self.hi, other.hi)
@@ -110,7 +126,7 @@ class DoubleDouble:
 
         return DoubleDouble(z, zz)
 
-    @jax.jit
+    # @jax.jit
     def __truediv__(self, other):
         # div2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = self.hi / other.hi
@@ -120,7 +136,7 @@ class DoubleDouble:
         zz = c - z + cc
         return DoubleDouble(z, zz)
 
-    @jax.jit
+    # @jax.jit
     def __abs__(self):
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
@@ -154,7 +170,7 @@ class DoubleDouble:
         return cls(*children)
 
 
-@jax.jit
+# @jax.jit
 def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
     hi_max = jnp.max(x.hi, axis=axis)
     max_mask = x.hi == hi_max
@@ -162,7 +178,7 @@ def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
     return DoubleDouble(hi_max, lo_max)
 
 
-@partial(jax.jit, static_argnames=("axis",))
+# @partial(jax.jit, static_argnames=("axis",))
 def dd_sum(x, axis=None):
     # needed to respect DoubleDouble addition rules when doing sums
     # again- this is *not* compensated summation, but summation at "DoubleDouble" precision
@@ -181,7 +197,7 @@ def dd_sum(x, axis=None):
     return result
 
 
-@jax.jit
+# @jax.jit
 def dd_sqrt(x):
     # sqrt2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
     c = jnp.sqrt(x.hi)
@@ -192,7 +208,7 @@ def dd_sqrt(x):
     return DoubleDouble(y, yy)
 
 
-@partial(jax.jit, static_argnames=("axis",))
+# @partial(jax.jit, static_argnames=("axis",))
 def dd_norm(x, axis=None):
     if axis is None:
         x = DoubleDouble(x.hi.flatten(), x.lo.flatten())
@@ -209,7 +225,7 @@ def dd_norm(x, axis=None):
 
 # @staticmethod
 # def _split(a: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-#     t = 2**27 * a
+#     t = (2**27 + 1) * a
 #     a_hi = t - (t - a)
 #     a_lo = a - a_hi
 #     return a_hi, a_lo

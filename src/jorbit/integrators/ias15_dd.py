@@ -75,6 +75,7 @@ def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     xcoeffs[1] = v0 * dt
     xcoeffs[0] = x0
     xcoeffs = xcoeffs[::-1]
+    return xcoeffs
 
     new_x_init = DoubleDouble(jnp.zeros(xcoeffs.hi.shape[1:]))
     estimated_x, _ = jax.lax.scan(lambda y, _p: (y * h + _p, None), new_x_init, xcoeffs)
@@ -142,12 +143,12 @@ def acceleration_func(x):
 
 
 @jax.jit
-def step(x0, v0, b, dt, precompued_setup):
+def step(x0, v0, b, dt, precomputed_setup):
     # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)
 
-    b_x_denoms, b_v_denoms, h, r, c, d_matrix = precompued_setup
+    b_x_denoms, b_v_denoms, h, r, c, d_matrix = precomputed_setup
 
     # TODO
     t_beginning = DoubleDouble(0.0)
@@ -201,6 +202,8 @@ def step(x0, v0, b, dt, precompued_setup):
         predictor_corrector_error = abs(maxb6tmp / maxa)
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
+
+    return predictor_corrector_iteration(b, g, DoubleDouble(1e300))
 
     def scan_func(carry, scan_over):
         b, g, predictor_corrector_error, predictor_corrector_error_last = carry

@@ -30,6 +30,8 @@ def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     # Reverse xcoeffs
     xcoeffs = xcoeffs[::-1, :]
 
+    return xcoeffs
+
     # Initialize results
     estimated_x = matrix([mp.mpf("0") for _ in range(3)])
 
@@ -185,6 +187,8 @@ def step(x0, v0, b, dt, precomputed_setup):
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
 
+    return predictor_corrector_iteration(b, g, 1e300)
+
     predictor_corrector_error = 1e300
     for i in range(10):
         # print(f"i: {i}")
@@ -193,13 +197,13 @@ def step(x0, v0, b, dt, precomputed_setup):
             predictor_corrector_iteration(b, g, predictor_corrector_error)
         )
 
-        condition = (predictor_corrector_error < mpf("1e-50")) | (
-            (i > 2) & (predictor_corrector_error > predictor_corrector_error_last)
-        )
+        # condition = (predictor_corrector_error < mpf("1e-50")) | (
+        #     (i > 2) & (predictor_corrector_error > predictor_corrector_error_last)
+        # )
 
-        if condition:
-            # print("stopping early!")
-            break
+        # if condition:
+        #     # print("stopping early!")
+        #     break
 
     x, v = estimate_x_v_from_b(
         a0=a0,
