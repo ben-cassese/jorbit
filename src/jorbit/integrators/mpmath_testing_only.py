@@ -5,19 +5,19 @@ import numpy as np
 
 from jorbit.utils.generate_coefficients import create_iasnn_constants
 
-mp.dps = 50
+mp.dps = 70
 
 
 def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
-    # Set precision as needed
-    mp.dps = 50  # Adjust precision as needed
-
+    n_internal_points = len(bp)
     # Initialize xcoeffs with zeros
     # Shape will be (10, 3) - 7 points from bp + 3 initial conditions
-    xcoeffs = matrix([[mp.mpf("0") for _ in range(3)] for _ in range(10)])
+    xcoeffs = matrix(
+        [[mp.mpf("0") for _ in range(3)] for _ in range(n_internal_points + 3)]
+    )
 
     # Fill xcoeffs with bp values
-    for i in range(7):  # 7 internal points
+    for i in range(n_internal_points):  # 7 internal points
         for k in range(3):  # 3 dimensions
             xcoeffs[i + 3, k] = bp[i, k] * dt * dt / b_x_denoms[i]
 
@@ -29,8 +29,6 @@ def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
 
     # Reverse xcoeffs
     xcoeffs = xcoeffs[::-1, :]
-
-    return xcoeffs
 
     # Initialize results
     estimated_x = matrix([mp.mpf("0") for _ in range(3)])
@@ -44,9 +42,11 @@ def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
 
     # Similar process for velocity coefficients
     # Shape will be (9, 3) - 7 points from bp + 2 initial conditions
-    vcoeffs = matrix([[mp.mpf("0") for _ in range(3)] for _ in range(9)])
+    vcoeffs = matrix(
+        [[mp.mpf("0") for _ in range(3)] for _ in range(n_internal_points + 2)]
+    )
 
-    for i in range(7):  # 7 internal points
+    for i in range(n_internal_points):  # 7 internal points
         for k in range(3):
             vcoeffs[i + 2, k] = bp[i, k] * dt / b_v_denoms[i]
 
@@ -76,7 +76,7 @@ def refine_intermediate_g(substep_num, g, r, at, a0):
 
     # Iterate through previous substeps
     for idx in range(substep_num):
-        result = (result - g[idx, 0]) * r[start_pos + idx + 1]
+        result = (result - g[idx, :]) * r[start_pos + idx + 1]
 
     return result
 
@@ -125,20 +125,20 @@ def precompute(n_internal_points):
     c = matrix(c)
     d = matrix(d)
 
-    d_matrix = mpm.zeros(7, 7)
-    indices = np.tril_indices(7, k=-1)
+    d_matrix = mpm.zeros(n_internal_points, n_internal_points)
+    indices = np.tril_indices(n_internal_points, k=-1)
     z = 0
     for i, j in zip(*indices):
         d_matrix[i, j] = d[z]
         z += 1
-    for i in range(7):
+    for i in range(n_internal_points):
         d_matrix[i, i] = 1.0
     d_matrix = d_matrix.T
 
     return b_x_denoms, b_v_denoms, h, r.apply(lambda x: 1 / x), c, d_matrix
 
 
-def step(x0, v0, b, dt, precomputed_setup):
+def step(x0, v0, b, dt, precomputed_setup, verbose=False):
     b_x_denoms, b_v_denoms, h, r, c, d = precomputed_setup
     n_internal_points = len(b)
     a0 = acceleration_func(x0)
@@ -187,23 +187,27 @@ def step(x0, v0, b, dt, precomputed_setup):
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
 
-    return predictor_corrector_iteration(b, g, 1e300)
-
     predictor_corrector_error = 1e300
-    for i in range(10):
-        # print(f"i: {i}")
-        # print(f"predictor_corrector_error: {predictor_corrector_error}")
+    for i in range(200):
+        if verbose:
+            print(f"i: {i}")
+            print(f"predictor_corrector_error: {predictor_corrector_error}")
         b, g, predictor_corrector_error, predictor_corrector_error_last = (
             predictor_corrector_iteration(b, g, predictor_corrector_error)
         )
 
-        # condition = (predictor_corrector_error < mpf("1e-50")) | (
-        #     (i > 2) & (predictor_corrector_error > predictor_corrector_error_last)
-        # )
+        condition = (predictor_corrector_error < mpf("1e-60")) | (
+            (i > 2) & (predictor_corrector_error > predictor_corrector_error_last)
+        )
 
-        # if condition:
-        #     # print("stopping early!")
-        #     break
+        if condition:
+            if verbose:
+                print("stopping early!")
+                if predictor_corrector_error < mpf("1e-60"):
+                    print("error is small")
+                else:
+                    print("error is increasing")
+            break
 
     x, v = estimate_x_v_from_b(
         a0=a0,

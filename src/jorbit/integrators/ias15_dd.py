@@ -75,7 +75,6 @@ def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     xcoeffs[1] = v0 * dt
     xcoeffs[0] = x0
     xcoeffs = xcoeffs[::-1]
-    return xcoeffs
 
     new_x_init = DoubleDouble(jnp.zeros(xcoeffs.hi.shape[1:]))
     estimated_x, _ = jax.lax.scan(lambda y, _p: (y * h + _p, None), new_x_init, xcoeffs)
