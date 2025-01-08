@@ -8,6 +8,40 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 mp.dps = 70
 
 
+def acceleration_func(x):
+    r = mpm.norm(x)
+    return -x / (r * r * r)
+
+
+def precompute(n_internal_points):
+    b_x_denoms = (1.0 + np.arange(1, n_internal_points + 1, 1)) * (
+        2.0 + np.arange(1, n_internal_points + 1, 1)
+    )
+    b_x_denoms = [str(i) for i in b_x_denoms]
+    b_v_denoms = np.arange(2, n_internal_points + 2, 1)
+    b_v_denoms = [str(i) for i in b_v_denoms]
+    h, r, c, d = create_iasnn_constants(n_internal_points)
+
+    b_x_denoms = matrix(b_x_denoms)
+    b_v_denoms = matrix(b_v_denoms)
+    h = matrix(h)
+    r = matrix(r)
+    c = matrix(c)
+    d = matrix(d)
+
+    d_matrix = mpm.zeros(n_internal_points, n_internal_points)
+    indices = np.tril_indices(n_internal_points, k=-1)
+    z = 0
+    for i, j in zip(*indices):
+        d_matrix[i, j] = d[z]
+        z += 1
+    for i in range(n_internal_points):
+        d_matrix[i, i] = 1.0
+    d_matrix = d_matrix.T
+
+    return b_x_denoms, b_v_denoms, h, r.apply(lambda x: 1 / x), c, d_matrix
+
+
 def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     n_internal_points = len(bp)
     # Initialize xcoeffs with zeros
@@ -104,41 +138,9 @@ def refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
     return b, g
 
 
-def acceleration_func(x):
-    r = mpm.norm(x)
-    return -x / (r * r * r)
-
-
-def precompute(n_internal_points):
-    b_x_denoms = (1.0 + np.arange(1, n_internal_points + 1, 1)) * (
-        2.0 + np.arange(1, n_internal_points + 1, 1)
-    )
-    b_x_denoms = [str(i) for i in b_x_denoms]
-    b_v_denoms = np.arange(2, n_internal_points + 2, 1)
-    b_v_denoms = [str(i) for i in b_v_denoms]
-    h, r, c, d = create_iasnn_constants(n_internal_points)
-
-    b_x_denoms = matrix(b_x_denoms)
-    b_v_denoms = matrix(b_v_denoms)
-    h = matrix(h)
-    r = matrix(r)
-    c = matrix(c)
-    d = matrix(d)
-
-    d_matrix = mpm.zeros(n_internal_points, n_internal_points)
-    indices = np.tril_indices(n_internal_points, k=-1)
-    z = 0
-    for i, j in zip(*indices):
-        d_matrix[i, j] = d[z]
-        z += 1
-    for i in range(n_internal_points):
-        d_matrix[i, i] = 1.0
-    d_matrix = d_matrix.T
-
-    return b_x_denoms, b_v_denoms, h, r.apply(lambda x: 1 / x), c, d_matrix
-
-
-def step(x0, v0, b, dt, precomputed_setup, verbose=False):
+def step(
+    x0, v0, b, dt, precomputed_setup, verbose=False, convergence_threshold=mpf("1e-40")
+):
     b_x_denoms, b_v_denoms, h, r, c, d = precomputed_setup
     n_internal_points = len(b)
     a0 = acceleration_func(x0)
@@ -203,7 +205,7 @@ def step(x0, v0, b, dt, precomputed_setup, verbose=False):
         if condition:
             if verbose:
                 print("stopping early!")
-                if predictor_corrector_error < mpf("1e-60"):
+                if predictor_corrector_error < convergence_threshold:
                     print("error is small")
                 else:
                     print("error is increasing")
