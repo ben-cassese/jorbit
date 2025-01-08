@@ -10,6 +10,12 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 from jorbit.data.constants import IASNN_DD_EPSILON
 
 
+@jax.jit
+def acceleration_func(x):
+    r = dd_norm(x, axis=1)
+    return -x / (r * r * r)
+
+
 # not jitted, not using pure jax here
 def setup_iasnn_integrator(n_internal_points):
 
@@ -136,13 +142,14 @@ def _refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
 
 
 @jax.jit
-def acceleration_func(x):
-    r = dd_norm(x, axis=1)
-    return -x / (r * r * r)
-
-
-@jax.jit
-def step(x0, v0, b, dt, precomputed_setup):
+def step(
+    x0,
+    v0,
+    b,
+    dt,
+    precomputed_setup,
+    convergence_threshold=DoubleDouble.from_string("1e-40"),
+):
     # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)
@@ -202,12 +209,10 @@ def step(x0, v0, b, dt, precomputed_setup):
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
 
-    return predictor_corrector_iteration(b, g, DoubleDouble(1e300))
-
     def scan_func(carry, scan_over):
         b, g, predictor_corrector_error, predictor_corrector_error_last = carry
 
-        condition = (predictor_corrector_error < IASNN_DD_EPSILON) | (
+        condition = (predictor_corrector_error < convergence_threshold) | (
             (scan_over > 2)
             & (predictor_corrector_error > predictor_corrector_error_last)
         )
@@ -231,7 +236,7 @@ def step(x0, v0, b, dt, precomputed_setup):
     (b, g, predictor_corrector_error, predictor_corrector_error_last), _ = jax.lax.scan(
         scan_func,
         (b, g, predictor_corrector_error, predictor_corrector_error_last),
-        jnp.arange(10),
+        jnp.arange(100),
     )
 
     # bits about timescales
