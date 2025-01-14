@@ -4,6 +4,8 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 from jorbit.accelerations import (
     create_newtonian_ephemeris_acceleration_func,
@@ -13,6 +15,8 @@ from jorbit.accelerations import (
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.utils.states import CartesianState, KeplerianState
+from jorbit.astrometry.sky_projection import on_sky
+from jorbit.utils.horizons import get_observer_positions
 
 
 class Particle:
@@ -25,7 +29,7 @@ class Particle:
         log_gm=-jnp.inf,
         observations=None,
         name="",
-        gravity="newtonian planets",
+        gravity="default solar system",
         integrator="ias15",
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2050-01-01"),
@@ -138,31 +142,42 @@ class Particle:
     def integrate(self, times, state=None):
         if state is None:
             state = self._cartesian_state
+
         if type(times) == Time:
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
             times = jnp.array([times])
+
         positions, velocities, final_system_state, final_integrator_state = _integrate(
             times, state, self.gravity, self._integrator, self._integrator_state
         )
         return positions[0], velocities[0]
 
-    def ephemeris(self, times=None, state=None, observer_positions=None):
-        pass
+    def ephemeris(self, times, observer, state=None):
+        observer_positions = get_observer_positions(times, observer)
 
-    def errors(self):
-        pass
+        if state is None:
+            state = self._cartesian_state
 
-    def likelihood(self):
-        pass
+        if type(times) == Time:
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        ras, decs = _ephem(
+            times,
+            state,
+            self.gravity,
+            self._integrator,
+            self._integrator_state,
+            observer_positions,
+        )
+        return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
     def max_likelihood(self):
         pass
 
     def fit(self):
-        pass
-
-    def fit_ephemeris(self):
         pass
 
 
@@ -180,3 +195,35 @@ def _integrate(
     )
 
     return positions, velocities, final_system_state, final_integrator_state
+
+
+@jax.jit
+def _ephem(
+    times,
+    particle_state,
+    acc_func,
+    integrator_func,
+    integrator_state,
+    observer_positions,
+):
+    positions, velocities, _, _ = _integrate(
+        times, particle_state, acc_func, integrator_func, integrator_state
+    )
+
+    # # only one particle, so take the 0th particle. shape is (time, particles, 3)
+    # ras, decs = jax.vmap(on_sky, in_axes=(0, 0, 0, 0, None))(
+    #         positions[:,0,:], velocities[:,0,:], times, observer_positions, acc_func
+    #     )
+
+    def scan_func(carry, scan_over):
+        position, velocity, time, observer_position = scan_over
+        ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
+        return None, (ra, dec)
+
+    _, (ras, decs) = jax.lax.scan(
+        scan_func,
+        None,
+        (positions[:, 0, :], velocities[:, 0, :], times, observer_positions),
+    )
+
+    return ras, decs

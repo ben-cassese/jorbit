@@ -58,7 +58,7 @@ ALL_PLANET_LOG_GMS = {
     "uranus": jnp.log(1.2920265649682398e-08),
     "neptune": jnp.log(1.5243573478851935e-08),
     "pluto": jnp.log(2.1750964648933581e-12),
-    "sun": jnp.log(2.9591220828411951e-04),
+    "sun": jnp.log(2.9591220828411951e-04),  # G in AU^3 / day^2
 }
 
 LARGE_ASTEROID_LOG_GMS = {

@@ -38,6 +38,7 @@ def on_sky(
     time,
     observer_position,
     acc_func,
+    acc_func_kwargs={},
 ):
     # has to be one particle at one time to get the light travel time right
     state = SystemState(
@@ -47,7 +48,7 @@ def on_sky(
         tracer_velocities=jnp.array([v]),
         log_gms=jnp.empty(0),
         time=time,
-        acceleration_func_kwargs=None,
+        acceleration_func_kwargs=acc_func_kwargs,
     )
     a0 = acc_func(state)
     initial_integrator_state = initialize_ias15_integrator_state(a0)

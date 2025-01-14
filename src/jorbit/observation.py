@@ -50,6 +50,8 @@ class Observations:
 
         self._final_init_checks()
 
+        self.likelihood_func = self._setup_coordinate_likelihood_func()
+
     def __repr__(self):
         return f"Observations with {len(self._ra)} set(s) of observations"
 
@@ -252,14 +254,5 @@ class Observations:
             ), "Observations must be in ascending chronological order."
             t = self._times[i]
 
-
-class Observer:
-    def __init__(self, observatory_code):
-        self._observatory_code = observatory_code
-
-    def get_positions(self, times):
-        return get_observer_positions(
-            times=times,
-            observatory_codes=self._observatory_code,
-            verbose=False,
-        )
+    def _setup_coordinate_likelihood_func(self):
+        pass
