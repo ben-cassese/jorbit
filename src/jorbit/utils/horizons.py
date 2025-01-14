@@ -281,7 +281,13 @@ def get_observer_positions(times, observatories):
         times = [times]
     if isinstance(observatories, str):
         observatories = [observatories]
+    # allow either a single observatory, or a list of observatories
+    # w/ the same length as times
+    if len(observatories) == 1:
+        observatories = observatories * len(times)
     assert len(times) == len(observatories)
+    # just to standardize:
+    # the vector/astrometry queries automatically convert to utc/tdb as appropriate
     times = Time([t.utc.jd for t in times], format="jd", scale="utc")
 
     emb_from_ssb = horizons_bulk_vector_query("3", "500@0", times)
