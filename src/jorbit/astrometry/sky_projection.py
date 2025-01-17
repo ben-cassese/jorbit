@@ -32,6 +32,37 @@ def sky_sep(ra1, dec1, ra2, dec2):
 
 
 @jax.jit
+def tangent_plane_projection(ra_ref, dec_ref, ra, dec):
+    # Convert to unit vectors
+    cos_dec = jnp.cos(dec)
+    sin_dec = jnp.sin(dec)
+    cos_ra = jnp.cos(ra)
+    sin_ra = jnp.sin(ra)
+
+    # Initial cartesian coordinates
+    x = cos_dec * cos_ra
+    y = cos_dec * sin_ra
+    z = sin_dec
+
+    # Rotation matrices (combined into single operation)
+    cos_ra_ref = jnp.cos(ra_ref)
+    sin_ra_ref = jnp.sin(ra_ref)
+    cos_dec_ref = jnp.cos(dec_ref)
+    sin_dec_ref = jnp.sin(dec_ref)
+
+    # Apply rotations (optimized matrix multiplication)
+    x_rot = (x * cos_ra_ref + y * sin_ra_ref) * cos_dec_ref + z * sin_dec_ref
+    y_rot = -x * sin_ra_ref + y * cos_ra_ref
+    z_rot = -(x * cos_ra_ref + y * sin_ra_ref) * sin_dec_ref + z * cos_dec_ref
+
+    # Project to plane
+    xi = y_rot / x_rot
+    eta = z_rot / x_rot
+
+    return jnp.array([xi, eta])
+
+
+@jax.jit
 def on_sky(
     x,
     v,
