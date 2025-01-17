@@ -4,8 +4,6 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 
-from jorbit.integrators.ias15 import ias15_step, ias15_evolve
-
 __all__ = [
     "ias15_step",
     "ias15_evolve",
@@ -193,3 +191,6 @@ def initialize_ias15_integrator_state(a0):
         dt=10.0,  # 10 days
         dt_last_done=0.0,
     )
+
+
+from jorbit.integrators.ias15 import ias15_step, ias15_evolve

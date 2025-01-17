@@ -12,6 +12,7 @@ wheels/
 coverage.xml
 .coverage
 .pytest_cache
+.ruff_cache
 
 # Docs
 docs/_build/
