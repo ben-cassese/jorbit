@@ -173,7 +173,7 @@ class Particle:
         if state is None:
             state = self._cartesian_state
 
-        if type(times) == Time:
+        if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
             times = jnp.array([times])
@@ -189,7 +189,7 @@ class Particle:
         if state is None:
             state = self._cartesian_state
 
-        if type(times) == Time:
+        if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
             times = jnp.array([times])

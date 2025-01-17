@@ -15,7 +15,6 @@ import jax.numpy as jnp
 from functools import partial
 
 from jorbit.utils.states import SystemState
-from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.data.constants import SPEED_OF_LIGHT
 
 

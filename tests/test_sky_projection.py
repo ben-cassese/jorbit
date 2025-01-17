@@ -11,7 +11,6 @@ import numpy as np
 
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.astrometry.sky_projection import sky_sep, on_sky
-from jorbit.utils.states import SystemState
 from jorbit.accelerations import create_newtonian_ephemeris_acceleration_func
 from jorbit.ephemeris import Ephemeris
 

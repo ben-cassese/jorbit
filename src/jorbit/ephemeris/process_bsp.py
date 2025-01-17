@@ -3,7 +3,6 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-import astropy.units as u
 from astropy.time import Time
 from astropy.utils.data import download_file
 from jplephem.spk import SPK
@@ -92,7 +91,6 @@ def merge_data(
     # But, by keeping their original intlens intact, if we feed in a time within
     # the timespan, we should just always stay in the first half, quarter, whatever
     shortest_intlen = jnp.min(intlens)
-    padded_intlens = jnp.ones(len(intlens)) * shortest_intlen
     extra_padded = []
     for i in range(len(padded_coefficients)):
         extra_padded.append(

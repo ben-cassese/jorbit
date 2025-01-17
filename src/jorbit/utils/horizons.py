@@ -7,18 +7,14 @@ import warnings
 warnings.filterwarnings("ignore", module="erfa")
 
 from astropy.time import Time
-import astropy.units as u
-from astropy.coordinates import SkyCoord, ICRS
 from astroquery.jplhorizons import Horizons
 
 import requests
 import pandas as pd
 import io
-import os
-from tqdm import tqdm
 from dataclasses import dataclass
 from contextlib import contextmanager
-from typing import Union, List
+from typing import List
 
 
 from jorbit.data.observatory_codes import OBSERVATORY_CODES

@@ -14,7 +14,9 @@ def create_gauss_radau_spacings(internal_points: int):
     mpmath.mp.dps = 75
 
     n = internal_points + 1  # include the endpoint
-    f = lambda x: (mpmath.legendre(n - 1, x) + mpmath.legendre(n, x)) / (x + 1)
+
+    def f(x):
+        return (mpmath.legendre(n - 1, x) + mpmath.legendre(n, x)) / (x + 1)
 
     slices = mpmath.linspace(-1, 1, 1000)
 
@@ -38,7 +40,7 @@ def create_gauss_radau_spacings(internal_points: int):
                 sols.append(s)
 
             del s
-        except:
+        except Exception:
             pass
 
     assert len(sols) == n - 1
@@ -80,25 +82,25 @@ def create_iasnn_c_d_arrays(
     c[0] = -h[1]
     d[0] = h[1]
 
-    l = 0  # Current position in arrays
+    idx = 0  # Current position in arrays
 
     # Main recurrence relations
     for j in range(2, n - 1):
         # First element for this j
-        l += 1
-        c[l] = -h[j] * c[l - j + 1]
-        d[l] = h[1] * d[l - j + 1]
+        idx += 1
+        c[idx] = -h[j] * c[idx - j + 1]
+        d[idx] = h[1] * d[idx - j + 1]
 
         # Middle elements
         for k in range(2, j):
-            l += 1
-            c[l] = c[l - j] - h[j] * c[l - j + 1]
-            d[l] = d[l - j] + h[k] * d[l - j + 1]
+            idx += 1
+            c[idx] = c[idx - j] - h[j] * c[idx - j + 1]
+            d[idx] = d[idx - j] + h[k] * d[idx - j + 1]
 
         # Last element for this j
-        l += 1
-        c[l] = c[l - j] - h[j]
-        d[l] = d[l - j] + h[j]
+        idx += 1
+        c[idx] = c[idx - j] - h[j]
+        d[idx] = d[idx - j] + h[j]
 
     return c, d
 

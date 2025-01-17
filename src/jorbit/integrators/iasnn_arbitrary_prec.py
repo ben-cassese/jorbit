@@ -1,6 +1,5 @@
 import mpmath as mpm
 from mpmath import matrix, mp, mpf
-from functools import partial
 import numpy as np
 
 from jorbit.utils.generate_coefficients import create_iasnn_constants

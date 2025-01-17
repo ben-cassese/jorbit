@@ -6,7 +6,6 @@ import jax.numpy as jnp
 from astropy.time import Time
 import astropy.units as u
 from astroquery.jplhorizons import Horizons
-import numpy as np
 
 from jorbit.ephemeris import Ephemeris
 
