@@ -15,7 +15,7 @@ from jorbit.accelerations import (
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.utils.states import CartesianState, KeplerianState
-from jorbit.astrometry.sky_projection import on_sky
+from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.utils.horizons import get_observer_positions
 
 
@@ -46,16 +46,18 @@ class Particle:
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 
-        self._setup()
+        self._setup_state()
 
         self._setup_acceleration_func()
 
         self._setup_integrator()
 
+        self.loglike = self._setup_likelihood()
+
     def __repr__(self):
         return f"Particle: {self._name}"
 
-    def _setup(self):
+    def _setup_state(self):
 
         assert self._time is not None, "Must provide an epoch for the particle"
         if isinstance(self._time, type(Time("2023-01-01"))):
@@ -138,6 +140,34 @@ class Particle:
         a0 = self.gravity(self._cartesian_state.to_system())
         self._integrator_state = initialize_ias15_integrator_state(a0)
         self._integrator = jax.tree_util.Partial(ias15_evolve)
+
+    def _setup_likelihood(self, state):
+        if self._observations is None:
+            return None
+
+        def loglike(state):
+            ras, decs = _ephem(
+                self._observations.times,
+                state,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                self._observations.observer_positions,
+            )
+
+            xis_etas = jax.vmap(tangent_plane_projection)(
+                self._observations.ra, self._observations.dec, ras, decs
+            )
+
+            quad = jnp.einsum(
+                "bi,bij,bj->b", xis_etas, self._observations.inv_cov_matrices, xis_etas
+            )
+
+            return -0.5 * (
+                2 * jnp.log(2 * jnp.pi) + self._observations.cov_log_dets + quad
+            )
+
+        return jax.tree_util.Partial(jax.jit(loglike))
 
     def integrate(self, times, state=None):
         if state is None:

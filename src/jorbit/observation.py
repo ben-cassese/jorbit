@@ -46,11 +46,12 @@ class Observations:
             self._observatories,
             self._astrometric_uncertainties,
             self._observer_positions,
+            self._cov_matrices,
+            self._inv_cov_matrices,
+            self._cov_log_dets,
         ) = self._parse_astrometry()
 
         self._final_init_checks()
-
-        self.likelihood_func = self._setup_coordinate_likelihood_func()
 
     def __repr__(self):
         return f"Observations with {len(self._ra)} set(s) of observations"
@@ -78,6 +79,42 @@ class Observations:
             verbose=self._verbose,
             mpc_file=None,
         )
+
+    @property
+    def ra(self):
+        return self._ra
+
+    @property
+    def dec(self):
+        return self._dec
+
+    @property
+    def times(self):
+        return self._times
+
+    @property
+    def observatories(self):
+        return self._observatories
+
+    @property
+    def astrometric_uncertainties(self):
+        return self._astrometric_uncertainties
+
+    @property
+    def observer_positions(self):
+        return self._observer_positions
+
+    @property
+    def cov_matrices(self):
+        return self._cov_matrices
+
+    @property
+    def inv_cov_matrices(self):
+        return self._inv_cov_matrices
+
+    @property
+    def cov_log_dets(self):
+        return self._cov_log_dets
 
     ####################################################################################
     # Initialization helpers
@@ -211,14 +248,22 @@ class Observations:
             observer_positions = observatories
 
         # UNCERTAINTIES
-        if isinstance(astrometric_uncertainties, type(u.Quantity(1 * u.arcsec))):
+        astrometric_uncertainties = np.array(astrometric_uncertainties)
+        if astrometric_uncertainties.shape == ():
             astrometric_uncertainties = (
                 jnp.ones(len(times)) * astrometric_uncertainties.to(u.arcsec).value
             )
-        elif isinstance(astrometric_uncertainties, list):
-            astrometric_uncertainties = jnp.array(
-                [p.to(u.arcsec).value for p in astrometric_uncertainties]
+        # if our uncertainties are 1D, convert to diagonal covariance matrices
+        if astrometric_uncertainties.ndim == 1:
+            cov_matrices = jnp.array(
+                [jnp.diag(jnp.array([a**2, a**2])) for a in astrometric_uncertainties]
             )
+        else:
+            cov_matrices = astrometric_uncertainties
+
+        inv_cov_matrices = jnp.array([jnp.linalg.inv(c) for c in cov_matrices])
+
+        cov_log_dets = jnp.log(jnp.array([jnp.linalg.det(c) for c in cov_matrices]))
 
         return (
             ra,
@@ -227,6 +272,10 @@ class Observations:
             observatories,
             astrometric_uncertainties,
             observer_positions,
+            cov_matrices,
+            inv_cov_matrices,
+            cov_dets,
+            cov_log_dets,
         )
 
     def _final_init_checks(self):
@@ -253,6 +302,3 @@ class Observations:
                 self._times[i] > t
             ), "Observations must be in ascending chronological order."
             t = self._times[i]
-
-    def _setup_coordinate_likelihood_func(self):
-        pass

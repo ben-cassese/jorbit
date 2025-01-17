@@ -13,6 +13,8 @@ dependencies = [
     "chex>=0.1.88",
     "jax>=0.4.35",
     "jplephem>=2.22",
+    "numpyro>=0.16.1",
+    "numpyro-ext>=0.0.4",
     "pandas>=2.2.3",
     "tqdm>=4.67.1",
 ]
