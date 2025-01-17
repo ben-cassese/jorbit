@@ -9,8 +9,6 @@ import jax.numpy as jnp
 
 import astropy.units as u
 from astropy.time import Time
-from astropy.utils.data import download_file
-from jplephem.spk import SPK
 
 import warnings
 

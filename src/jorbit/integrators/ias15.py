@@ -12,7 +12,6 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from typing import Callable
-from functools import partial
 
 from jorbit.utils.states import SystemState
 from jorbit.integrators import IAS15Helper, IAS15IntegratorState
@@ -21,8 +20,6 @@ from jorbit.data.constants import (
     IAS15_RR,
     IAS15_C,
     IAS15_D,
-    IAS15_EPSILON,
-    IAS15_MIN_DT,
     IAS15_SAFETY_FACTOR,
     EPSILON,
     IAS15_EPS_Modified,
@@ -150,7 +147,6 @@ def ias15_step(
     # for convenience, rename initial state
     t_beginning = initial_system_state.time
     M = initial_system_state.massive_positions.shape[0]
-    T = initial_system_state.tracer_positions.shape[0]
     x0 = jnp.concatenate(
         (initial_system_state.massive_positions, initial_system_state.tracer_positions)
     )
@@ -486,7 +482,6 @@ def ias15_step(
     # check the validity of the step, estimate next timestep
     dt_done = dt
 
-    a0i = jnp.sum(a0 * a0, axis=1)
     tmp = a0 + b.p0 + b.p1 + b.p2 + b.p3 + b.p4 + b.p5 + b.p6
     y2 = jnp.sum(tmp * tmp, axis=1)
     tmp = (
@@ -504,7 +499,6 @@ def ias15_step(
     )
     y4 = jnp.sum(tmp * tmp, axis=1)
     tmp = 6.0 * b.p2 + 24.0 * b.p3 + 60.0 * b.p4 + 120.0 * b.p5 + 210.0 * b.p6
-    y5 = jnp.sum(tmp * tmp, axis=1)
 
     timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
     min_timescale2 = jnp.nanmin(timescale2)

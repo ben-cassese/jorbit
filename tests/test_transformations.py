@@ -6,12 +6,10 @@ import jax.numpy as jnp
 from astropy.time import Time
 import astropy.units as u
 from astroquery.jplhorizons import Horizons
-import numpy as np
 
 from jorbit.astrometry.transformations import (
     elements_to_cartesian,
     cartesian_to_elements,
-    icrs_to_horizons_ecliptic,
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
@@ -27,7 +25,7 @@ def test_elements_to_cartesian():
     )
     vecs = obj.vectors(refplane="earth")
     true_xs = jnp.array([vecs["x"], vecs["y"], vecs["z"]]).T
-    true_vs = jnp.array([vecs["vx"], vecs["vy"], vecs["vz"]]).T
+    # true_vs = jnp.array([vecs["vx"], vecs["vy"], vecs["vz"]]).T
 
     elements = obj.elements(refplane="ecliptic")
 

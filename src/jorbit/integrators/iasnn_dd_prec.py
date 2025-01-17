@@ -7,7 +7,6 @@ from functools import partial
 
 from jorbit.utils.doubledouble import DoubleDouble, dd_sum, dd_max, dd_norm
 from jorbit.utils.generate_coefficients import create_iasnn_constants
-from jorbit.data.constants import IASNN_DD_EPSILON
 
 
 @jax.jit
@@ -156,8 +155,8 @@ def step(
 
     b_x_denoms, b_v_denoms, h, r, c, d_matrix = precomputed_setup
 
-    # TODO
-    t_beginning = DoubleDouble(0.0)
+    # TODO: time-variable acceleration functions
+    # t_beginning = DoubleDouble(0.0)
     a0 = acceleration_func(x0)
 
     # misc setup, make partialized versions of the helpers that bake in the constants
@@ -188,7 +187,7 @@ def step(
         # but, struggled too long to get it to work with scan, even if things are marked
         # static in the subfunctions the scan doesn't like that
         for n in range(1, n_internal_points):
-            step_time = t_beginning + dt * h[n]
+            # step_time = t_beginning + dt * h[n] # come back to this for time-variable acceleration functions
             x, v = estimate_x_v_from_b(h[n], b)
             at = acceleration_func(x)
             b, g = refine_b_and_g(b, g, at, a0, n, False)
@@ -196,7 +195,7 @@ def step(
         # last iteration is different only so we can get the change in the last g value
         # to evaluate convergence
         n = n_internal_points
-        step_time = t_beginning + dt * h[n]
+        # step_time = t_beginning + dt * h[n]
         x, v = estimate_x_v_from_b(h[n], b)
         at = acceleration_func(x)
         b, g, g_diff = refine_b_and_g(

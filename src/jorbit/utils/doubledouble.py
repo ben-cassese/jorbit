@@ -3,8 +3,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from functools import partial
-from typing import Any, Tuple, Optional
+from typing import Tuple, Optional
 
 
 @jax.tree_util.register_pytree_node_class

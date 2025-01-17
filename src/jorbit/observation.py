@@ -9,15 +9,10 @@ from astropy.time import Time
 import astropy.units as u
 from astropy.coordinates import SkyCoord, ICRS
 
-import requests
-import io
-import os
-from tqdm import tqdm
-
 
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.mpc import read_mpc_file
-from jorbit.data.observatory_codes import observatory_codes
+from jorbit.data.observatory_codes import OBSERVATORY_CODES
 
 
 class Observations:
@@ -226,8 +221,8 @@ class Observations:
         if isinstance(observatories, list):
             for i, loc in enumerate(observatories):
                 loc = loc.lower()
-                if loc in observatory_codes.keys():
-                    observatories[i] = observatory_codes[loc]
+                if loc in OBSERVATORY_CODES.keys():
+                    observatories[i] = OBSERVATORY_CODES[loc]
                 elif "@" in loc:
                     pass
                 else:
@@ -248,7 +243,7 @@ class Observations:
             observer_positions = observatories
 
         # UNCERTAINTIES
-        astrometric_uncertainties = np.array(astrometric_uncertainties)
+        astrometric_uncertainties = jnp.array(astrometric_uncertainties)
         if astrometric_uncertainties.shape == ():
             astrometric_uncertainties = (
                 jnp.ones(len(times)) * astrometric_uncertainties.to(u.arcsec).value
@@ -274,7 +269,6 @@ class Observations:
             observer_positions,
             cov_matrices,
             inv_cov_matrices,
-            cov_dets,
             cov_log_dets,
         )
 

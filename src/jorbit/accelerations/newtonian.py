@@ -9,7 +9,6 @@ from jorbit.utils.states import SystemState
 @jax.jit
 def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
     M = inputs.massive_positions.shape[0]  # number of massive particles
-    T = inputs.tracer_positions.shape[0]  # number of tracer particles
 
     # 1. Compute accelerations on massive particles due to other massive particles
     dx_massive = (
