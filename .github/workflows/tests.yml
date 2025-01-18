@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -62,8 +62,6 @@ jobs:
           python-version: "3.12"
 
       - name: Build package
-        env:
-            PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           uv build
 
@@ -72,7 +70,7 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
-  
+
   publish:
     needs: [tests, build]
     runs-on: ubuntu-latest
