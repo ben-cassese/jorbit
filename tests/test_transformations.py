@@ -1,15 +1,14 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
-from astropy.time import Time
 import astropy.units as u
+import jax.numpy as jnp
+from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit.astrometry.transformations import (
-    elements_to_cartesian,
     cartesian_to_elements,
+    elements_to_cartesian,
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
@@ -45,7 +44,7 @@ def test_elements_to_cartesian():
         nu=nu_horizons,
     )
     xs = horizons_ecliptic_to_icrs(xs)
-    vs = horizons_ecliptic_to_icrs(vs)
+    # vs = horizons_ecliptic_to_icrs(vs)
 
     assert jnp.allclose(xs, true_xs, atol=1e-11)  # 1m
 

@@ -3,9 +3,9 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from jorbit.utils.states import SystemState
-from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.accelerations.gr import ppn_gravity
+from jorbit.accelerations.newtonian import newtonian_gravity
+from jorbit.utils.states import SystemState
 
 
 def create_newtonian_ephemeris_acceleration_func(ephem_processor):

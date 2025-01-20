@@ -2,19 +2,16 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-
 from astropy.time import Time
 
-
-from jorbit.ephemeris.ephemeris import Ephemeris
-from jorbit.utils.states import SystemState
-
 from jorbit.accelerations import (
-    create_newtonian_ephemeris_acceleration_func,
-    create_gr_ephemeris_acceleration_func,
     create_default_ephemeris_acceleration_func,
+    create_gr_ephemeris_acceleration_func,
+    create_newtonian_ephemeris_acceleration_func,
 )
+from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
+from jorbit.utils.states import SystemState
 
 
 class System:

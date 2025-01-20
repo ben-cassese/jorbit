@@ -1,18 +1,17 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
-from astropy.time import Time
 import astropy.units as u
-from astropy.coordinates import SkyCoord
-from astroquery.jplhorizons import Horizons
+import jax.numpy as jnp
 import numpy as np
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
+from astroquery.jplhorizons import Horizons
 
-from jorbit.utils.horizons import get_observer_positions
-from jorbit.astrometry.sky_projection import sky_sep, on_sky
 from jorbit.accelerations import create_newtonian_ephemeris_acceleration_func
+from jorbit.astrometry.sky_projection import on_sky, sky_sep
 from jorbit.ephemeris import Ephemeris
+from jorbit.utils.horizons import get_observer_positions
 
 
 def setup():

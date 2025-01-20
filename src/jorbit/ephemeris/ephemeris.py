@@ -5,30 +5,29 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
+import warnings
 
 import astropy.units as u
+import jax.numpy as jnp
 from astropy.time import Time
-
-import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
 
-from jorbit.ephemeris.process_bsp import extract_data, merge_data
-from jorbit.ephemeris.ephemeris_processors import (
-    EphemerisProcessor,
-    EphemerisPostProcessor,
-)
 from jorbit.data.constants import (
-    DEFAULT_PLANET_EPHEMERIS_URL,
-    DEFAULT_ASTEROID_EPHEMERIS_URL,
     ALL_PLANET_IDS,
     ALL_PLANET_LOG_GMS,
+    ALL_PLANET_NAMES,
+    DEFAULT_ASTEROID_EPHEMERIS_URL,
+    DEFAULT_PLANET_EPHEMERIS_URL,
     LARGE_ASTEROID_IDS,
     LARGE_ASTEROID_LOG_GMS,
-    ALL_PLANET_NAMES,
     LARGE_ASTEROID_NAMES,
 )
+from jorbit.ephemeris.ephemeris_processors import (
+    EphemerisPostProcessor,
+    EphemerisProcessor,
+)
+from jorbit.ephemeris.process_bsp import extract_data, merge_data
 
 
 class Ephemeris:
@@ -92,7 +91,9 @@ class Ephemeris:
         ephs = []
         for sso_group in ssos:
             inits, intlens, coeffs = [], [], []
-            for target, center in zip(sso_group["targets"], sso_group["centers"]):
+            for target, center in zip(
+                sso_group["targets"], sso_group["centers"], strict=False
+            ):
                 init, intlen, coeff = extract_data(
                     center, target, sso_group["ephem_file"], earliest_time, latest_time
                 )

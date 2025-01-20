@@ -1,9 +1,8 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
 
-from typing import Tuple, Optional
+import jax.numpy as jnp
 
 
 @jax.tree_util.register_pytree_node_class
@@ -16,28 +15,28 @@ class DoubleDouble:
             hi: High part (jnp.ndarray)
             lo: Low part (jnp.ndarray, optional). If None, lo is set to 0
         """
-        if isinstance(hi, (int, float)) & (lo is None):
+        if isinstance(hi, (int | float)) & (lo is None):
             self.hi, self.lo = DoubleDouble._split(jnp.array(hi))
         else:
             self.hi = jnp.array(hi)
             self.lo = jnp.zeros_like(hi) if lo is None else lo
 
     @staticmethod
-    def _split(a: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _split(a: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         t = (2**27 + 1) * a
         a_hi = t - (t - a)
         a_lo = a - a_hi
         return a_hi, a_lo
 
     @staticmethod
-    def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         s = a + b
         v = s - a
         e = (a - (s - v)) + (b - v)
         return s, e
 
     @staticmethod
-    def _mul12(x: jnp.ndarray, y: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _mul12(x: jnp.ndarray, y: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         # mul12 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         constant = 2**27 + 1
         p = x * constant
@@ -112,7 +111,6 @@ class DoubleDouble:
         z = r + s
         zz = r - z + s
         return DoubleDouble(z, zz)
-        self
 
     # @jax.jit
     def __mul__(self, other):
@@ -170,7 +168,7 @@ class DoubleDouble:
 
 
 # @jax.jit
-def dd_max(x: DoubleDouble, axis: Optional[int] = None) -> DoubleDouble:
+def dd_max(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
     hi_max = jnp.max(x.hi, axis=axis)
     max_mask = x.hi == hi_max
     lo_max = jnp.max(jnp.where(max_mask, x.lo, -jnp.inf), axis=axis)

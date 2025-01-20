@@ -3,9 +3,9 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from jorbit.utils.states import SystemState
-from jorbit.integrators import initialize_ias15_integrator_state, ias15_evolve
 from jorbit.data.constants import INV_SPEED_OF_LIGHT
+from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
+from jorbit.utils.states import SystemState
 
 
 @jax.jit

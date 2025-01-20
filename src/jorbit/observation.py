@@ -1,18 +1,18 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
 import warnings
 
+import jax.numpy as jnp
+
 warnings.filterwarnings("ignore", module="erfa")
-from astropy.time import Time
 import astropy.units as u
-from astropy.coordinates import SkyCoord, ICRS
+from astropy.coordinates import ICRS, SkyCoord
+from astropy.time import Time
 
-
+from jorbit.data.observatory_codes import OBSERVATORY_CODES
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.mpc import read_mpc_file
-from jorbit.data.observatory_codes import OBSERVATORY_CODES
 
 
 class Observations:
@@ -22,14 +22,12 @@ class Observations:
         times=None,
         observatories=None,
         astrometric_uncertainties=None,
-        verbose=False,
         mpc_file=None,
     ):
         self._observed_coordinates = observed_coordinates
         self._times = times
         self._observatories = observatories
         self._astrometric_uncertainties = astrometric_uncertainties
-        self._verbose = verbose
         self._mpc_file = mpc_file
 
         self._input_checks()
@@ -71,7 +69,6 @@ class Observations:
             times=t[order],
             observatories=observer_positions[order],
             astrometric_uncertainties=obs_precision[order],
-            verbose=self._verbose,
             mpc_file=None,
         )
 
@@ -125,21 +122,15 @@ class Observations:
                 " observatories, and astrometric_uncertainties must be given"
                 " manually."
             )
-            if (
-                not isinstance(self._times, type(Time("2023-01-01")))
-                and not isinstance(self._times, list)
-                and not isinstance(self._times, jnp.ndarray)
+            if not isinstance(
+                self._times, [type(Time("2023-01-01")), list, jnp.ndarray]
             ):
                 raise ValueError(
                     "times must be either astropy.time.Time, list of astropy.time.Time,"
                     " or jax.numpy.ndarray (interpreted as JD in TDB)"
                 )
 
-            assert (
-                isinstance(self._observatories, str)
-                or isinstance(self._observatories, list)
-                or isinstance(self._observatories, jnp.ndarray)
-            ), (
+            assert isinstance(self._observatories, [str, list, jnp.ndarray]), (
                 "observatories must be either a string (interpreted as an MPC"
                 " observatory code), a list of observatory codes, or a"
                 " jax.numpy.ndarray"
@@ -221,29 +212,25 @@ class Observations:
         if isinstance(observatories, list):
             for i, loc in enumerate(observatories):
                 loc = loc.lower()
-                if loc in OBSERVATORY_CODES.keys():
+                if loc in OBSERVATORY_CODES:
                     observatories[i] = OBSERVATORY_CODES[loc]
                 elif "@" in loc:
                     pass
                 else:
                     raise ValueError(
-                        "Observer location '{}' is not a recognized observatory. Please"
+                        f"Observer location '{loc}' is not a recognized observatory. Please"
                         " refer to"
-                        " https://minorplanetcenter.net/iau/lists/ObsCodesF.html".format(
-                            loc
-                        )
+                        " https://minorplanetcenter.net/iau/lists/ObsCodesF.html"
                     )
 
             observer_positions = get_observer_positions(
                 times=Time(times, format="jd", scale="tdb"),
-                observatory_codes=observatories,
-                verbose=self._verbose,
+                observatories=observatories,
             )
         else:
             observer_positions = observatories
 
         # UNCERTAINTIES
-        astrometric_uncertainties = jnp.array(astrometric_uncertainties)
         if astrometric_uncertainties.shape == ():
             astrometric_uncertainties = (
                 jnp.ones(len(times)) * astrometric_uncertainties.to(u.arcsec).value
@@ -280,14 +267,8 @@ class Observations:
             == len(self.observer_positions)
             == len(self.astrometric_uncertainties)
         ), (
-            "Inputs must have the same length. Currently: ra={}, dec={}, times={},"
-            " observer_positions={}, astrometric_uncertainties={}".format(
-                len(self._ra),
-                len(self._dec),
-                len(self._times),
-                len(self.observer_positions),
-                len(self.astrometric_uncertainties),
-            )
+            f"Inputs must have the same length. Currently: ra={len(self._ra)}, dec={len(self._dec)}, times={len(self._times)},"
+            f" observer_positions={len(self.observer_positions)}, astrometric_uncertainties={len(self.astrometric_uncertainties)}"
         )
 
         t = self._times[0]

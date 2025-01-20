@@ -1,10 +1,9 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
-from astropy.time import Time
 import astropy.units as u
+import jax.numpy as jnp
+from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit.ephemeris import Ephemeris

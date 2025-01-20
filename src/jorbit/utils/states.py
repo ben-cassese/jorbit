@@ -1,17 +1,15 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+import chex
 import jax.numpy as jnp
 
-import chex
-
 from jorbit.astrometry.transformations import (
-    elements_to_cartesian,
     cartesian_to_elements,
-    icrs_to_horizons_ecliptic,
+    elements_to_cartesian,
     horizons_ecliptic_to_icrs,
+    icrs_to_horizons_ecliptic,
 )
-
 from jorbit.data.constants import SPEED_OF_LIGHT
 
 
@@ -92,3 +90,17 @@ class CartesianState:
             time=self.time,
             acceleration_func_kwargs={},
         )
+
+
+@chex.dataclass
+class IAS15IntegratorState:
+    g: jnp.ndarray
+    b: jnp.ndarray
+    e: jnp.ndarray
+    br: jnp.ndarray
+    er: jnp.ndarray
+    csx: jnp.ndarray
+    csv: jnp.ndarray
+    a0: jnp.ndarray
+    dt: float
+    dt_last_done: float

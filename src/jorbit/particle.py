@@ -1,22 +1,21 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
-from astropy.time import Time
-from astropy.coordinates import SkyCoord
 import astropy.units as u
+import jax.numpy as jnp
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 from jorbit.accelerations import (
-    create_newtonian_ephemeris_acceleration_func,
-    create_gr_ephemeris_acceleration_func,
     create_default_ephemeris_acceleration_func,
+    create_gr_ephemeris_acceleration_func,
+    create_newtonian_ephemeris_acceleration_func,
 )
-from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
-from jorbit.ephemeris.ephemeris import Ephemeris
-from jorbit.utils.states import CartesianState, KeplerianState
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
+from jorbit.ephemeris.ephemeris import Ephemeris
+from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions
+from jorbit.utils.states import CartesianState, KeplerianState
 
 
 class Particle:
@@ -56,6 +55,14 @@ class Particle:
 
     def __repr__(self):
         return f"Particle: {self._name}"
+
+    @property
+    def cartesian_state(self):
+        return self._cartesian_state
+
+    @property
+    def keplerian_state(self):
+        return self._keplerian_state
 
     def _setup_state(self):
 
@@ -141,7 +148,7 @@ class Particle:
         self._integrator_state = initialize_ias15_integrator_state(a0)
         self._integrator = jax.tree_util.Partial(ias15_evolve)
 
-    def _setup_likelihood(self, state):
+    def _setup_likelihood(self):
         if self._observations is None:
             return None
 

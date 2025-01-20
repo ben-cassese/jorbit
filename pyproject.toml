@@ -49,4 +49,10 @@ dev = [
 ]
 
 [tool.ruff.lint]
-ignore = ["E402"]
+ignore = [
+    "E402", # want to enable jax64 before importing anything that might run jax code on import
+    "B008", # want to use things like Time("2024-01-01") as defaults
+    "B006", # unsure of this one- right now using {} as default for acceleration_func_kwargs
+    "RUF012", # annoying when using NamedTuples
+]
+extend-select = ["W", "I", "B", "SIM", "UP", "RUF"]

@@ -10,12 +10,12 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
 from functools import partial
 
-from jorbit.utils.states import SystemState
+import jax.numpy as jnp
+
 from jorbit.data.constants import SPEED_OF_LIGHT
+from jorbit.utils.states import SystemState
 
 
 # equivalent of rebx_calculate_gr_full in reboundx

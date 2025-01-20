@@ -1,6 +1,6 @@
 import mpmath as mpm
-from mpmath import matrix, mp, mpf
 import numpy as np
+from mpmath import matrix, mp, mpf
 
 from jorbit.utils.generate_coefficients import create_iasnn_constants
 
@@ -31,9 +31,9 @@ def precompute(n_internal_points):
     d_matrix = mpm.zeros(n_internal_points, n_internal_points)
     indices = np.tril_indices(n_internal_points, k=-1)
     z = 0
-    for i, j in zip(*indices):
+    for z, i, j in enumerate(zip(*indices, strict=False)):
         d_matrix[i, j] = d[z]
-        z += 1
+        # z += 1
     for i in range(n_internal_points):
         d_matrix[i, i] = 1.0
     d_matrix = d_matrix.T

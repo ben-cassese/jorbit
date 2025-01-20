@@ -4,8 +4,8 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jorbit.data.constants import (
-    ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT,
     HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT,
+    ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT,
     TOTAL_SOLAR_SYSTEM_GM,
 )
 

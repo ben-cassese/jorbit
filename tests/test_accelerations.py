@@ -2,25 +2,22 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-
 import numpy as np
 import rebound
 import reboundx
 
-from jorbit.utils.states import SystemState
 from jorbit.accelerations.gr import ppn_gravity
 from jorbit.accelerations.newtonian import newtonian_gravity
+from jorbit.utils.states import SystemState
 
 
 def _gr_agreement_w_reboundx(n_tracer, n_massive, seed):
     np.random.seed(seed)
-    n = n_tracer
-    m = n_massive
     massive_x = []
     massive_v = []
     ms = []
     sim = rebound.Simulation()
-    for i in range(m):
+    for _i in range(n_massive):
         xs = np.random.normal(0, 1, 3) * 1000
         vs = np.random.normal(0, 1, 3)
         massive_x.append(xs)
@@ -30,7 +27,7 @@ def _gr_agreement_w_reboundx(n_tracer, n_massive, seed):
         sim.add(m=m, x=xs[0], y=xs[1], z=xs[2], vx=vs[0], vy=vs[1], vz=vs[2])
     tracer_x = []
     tracer_v = []
-    for i in range(n):
+    for _i in range(n_tracer):
         xs = np.random.normal(0, 1, 3) * 1000
         vs = np.random.normal(0, 1, 3)
         tracer_x.append(xs)
@@ -60,19 +57,17 @@ def _gr_agreement_w_reboundx(n_tracer, n_massive, seed):
     )
     jorb_res = ppn_gravity(s)
 
-    print(jnp.max(jnp.abs(jorb_res - reb_res)))
+    # print(jnp.max(jnp.abs(jorb_res - reb_res)))
     assert jnp.allclose(jorb_res, reb_res, atol=1e-14, rtol=1e-14)
 
 
 def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
     np.random.seed(seed)
-    n = n_tracer
-    m = n_massive
     massive_x = []
     massive_v = []
     ms = []
     sim = rebound.Simulation()
-    for i in range(m):
+    for _i in range(n_massive):
         xs = np.random.normal(0, 1, 3) * 1000
         vs = np.random.normal(0, 1, 3)
         massive_x.append(xs)
@@ -82,7 +77,7 @@ def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
         sim.add(m=m, x=xs[0], y=xs[1], z=xs[2], vx=vs[0], vy=vs[1], vz=vs[2])
     tracer_x = []
     tracer_v = []
-    for i in range(n):
+    for _i in range(n_tracer):
         xs = np.random.normal(0, 1, 3) * 1000
         vs = np.random.normal(0, 1, 3)
         tracer_x.append(xs)
@@ -107,7 +102,7 @@ def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
     )
     jorb_res = newtonian_gravity(s)
 
-    print(jnp.max(jnp.abs(jorb_res - reb_res)))
+    # print(jnp.max(jnp.abs(jorb_res - reb_res)))
     assert jnp.allclose(jorb_res, reb_res, atol=1e-14, rtol=1e-14)
 
 

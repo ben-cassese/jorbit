@@ -2,7 +2,6 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-
 from astropy.time import Time
 from astropy.utils.data import download_file
 from jplephem.spk import SPK

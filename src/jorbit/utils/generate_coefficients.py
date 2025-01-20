@@ -1,10 +1,9 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
 
+import jax.numpy as jnp
 import mpmath
-from typing import List, Tuple
 from tqdm import tqdm
 
 
@@ -47,11 +46,11 @@ def create_gauss_radau_spacings(internal_points: int):
 
     sols.sort()
     sols = [((s + 1) / 2) for s in sols]  # rescale to 0, 1 from the range -1, 1
-    sols = [mpmath.mpf(0)] + sols  # add the endpoint
+    sols = [mpmath.mpf(0), *sols]  # add the endpoint
     return sols
 
 
-def create_iasnn_r_array(h: List[mpmath.mpf]) -> List[mpmath.mpf]:
+def create_iasnn_r_array(h: list[mpmath.mpf]) -> list[mpmath.mpf]:
     mpmath.mp.dps = 75
     n = len(h)
     r = []
@@ -65,8 +64,8 @@ def create_iasnn_r_array(h: List[mpmath.mpf]) -> List[mpmath.mpf]:
 
 
 def create_iasnn_c_d_arrays(
-    h: List[mpmath.mpf],
-) -> Tuple[List[mpmath.mpf], List[mpmath.mpf]]:
+    h: list[mpmath.mpf],
+) -> tuple[list[mpmath.mpf], list[mpmath.mpf]]:
     mpmath.mp.dps = 75
 
     n = len(h)
@@ -107,7 +106,7 @@ def create_iasnn_c_d_arrays(
 
 def create_iasnn_constants(
     n_internal_points: int,
-) -> Tuple[List[mpmath.mpf], List[mpmath.mpf], List[mpmath.mpf], List[mpmath.mpf]]:
+) -> tuple[list[mpmath.mpf], list[mpmath.mpf], list[mpmath.mpf], list[mpmath.mpf]]:
     mpmath.mp.dps = 75
     h = create_gauss_radau_spacings(n_internal_points)
     r = create_iasnn_r_array(h)

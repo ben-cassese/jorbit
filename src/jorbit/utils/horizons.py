@@ -1,27 +1,21 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+
+import io
+from contextlib import contextmanager
+from typing import NamedTuple
+
 import jax.numpy as jnp
-import warnings
-
-warnings.filterwarnings("ignore", module="erfa")
-
+import pandas as pd
+import requests
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
-
-import requests
-import pandas as pd
-import io
-from dataclasses import dataclass
-from contextlib import contextmanager
-from typing import List
-
 
 from jorbit.data.observatory_codes import OBSERVATORY_CODES
 
 
-@dataclass
-class HorizonsQueryConfig:
+class HorizonsQueryConfig(NamedTuple):
     """Configuration for Horizons API queries."""
 
     HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
@@ -122,7 +116,7 @@ def horizons_query_context(query_string: str) -> io.StringIO:
 
 
 def parse_horizons_response(
-    response_text: str, columns: List[str], skip_empty: bool = False
+    response_text: str, columns: list[str], skip_empty: bool = False
 ) -> pd.DataFrame:
     """Parses the Horizons API response into a DataFrame."""
     lines = response_text.split("\n")
@@ -161,7 +155,7 @@ def make_horizons_request(query_content: io.StringIO) -> str:
         response.raise_for_status()
         return response.text
     except requests.RequestException as e:
-        raise ValueError(f"Failed to query Horizons API: {str(e)}")
+        raise ValueError(f"Failed to query Horizons API: {e!s}") from e
 
 
 def horizons_bulk_vector_query(
@@ -215,7 +209,7 @@ def horizons_bulk_vector_query(
             )
 
     except Exception as e:
-        raise ValueError(f"Vector query failed: {str(e)}")
+        raise ValueError(f"Vector query failed: {e!s}") from e
 
 
 def horizons_bulk_astrometry_query(
@@ -269,7 +263,7 @@ def horizons_bulk_astrometry_query(
         return data
 
     except Exception as e:
-        raise ValueError(f"Astrometry query failed: {str(e)}")
+        raise ValueError(f"Astrometry query failed: {e!s}") from e
 
 
 def get_observer_positions(times, observatories):
@@ -294,15 +288,13 @@ def get_observer_positions(times, observatories):
     for obs in set(observatories):
         idxs = [i for i, x in enumerate(observatories) if x == obs]
         if "@" not in obs:
-            if obs.lower() in OBSERVATORY_CODES.keys():
+            if obs.lower() in OBSERVATORY_CODES:
                 obs = OBSERVATORY_CODES[obs.lower()]
             else:
                 raise ValueError(
-                    "Observer location '{}' is not a recognized observatory. Please"
+                    f"Observer location '{obs}' is not a recognized observatory. Please"
                     " refer to"
-                    " https://minorplanetcenter.net/iau/lists/ObsCodesF.html".format(
-                        obs
-                    )
+                    " https://minorplanetcenter.net/iau/lists/ObsCodesF.html"
                 )
 
         _emb_from_observer = horizons_bulk_vector_query("3", obs, times[idxs])

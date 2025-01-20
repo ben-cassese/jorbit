@@ -9,21 +9,61 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+from collections.abc import Callable
+
+import chex
 import jax.numpy as jnp
 
-from typing import Callable
-
-from jorbit.utils.states import SystemState
-from jorbit.integrators import IAS15Helper, IAS15IntegratorState
 from jorbit.data.constants import (
-    IAS15_H,
-    IAS15_RR,
+    EPSILON,
     IAS15_C,
     IAS15_D,
+    IAS15_H,
+    IAS15_RR,
     IAS15_SAFETY_FACTOR,
-    EPSILON,
     IAS15_EPS_Modified,
 )
+from jorbit.utils.states import IAS15IntegratorState, SystemState
+
+
+@chex.dataclass
+class IAS15Helper:
+    # the equivalent of the reb_dp7 struct in rebound, but obviously without pointers
+    p0: jnp.ndarray
+    p1: jnp.ndarray
+    p2: jnp.ndarray
+    p3: jnp.ndarray
+    p4: jnp.ndarray
+    p5: jnp.ndarray
+    p6: jnp.ndarray
+
+
+def initialize_ias15_helper(n_particles):
+    return IAS15Helper(
+        p0=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p1=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p2=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p3=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p4=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p5=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        p6=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+    )
+
+
+def initialize_ias15_integrator_state(a0):
+    n_particles = a0.shape[0]
+    return IAS15IntegratorState(
+        g=initialize_ias15_helper(n_particles),
+        b=initialize_ias15_helper(n_particles),
+        e=initialize_ias15_helper(n_particles),
+        br=initialize_ias15_helper(n_particles),
+        er=initialize_ias15_helper(n_particles),
+        csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
+        a0=a0,
+        dt=10.0,  # 10 days
+        dt_last_done=0.0,
+    )
 
 
 @jax.jit

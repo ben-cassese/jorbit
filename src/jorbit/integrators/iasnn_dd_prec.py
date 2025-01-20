@@ -1,11 +1,11 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
-
 from functools import partial
 
-from jorbit.utils.doubledouble import DoubleDouble, dd_sum, dd_max, dd_norm
+import jax.numpy as jnp
+
+from jorbit.utils.doubledouble import DoubleDouble, dd_max, dd_norm, dd_sum
 from jorbit.utils.generate_coefficients import create_iasnn_constants
 
 

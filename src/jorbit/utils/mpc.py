@@ -1,7 +1,7 @@
-import pandas as pd
-from astropy.time import Time
 import astropy.units as u
+import pandas as pd
 from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 
 def read_mpc_file(mpc_file):
