@@ -5,6 +5,7 @@ import astropy.units as u
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
+from scipy.optimize import minimize
 
 from jorbit.accelerations import (
     create_default_ephemeris_acceleration_func,
@@ -12,6 +13,7 @@ from jorbit.accelerations import (
     create_newtonian_ephemeris_acceleration_func,
 )
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
+from jorbit.astrometry.transformations import icrs_to_horizons_ecliptic
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions
@@ -32,6 +34,7 @@ class Particle:
         integrator="ias15",
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2050-01-01"),
+        fit_seed=None,
     ):
         self._x = x
         self._v = v
@@ -44,6 +47,7 @@ class Particle:
         self._integrator = integrator
         self._earliest_time = earliest_time
         self._latest_time = latest_time
+        self._fit_seed = fit_seed
 
         self._setup_state()
 
@@ -139,11 +143,6 @@ class Particle:
             self.gravity = acc_func
 
     def _setup_integrator(self):
-        if self._integrator != "ias15":
-            raise NotImplementedError(
-                "Currently only the IAS15 integrator is supported"
-            )
-
         a0 = self.gravity(self._cartesian_state.to_system())
         self._integrator_state = initialize_ias15_integrator_state(a0)
         self._integrator = jax.tree_util.Partial(ias15_evolve)
@@ -207,12 +206,46 @@ class Particle:
 
         loglike.defvjp(loglike_fwd, loglike_bwd)
 
-        # loglike = jax.jit(_loglike)
-
         residuals = jax.jit(_residuals)
         loglike = jax.jit(loglike)
 
         return residuals, loglike
+
+    def _generate_initial_guess(self, ra, dec):
+        phi = ra
+        theta = jnp.pi / 2 - dec
+
+        x = jnp.sin(theta) * jnp.cos(phi)
+        y = jnp.sin(theta) * jnp.sin(phi)
+        z = jnp.cos(theta)
+
+        x_icrs = jnp.hstack([x, y, z])
+        x = icrs_to_horizons_ecliptic(x_icrs)
+
+        # assume we're observing the thing at its highest excursion from the ecliptic:
+        inc = jnp.array([jnp.abs(jnp.arcsin(x[2])) / jnp.linalg.norm(x) * 180 / jnp.pi])
+
+        # its longitude of ascending node is the angle between the x-axis and the projection of the vector onto the xy-plane:
+        varphi = (jnp.arctan2(x[1], x[0]) * 180 / jnp.pi) % 360
+        Omega = jnp.array([varphi]) - 90 if x[2] > 0 else jnp.array([varphi]) + 90
+
+        nu = jnp.array([90.0]) if x[2] > 0 else jnp.array([270.0])
+        a = jnp.array([2.5])
+        ecc = jnp.array([0.0])
+        omega = jnp.array([0.0])
+
+        k = KeplerianState(
+            semi=a,
+            ecc=ecc,
+            nu=nu,
+            inc=inc,
+            Omega=Omega,
+            omega=omega,
+            time=self._observations.times[0],
+        )
+        c = k.to_cartesian()
+
+        return jnp.concatenate([c.x.flatten(), c.v.flatten()])
 
     def integrate(self, times, state=None):
         if state is None:
@@ -250,7 +283,50 @@ class Particle:
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
     def max_likelihood(self):
-        pass
+        if self.loglike is None:
+            raise ValueError("No observations provided, cannot fit an orbit")
+
+        if self._fit_seed is None:
+            x0 = self._generate_initial_guess(
+                self._observations.ra[0], self._observations.dec[0]
+            )
+        else:
+            x0 = jnp.concatenate(
+                [self.fit_seed.to_cartesian.x, self.fit_seed.to_cartesian.v]
+            )
+
+        result = minimize(
+            fun=lambda x: -self.loglike(x),
+            x0=x0,
+            jac=lambda x: -jax.grad(self.loglike)(x),
+            method="L-BFGS-B",
+            options={
+                "disp": True,
+                "maxls": 100,
+                "maxcor": 50,
+                "maxfun": 5000,
+                "maxiter": 1000,
+                "ftol": 1e-10,
+            },
+        )
+
+        if result.success:
+            return Particle(
+                x=result.x[:3],
+                v=result.x[3:],
+                time=self._time,
+                elements=None,
+                log_gm=self._log_gm,
+                observations=self._observations,
+                name=self._name,
+                gravity=self.gravity,
+                integrator=self._integrator,
+                earliest_time=self._earliest_time,
+                latest_time=self._latest_time,
+                fit_seed=None,
+            )
+        else:
+            raise ValueError("Failed to converge")
 
     def fit(self):
         pass

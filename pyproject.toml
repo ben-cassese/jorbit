@@ -11,10 +11,12 @@ dependencies = [
     "astropy>=6.1.6",
     "astroquery>=0.4.7",
     "chex>=0.1.88",
+    "flax>=0.10.2",
     "jax>=0.4.35",
     "jplephem>=2.22",
     "optimistix>=0.0.10",
     "pandas>=2.2.3",
+    "scipy>=1.14.1",
     "tqdm>=4.67.1",
 ]
 
