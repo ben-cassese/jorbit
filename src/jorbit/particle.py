@@ -51,7 +51,7 @@ class Particle:
 
         self._setup_integrator()
 
-        self.loglike = self._setup_likelihood()
+        self.residuals, self.loglike = self._setup_likelihood()
 
     def __repr__(self):
         return f"Particle: {self._name}"
@@ -152,7 +152,8 @@ class Particle:
         if self._observations is None:
             return None
 
-        def loglike(state):
+        def _residuals(x):
+            state = CartesianState(x=x[:3][None, :], v=x[3:][None, :], time=self._time)
             ras, decs = _ephem(
                 self._observations.times,
                 state,
@@ -166,15 +167,52 @@ class Particle:
                 self._observations.ra, self._observations.dec, ras, decs
             )
 
+            return xis_etas
+
+        def _loglike(x):
+            xis_etas = _residuals(x)
+
             quad = jnp.einsum(
                 "bi,bij,bj->b", xis_etas, self._observations.inv_cov_matrices, xis_etas
             )
 
-            return -0.5 * (
-                2 * jnp.log(2 * jnp.pi) + self._observations.cov_log_dets + quad
+            ll = jnp.sum(
+                -0.5
+                * (2 * jnp.log(2 * jnp.pi) + self._observations.cov_log_dets + quad)
             )
 
-        return jax.tree_util.Partial(jax.jit(loglike))
+            return ll
+
+        _loglike = jax.tree_util.Partial(_loglike)
+        _residuals = jax.tree_util.Partial(_residuals)
+
+        # since we've gone with the while loop version of the integrator, can no
+        # longer use reverse mode. But, actually specifying forward mode everywhere is
+        # annoying, so we're going to re-define a custom vjp for "reverse" mode that's
+        # actually just forward mode
+
+        @jax.custom_vjp
+        def loglike(params):
+            return _loglike(params)
+
+        def loglike_fwd(params):
+            output = _loglike(params)
+            jac = jax.jacfwd(_loglike)(params)
+            return output, (jac,)
+
+        def loglike_bwd(res, g):
+            jac = res
+            val = jax.tree.map(lambda x: x * g, jac)
+            return val
+
+        loglike.defvjp(loglike_fwd, loglike_bwd)
+
+        # loglike = jax.jit(_loglike)
+
+        residuals = jax.jit(_residuals)
+        loglike = jax.jit(loglike)
+
+        return residuals, loglike
 
     def integrate(self, times, state=None):
         if state is None:

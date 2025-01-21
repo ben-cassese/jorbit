@@ -59,7 +59,7 @@ def tangent_plane_projection(ra_ref, dec_ref, ra, dec):
     xi = y_rot / x_rot
     eta = z_rot / x_rot
 
-    return jnp.array([xi, eta])
+    return jnp.array([xi, eta]) * 206264.80624709636  # rad -> arcsec
 
 
 @jax.jit

@@ -998,8 +998,7 @@ dependencies = [
     { name = "chex" },
     { name = "jax" },
     { name = "jplephem" },
-    { name = "numpyro" },
-    { name = "numpyro-ext" },
+    { name = "optimistix" },
     { name = "pandas" },
     { name = "tqdm" },
 ]
@@ -1012,7 +1011,6 @@ dev = [
     { name = "mpmath" },
     { name = "myst-parser" },
     { name = "nbsphinx" },
-    { name = "optimistix" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -1036,8 +1034,7 @@ requires-dist = [
     { name = "chex", specifier = ">=0.1.88" },
     { name = "jax", specifier = ">=0.4.35" },
     { name = "jplephem", specifier = ">=2.22" },
-    { name = "numpyro", specifier = ">=0.16.1" },
-    { name = "numpyro-ext", specifier = ">=0.0.4" },
+    { name = "optimistix", specifier = ">=0.0.10" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
@@ -1050,7 +1047,6 @@ dev = [
     { name = "mpmath", specifier = ">=1.3.0" },
     { name = "myst-parser", specifier = ">=4.0.0" },
     { name = "nbsphinx", specifier = ">=0.9.5" },
-    { name = "optimistix", specifier = ">=0.0.9" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
@@ -1462,15 +1458,6 @@ wheels = [
 ]
 
 [[package]]
-name = "multipledispatch"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/3e/a62c3b824c7dec33c4a1578bcc842e6c30300051033a4e5975ed86cc2536/multipledispatch-1.0.0.tar.gz", hash = "sha256:5c839915465c68206c3e9c473357908216c28383b425361e5d144594bf85a7e0", size = 12385 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/c0/00c9809d8b9346eb238a6bbd5f83e846a4ce4503da94a4c08cb7284c325b/multipledispatch-1.0.0-py3-none-any.whl", hash = "sha256:0c53cd8b077546da4e48869f49b13164bebafd0c2a5afceb6bb6a316e7fb46e4", size = 12818 },
-]
-
-[[package]]
 name = "mypy-extensions"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1650,34 +1637,6 @@ wheels = [
 ]
 
 [[package]]
-name = "numpyro"
-version = "0.16.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jax" },
-    { name = "jaxlib" },
-    { name = "multipledispatch" },
-    { name = "numpy" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/96/e0/7566fa407901158831c7e4d7c0e77efb4d9018d6bfe85490a669007eb986/numpyro-0.16.1.tar.gz", hash = "sha256:553ea56c729bdeb83d6eb6d455911113dc75f5eb25a59e3af31a7726313eee38", size = 384849 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ea/8b/ae9187460b6fc8f0a01074f84b7edcbba605a7c70aebecf345ce9bc2b43c/numpyro-0.16.1-py3-none-any.whl", hash = "sha256:e26547bafedd29cdff763aa261931c81e4120cc909b7ab828f613b7ac2bbe8ea", size = 356100 },
-]
-
-[[package]]
-name = "numpyro-ext"
-version = "0.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpyro" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/40/e18e15b602f04032e49fa31143a73c59068a48fa2c324a1da33abb0d8fc2/numpyro-ext-0.0.4.tar.gz", hash = "sha256:b53b6d6414727bccdb9521ce4ac6879387caf0fc1d1c20970e7b568b07c5b5e9", size = 29394 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7a/83/9756d9348520f2648012c468665239bcfdc1388b7a9e0f19d3efef428910/numpyro_ext-0.0.4-py3-none-any.whl", hash = "sha256:97d620b6ced195b2fcb7092b19ae87a2a23ab6818aee486f4550109f63a071d7", size = 21085 },
-]
-
-[[package]]
 name = "opt-einsum"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1688,7 +1647,7 @@ wheels = [
 
 [[package]]
 name = "optimistix"
-version = "0.0.9"
+version = "0.0.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "equinox" },
@@ -1697,9 +1656,9 @@ dependencies = [
     { name = "lineax" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/b1/53e589b35d33785fac4b6ee4e8bf475505cd56c52651fe0da43456e96287/optimistix-0.0.9.tar.gz", hash = "sha256:b5e3ce9e6d111f399269c7565c68125bdf6bae9b8ff6cacf30232231159354ef", size = 54613 }
+sdist = { url = "https://files.pythonhosted.org/packages/78/ec/0d51681732f15ccb8e2a546d7358a4d56132016b73b822a52b54e3a2450e/optimistix-0.0.10.tar.gz", hash = "sha256:80a481d66d64c9445eaf74158b71d65a9087b7e038f0c4bc7714ef5ff6350050", size = 55112 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/94/1726f0a89ff40760ec2c789b4d5aba6fa283082208f23a707f3c01140f92/optimistix-0.0.9-py3-none-any.whl", hash = "sha256:d47d47ef520a4c4e37ff050c89793401cb7142009ef917a986bdc55f9d5db2aa", size = 83587 },
+    { url = "https://files.pythonhosted.org/packages/94/9c/4672a90dfd2ce7d40428759c9aaed0164a9a90010349f607aa5e29132766/optimistix-0.0.10-py3-none-any.whl", hash = "sha256:f10eb93d24311aca21fb6d1e74f39a4a38f976d5accbd577ef1705218609bfdc", size = 84274 },
 ]
 
 [[package]]

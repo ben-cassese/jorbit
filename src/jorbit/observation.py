@@ -123,14 +123,14 @@ class Observations:
                 " manually."
             )
             if not isinstance(
-                self._times, [type(Time("2023-01-01")), list, jnp.ndarray]
+                self._times, (type(Time("2023-01-01")) | list | jnp.ndarray)
             ):
                 raise ValueError(
                     "times must be either astropy.time.Time, list of astropy.time.Time,"
                     " or jax.numpy.ndarray (interpreted as JD in TDB)"
                 )
 
-            assert isinstance(self._observatories, [str, list, jnp.ndarray]), (
+            assert isinstance(self._observatories, (str | list | jnp.ndarray)), (
                 "observatories must be either a string (interpreted as an MPC"
                 " observatory code), a list of observatory codes, or a"
                 " jax.numpy.ndarray"

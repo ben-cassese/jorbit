@@ -13,8 +13,7 @@ dependencies = [
     "chex>=0.1.88",
     "jax>=0.4.35",
     "jplephem>=2.22",
-    "numpyro>=0.16.1",
-    "numpyro-ext>=0.0.4",
+    "optimistix>=0.0.10",
     "pandas>=2.2.3",
     "tqdm>=4.67.1",
 ]
@@ -30,7 +29,6 @@ dev = [
     "matplotlib>=3.9.2",
     "myst-parser>=4.0.0",
     "nbsphinx>=0.9.5",
-    "optimistix>=0.0.9",
     "pre-commit>=4.0.1",
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.6.1",
