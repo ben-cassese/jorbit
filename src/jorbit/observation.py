@@ -72,6 +72,17 @@ class Observations:
             mpc_file=None,
         )
 
+    def __getitem__(self, index):
+        return Observations(
+            observed_coordinates=SkyCoord(
+                ra=self._ra[index], dec=self._dec[index], unit=u.rad
+            ),
+            times=self._times[index],
+            observatories=self._observatories[index],
+            astrometric_uncertainties=self._astrometric_uncertainties[index] * u.arcsec,
+            mpc_file=self._mpc_file,
+        )
+
     @property
     def ra(self):
         return self._ra
@@ -235,6 +246,8 @@ class Observations:
             astrometric_uncertainties = (
                 jnp.ones(len(times)) * astrometric_uncertainties.to(u.arcsec).value
             )
+        if isinstance(astrometric_uncertainties, u.Quantity):
+            astrometric_uncertainties = astrometric_uncertainties.to(u.arcsec).value
         # if our uncertainties are 1D, convert to diagonal covariance matrices
         if astrometric_uncertainties.ndim == 1:
             cov_matrices = jnp.array(

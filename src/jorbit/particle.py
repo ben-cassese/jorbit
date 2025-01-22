@@ -12,8 +12,8 @@ from jorbit.accelerations import (
     create_gr_ephemeris_acceleration_func,
     create_newtonian_ephemeris_acceleration_func,
 )
+from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
-from jorbit.astrometry.transformations import icrs_to_horizons_ecliptic
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions
@@ -34,7 +34,6 @@ class Particle:
         integrator="ias15",
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2050-01-01"),
-        fit_seed=None,
     ):
         self._x = x
         self._v = v
@@ -47,7 +46,6 @@ class Particle:
         self._integrator = integrator
         self._earliest_time = earliest_time
         self._latest_time = latest_time
-        self._fit_seed = fit_seed
 
         self._setup_state()
 
@@ -55,7 +53,14 @@ class Particle:
 
         self._setup_integrator()
 
-        self.residuals, self.loglike = self._setup_likelihood()
+        self.fit_seed, self.fit_scales = self._setup_fit_seed()
+
+        (
+            self.residuals,
+            self.loglike,
+            self.scipy_objective,
+            self.scipy_objective_grad,
+        ) = self._setup_likelihood()
 
     def __repr__(self):
         return f"Particle: {self._name}"
@@ -147,43 +152,57 @@ class Particle:
         self._integrator_state = initialize_ias15_integrator_state(a0)
         self._integrator = jax.tree_util.Partial(ias15_evolve)
 
-    def _setup_likelihood(self):
-        if self._observations is None:
+    def _setup_fit_seed(self):
+        if self._observations is not None:
+            if len(self._observations) >= 3:
+                mean_time = jnp.mean(self._observations.times)
+                mid_idx = jnp.argmin(jnp.abs(self._observations.times - mean_time))
+                fit_seed = gauss_method_orbit(
+                    self._observations[0]
+                    + self._observations[mid_idx]
+                    + self._observations[-1]
+                )
+            else:
+                fit_seed = simple_circular(
+                    self._observations.ra[0],
+                    self._observations.dec[0],
+                    semi=2.5,
+                    time=self._time,
+                )
+            fit_scales = jnp.concatenate(
+                [fit_seed.to_cartesian().x, fit_seed.to_cartesian().v]
+            )
+            return fit_seed, fit_scales
+        else:
             return None
 
-        def _residuals(x):
-            state = CartesianState(x=x[:3][None, :], v=x[3:][None, :], time=self._time)
-            ras, decs = _ephem(
-                self._observations.times,
-                state,
-                self.gravity,
-                self._integrator,
-                self._integrator_state,
-                self._observations.observer_positions,
-            )
+    def _setup_likelihood(self):
+        if self._observations is None:
+            return None, None, None, None
 
-            xis_etas = jax.vmap(tangent_plane_projection)(
-                self._observations.ra, self._observations.dec, ras, decs
-            )
+        residuals = jax.tree_util.Partial(
+            _residuals,
+            self._observations.times,
+            self.gravity,
+            self._integrator,
+            self._integrator_state,
+            self._observations.observer_positions,
+            self._observations.ra,
+            self._observations.dec,
+        )
 
-            return xis_etas
-
-        def _loglike(x):
-            xis_etas = _residuals(x)
-
-            quad = jnp.einsum(
-                "bi,bij,bj->b", xis_etas, self._observations.inv_cov_matrices, xis_etas
-            )
-
-            ll = jnp.sum(
-                -0.5
-                * (2 * jnp.log(2 * jnp.pi) + self._observations.cov_log_dets + quad)
-            )
-
-            return ll
-
-        _loglike = jax.tree_util.Partial(_loglike)
-        _residuals = jax.tree_util.Partial(_residuals)
+        ll = jax.tree_util.Partial(
+            _loglike,
+            self._observations.times,
+            self.gravity,
+            self._integrator,
+            self._integrator_state,
+            self._observations.observer_positions,
+            self._observations.ra,
+            self._observations.dec,
+            self._observations.inv_cov_matrices,
+            self._observations.cov_log_dets,
+        )
 
         # since we've gone with the while loop version of the integrator, can no
         # longer use reverse mode. But, actually specifying forward mode everywhere is
@@ -192,11 +211,11 @@ class Particle:
 
         @jax.custom_vjp
         def loglike(params):
-            return _loglike(params)
+            return ll(params)
 
         def loglike_fwd(params):
-            output = _loglike(params)
-            jac = jax.jacfwd(_loglike)(params)
+            output = ll(params)
+            jac = jax.jacfwd(ll)(params)
             return output, (jac,)
 
         def loglike_bwd(res, g):
@@ -206,46 +225,26 @@ class Particle:
 
         loglike.defvjp(loglike_fwd, loglike_bwd)
 
-        residuals = jax.jit(_residuals)
+        residuals = jax.jit(residuals)
         loglike = jax.jit(loglike)
 
-        return residuals, loglike
+        def scipy_loglike(x):
+            # x *= self.fit_scales
+            c = CartesianState(
+                x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+            )
+            return -loglike(c)
 
-    def _generate_initial_guess(self, ra, dec):
-        phi = ra
-        theta = jnp.pi / 2 - dec
+        def scipy_grad(x):
+            # x *= self.fit_scales
+            c = CartesianState(
+                x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+            )
+            c_grad = jax.grad(loglike)(c)
+            g = jnp.concatenate([c_grad.x.flatten(), c_grad.v.flatten()])
+            return -g  # * self.fit_scales
 
-        x = jnp.sin(theta) * jnp.cos(phi)
-        y = jnp.sin(theta) * jnp.sin(phi)
-        z = jnp.cos(theta)
-
-        x_icrs = jnp.hstack([x, y, z])
-        x = icrs_to_horizons_ecliptic(x_icrs)
-
-        # assume we're observing the thing at its highest excursion from the ecliptic:
-        inc = jnp.array([jnp.abs(jnp.arcsin(x[2])) / jnp.linalg.norm(x) * 180 / jnp.pi])
-
-        # its longitude of ascending node is the angle between the x-axis and the projection of the vector onto the xy-plane:
-        varphi = (jnp.arctan2(x[1], x[0]) * 180 / jnp.pi) % 360
-        Omega = jnp.array([varphi]) - 90 if x[2] > 0 else jnp.array([varphi]) + 90
-
-        nu = jnp.array([90.0]) if x[2] > 0 else jnp.array([270.0])
-        a = jnp.array([2.5])
-        ecc = jnp.array([0.0])
-        omega = jnp.array([0.0])
-
-        k = KeplerianState(
-            semi=a,
-            ecc=ecc,
-            nu=nu,
-            inc=inc,
-            Omega=Omega,
-            omega=omega,
-            time=self._observations.times[0],
-        )
-        c = k.to_cartesian()
-
-        return jnp.concatenate([c.x.flatten(), c.v.flatten()])
+        return residuals, loglike, scipy_loglike, scipy_grad
 
     def integrate(self, times, state=None):
         if state is None:
@@ -282,38 +281,34 @@ class Particle:
         )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
-    def max_likelihood(self):
+    def max_likelihood(self, fit_seed=None, verbose=False):
         if self.loglike is None:
             raise ValueError("No observations provided, cannot fit an orbit")
 
-        if self._fit_seed is None:
-            x0 = self._generate_initial_guess(
-                self._observations.ra[0], self._observations.dec[0]
-            )
-        else:
-            x0 = jnp.concatenate(
-                [self.fit_seed.to_cartesian.x, self.fit_seed.to_cartesian.v]
-            )
+        if fit_seed is None:
+            fit_seed = self.fit_seed
 
         result = minimize(
-            fun=lambda x: -self.loglike(x),
-            x0=x0,
-            jac=lambda x: -jax.grad(self.loglike)(x),
+            fun=lambda x: self.scipy_objective(x),
+            # x0=jnp.ones(6, dtype=jnp.float64),
+            x0=jnp.concatenate([fit_seed.to_cartesian().x, fit_seed.to_cartesian().v]),
+            jac=lambda x: self.scipy_objective_grad(x),
             method="L-BFGS-B",
             options={
-                "disp": True,
+                "disp": verbose,
                 "maxls": 100,
-                "maxcor": 50,
+                "maxcor": 100,
                 "maxfun": 5000,
                 "maxiter": 1000,
-                "ftol": 1e-10,
+                "ftol": 1e-14,
             },
         )
 
         if result.success:
+            x = result.x  # * self.fit_scales
             return Particle(
-                x=result.x[:3],
-                v=result.x[3:],
+                x=x[:3],
+                v=x[3:],
                 time=self._time,
                 elements=None,
                 log_gm=self._log_gm,
@@ -323,10 +318,12 @@ class Particle:
                 integrator=self._integrator,
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
-                fit_seed=None,
             )
         else:
             raise ValueError("Failed to converge")
+
+    def fit_mcmc(self):
+        pass
 
     def fit(self):
         pass
@@ -378,3 +375,61 @@ def _ephem(
     )
 
     return ras, decs
+
+
+@jax.jit
+def _residuals(
+    times,
+    gravity,
+    integrator,
+    integrator_state,
+    observer_positions,
+    ra,
+    dec,
+    particle_state,
+):
+    ras, decs = _ephem(
+        times,
+        particle_state,
+        gravity,
+        integrator,
+        integrator_state,
+        observer_positions,
+    )
+
+    xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
+
+    return xis_etas
+
+
+# note: this external jitted function does not have fwd mode autodiff enforced, will
+# break on reverse mode
+@jax.jit
+def _loglike(
+    times,
+    gravity,
+    integrator,
+    integrator_state,
+    observer_positions,
+    ra,
+    dec,
+    inv_cov_matrices,
+    cov_log_dets,
+    particle_state,
+):
+    xis_etas = _residuals(
+        times,
+        gravity,
+        integrator,
+        integrator_state,
+        observer_positions,
+        ra,
+        dec,
+        particle_state,
+    )
+
+    quad = jnp.einsum("bi,bij,bj->b", xis_etas, inv_cov_matrices, xis_etas)
+
+    ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
+
+    return ll
