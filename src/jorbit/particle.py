@@ -1,6 +1,8 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+import warnings
+
 import astropy.units as u
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
@@ -23,37 +25,40 @@ from jorbit.utils.states import CartesianState, KeplerianState
 class Particle:
     def __init__(
         self,
+        state=None,
+        time=None,
         x=None,
         v=None,
-        elements=None,
-        time=None,
-        log_gm=-jnp.inf,
         observations=None,
         name="",
         gravity="default solar system",
         integrator="ias15",
         earliest_time=Time("1980-01-01"),
         latest_time=Time("2050-01-01"),
+        fit_seed=None,
     ):
-        self._x = x
-        self._v = v
-        self._elements = elements
-        self._log_gm = log_gm
-        self._time = time
+
         self._observations = observations
-        self._name = name
-        self.gravity = gravity
-        self._integrator = integrator
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 
-        self._setup_state()
+        self.gravity = gravity
+        self._integrator = integrator
 
-        self._setup_acceleration_func()
+        (
+            self._x,
+            self._v,
+            self._time,
+            self._cartesian_state,
+            self._keplerian_state,
+            self._name,
+        ) = self._setup_state(x, v, state, time, name)
 
-        self._setup_integrator()
+        self.gravity = self._setup_acceleration_func(gravity)
 
-        self.fit_seed, self.fit_scales = self._setup_fit_seed()
+        self._integrator_state, self._integrator = self._setup_integrator()
+
+        self._fit_seed = self._setup_fit_seed(fit_seed)
 
         (
             self.residuals,
@@ -73,71 +78,80 @@ class Particle:
     def keplerian_state(self):
         return self._keplerian_state
 
-    def _setup_state(self):
+    ###############
+    # SETUP METHODS
+    ###############
 
-        assert self._time is not None, "Must provide an epoch for the particle"
-        if isinstance(self._time, type(Time("2023-01-01"))):
-            self._time = self._time.tdb.jd
+    def _setup_state(self, x, v, state, time, name):
 
-        if self._elements is not None:
-            assert self._x is None, "Cannot provide both x and elements"
-            assert self._v is None, "Cannot provide both v and elements"
+        assert time is not None, "Must provide an epoch for the particle"
+        if isinstance(time, type(Time("2023-01-01"))):
+            time = time.tdb.jd
 
-            if isinstance(self._elements, dict):
-                self._keplerian_state = KeplerianState(
-                    **self._elements, time=self._time
-                )
+        if state is not None:
+            assert x is None and v is None, "Cannot provide both state and x, v"
 
-            self._cartesian_state = self._keplerian_state.to_cartesian()
-        elif self._x is not None:
-            assert self._v is not None, "Must provide both x and v"
+            state = state.to_cartesian()
+            if state.x.ndim != 2:
+                state.x = state.x[None, :]
+                state.v = state.v[None, :]
+            state.time = time
+            keplerian_state = state.to_keplerian()
+            cartesian_state = state.to_cartesian()
 
-            self._cartesian_state = CartesianState(
-                x=jnp.array([self._x]), v=jnp.array([self._v]), time=self._time
+        elif x is not None:
+            assert v is not None, "Must provide both x and v"
+
+            x = x.flatten()
+            v = v.flatten()
+            cartesian_state = CartesianState(
+                x=jnp.array([x]), v=jnp.array([v]), time=time
             )
-            self._keplerian_state = self._cartesian_state.to_keplerian()
+            keplerian_state = cartesian_state.to_keplerian()
         else:
             raise ValueError(
                 "time must be either astropy.time.Time or float (interpreted as JD in"
                 " TDB)"
             )
 
-        if self._name == "":
-            self._name = "unnamed"
+        if name == "":
+            name = "unnamed"
 
-    def _setup_acceleration_func(self):
-        if self.gravity == "newtonian planets":
+        return x, v, time, cartesian_state, keplerian_state, name
+
+    def _setup_acceleration_func(self, gravity):
+
+        if isinstance(gravity, jax.tree_util.Partial):
+            return gravity
+
+        if gravity == "newtonian planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default planets",
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
-            self.gravity = acc_func
-        elif self.gravity == "newtonian solar system":
+        elif gravity == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
-            self.gravity = acc_func
-        elif self.gravity == "gr planets":
+        elif gravity == "gr planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default planets",
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
-            self.gravity = acc_func
-        elif self.gravity == "gr solar system":
+        elif gravity == "gr solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
-            self.gravity = acc_func
         elif self.gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -145,36 +159,47 @@ class Particle:
                 ssos="default solar system",
             )
             acc_func = create_default_ephemeris_acceleration_func(eph.processor)
-            self.gravity = acc_func
+
+        return acc_func
 
     def _setup_integrator(self):
         a0 = self.gravity(self._cartesian_state.to_system())
-        self._integrator_state = initialize_ias15_integrator_state(a0)
-        self._integrator = jax.tree_util.Partial(ias15_evolve)
+        integrator_state = initialize_ias15_integrator_state(a0)
+        integrator = jax.tree_util.Partial(ias15_evolve)
 
-    def _setup_fit_seed(self):
-        if self._observations is not None:
-            if len(self._observations) >= 3:
-                mean_time = jnp.mean(self._observations.times)
-                mid_idx = jnp.argmin(jnp.abs(self._observations.times - mean_time))
-                fit_seed = gauss_method_orbit(
-                    self._observations[0]
-                    + self._observations[mid_idx]
-                    + self._observations[-1]
-                )
-            else:
-                fit_seed = simple_circular(
-                    self._observations.ra[0],
-                    self._observations.dec[0],
-                    semi=2.5,
-                    time=self._time,
-                )
-            fit_scales = jnp.concatenate(
-                [fit_seed.to_cartesian().x, fit_seed.to_cartesian().v]
-            )
-            return fit_seed, fit_scales
-        else:
+        return integrator_state, integrator
+
+    def _setup_fit_seed(self, fit_seed):
+
+        if self._observations is None:
             return None
+
+        if isinstance(fit_seed, (CartesianState | KeplerianState)):
+            return fit_seed
+
+        if len(self._observations) >= 3:
+            mean_time = jnp.mean(self._observations.times)
+            mid_idx = jnp.argmin(jnp.abs(self._observations.times - mean_time))
+            fit_seed = gauss_method_orbit(
+                self._observations[0]
+                + self._observations[mid_idx]
+                + self._observations[-1]
+            )
+            if fit_seed.to_keplerian().ecc > 1:
+                warnings.warn(
+                    "Warning: initial Gauss's method fit produced an unbound orbit",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        else:
+            fit_seed = simple_circular(
+                self._observations.ra[0],
+                self._observations.dec[0],
+                semi=2.5,
+                time=self._time,
+            )
+
+        return fit_seed
 
     def _setup_likelihood(self):
         if self._observations is None:
@@ -229,22 +254,24 @@ class Particle:
         loglike = jax.jit(loglike)
 
         def scipy_loglike(x):
-            # x *= self.fit_scales
             c = CartesianState(
                 x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
             )
             return -loglike(c)
 
         def scipy_grad(x):
-            # x *= self.fit_scales
             c = CartesianState(
                 x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
             )
             c_grad = jax.grad(loglike)(c)
             g = jnp.concatenate([c_grad.x.flatten(), c_grad.v.flatten()])
-            return -g  # * self.fit_scales
+            return -g
 
         return residuals, loglike, scipy_loglike, scipy_grad
+
+    ################
+    # PUBLIC METHODS
+    ################
 
     def integrate(self, times, state=None):
         if state is None:
@@ -286,12 +313,16 @@ class Particle:
             raise ValueError("No observations provided, cannot fit an orbit")
 
         if fit_seed is None:
-            fit_seed = self.fit_seed
+            fit_seed = self._fit_seed
 
         result = minimize(
             fun=lambda x: self.scipy_objective(x),
-            # x0=jnp.ones(6, dtype=jnp.float64),
-            x0=jnp.concatenate([fit_seed.to_cartesian().x, fit_seed.to_cartesian().v]),
+            x0=jnp.concatenate(
+                [
+                    fit_seed.to_cartesian().x.flatten(),
+                    fit_seed.to_cartesian().v.flatten(),
+                ]
+            ),
             jac=lambda x: self.scipy_objective_grad(x),
             method="L-BFGS-B",
             options={
@@ -305,19 +336,30 @@ class Particle:
         )
 
         if result.success:
-            x = result.x  # * self.fit_scales
-            return Particle(
-                x=x[:3],
-                v=x[3:],
+            c = CartesianState(
+                x=jnp.array([result.x[:3]]),
+                v=jnp.array([result.x[3:]]),
                 time=self._time,
-                elements=None,
-                log_gm=self._log_gm,
+            )
+            if c.to_keplerian().ecc > 1:
+                warnings.warn(
+                    "Warning: max_likelihood fit produced an unbound orbit",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+            return Particle(
+                x=result.x[:3],
+                v=result.x[3:],
+                time=self._time,
+                state=None,
                 observations=self._observations,
                 name=self._name,
                 gravity=self.gravity,
                 integrator=self._integrator,
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
+                fit_seed=self._fit_seed,
             )
         else:
             raise ValueError("Failed to converge")
@@ -327,6 +369,11 @@ class Particle:
 
     def fit(self):
         pass
+
+
+###########################
+# EXTERNAL JITTED FUNCTIONS
+###########################
 
 
 @jax.jit

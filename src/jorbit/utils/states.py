@@ -32,7 +32,11 @@ class KeplerianState:
     Omega: float
     omega: float
     nu: float
-    time: float
+    # careful here- adding a default to allow users creating Particles to pass
+    # astropy.time.Time objects, which wouldn't work in these dataclasses
+    # but, in general, need to specify for the SystemState you get from .to_system()
+    # to produce correct accelerations later
+    time: float = 2458849.5
 
     def to_cartesian(self):
         x, v = elements_to_cartesian(
@@ -67,7 +71,8 @@ class KeplerianState:
 class CartesianState:
     x: jnp.ndarray
     v: jnp.ndarray
-    time: float
+    # same warning as above
+    time: float = 2458849.5
 
     def to_keplerian(self):
         x = icrs_to_horizons_ecliptic(self.x)

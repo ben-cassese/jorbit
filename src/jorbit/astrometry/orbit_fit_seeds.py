@@ -62,8 +62,8 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
         return 8 * r**7 + 6 * a * r**5 + 3 * b * r**2
 
     # Initial guess
-    r2 = 3.0
-    for _ in range(10):  # Usually converges in fewer iterations
+    r2 = 100.0
+    for _ in range(100):
         f = polynomial(r2)
         f_prime = polynomial_derivative(r2)
         delta = f / f_prime
@@ -122,8 +122,8 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     v1 = fdot21 * r[1] + gdot21 * v2
 
     return CartesianState(
-        x=r[0],
-        v=v1,
+        x=jnp.array([r[0]]),
+        v=jnp.array([v1]),
         time=obs.times[0],
     )
 
@@ -152,12 +152,12 @@ def simple_circular(ra, dec, semi, time):
     omega = jnp.array([0.0])
 
     k = KeplerianState(
-        semi=a,
-        ecc=ecc,
-        nu=nu,
-        inc=inc,
-        Omega=Omega,
-        omega=omega,
+        semi=jnp.array([a]),
+        ecc=jnp.array([ecc]),
+        nu=jnp.array([nu]),
+        inc=jnp.array([inc]),
+        Omega=jnp.array([Omega]),
+        omega=jnp.array([omega]),
         time=time,
     )
     c = k.to_cartesian()
