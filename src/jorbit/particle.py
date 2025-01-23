@@ -288,7 +288,10 @@ class Particle:
         return positions[0], velocities[0]
 
     def ephemeris(self, times, observer, state=None):
-        observer_positions = get_observer_positions(times, observer)
+        if isinstance(observer, str):
+            observer_positions = get_observer_positions(times, observer)
+        else:
+            observer_positions = observer
 
         if state is None:
             state = self._cartesian_state
