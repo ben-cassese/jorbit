@@ -12,8 +12,8 @@ from jorbit.utils.horizons import get_observer_positions
 
 # get the positions of the geocenter from 20 years ago to 20 years in the future
 t0 = Time("2020-01-01")
-forward_times = t0 + jnp.arange(0, 20.001, 1 * u.hour.to(u.year)) * u.year
-reverse_times = t0 - jnp.arange(0, 20.001, 1 * u.hour.to(u.year)) * u.year
+forward_times = t0 + jnp.arange(0, 20.001, 10 * u.hour.to(u.year)) * u.year
+reverse_times = t0 - jnp.arange(0, 20.001, 10 * u.hour.to(u.year)) * u.year
 
 chunk_size = 10_000
 forward_pos = []
@@ -49,7 +49,7 @@ progress_bar = tqdm(
 )
 
 with open("MPCORB.DAT", "wb") as f:
-    chunk_size = 1024 * 1024  # 1 MB chunks
+    chunk_size = 1024 * 1024  # 1 MiB chunks
     for chunk in response.iter_content(chunk_size=chunk_size):
         f.write(chunk)
         progress_bar.update(len(chunk))  # Update progress bar by chunk size
