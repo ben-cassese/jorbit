@@ -19,5 +19,7 @@ docs/_build/
 
 *.DS_Store
 
-*.DAT
-*.db
+**/mpchecker/*.DAT
+**/mpchecker/*.db
+**/mpchecker/*.npy
+*slurm*
