@@ -40,6 +40,14 @@ def generate_ephem(particle_name, chunk_size, degree):
     print("horizons vectors acquired")
     x0 = jnp.array([vecs["x"], vecs["y"], vecs["z"]]).T[0]
     v0 = jnp.array([vecs["vx"], vecs["vy"], vecs["vz"]]).T[0]
+
+    # since we're running this for every sso, it's trying to cache way too many files
+    # in our home directory for the cluster to be happy with
+    try:  # noqa: SIM105
+        Horizons.clear_cache()
+    except Exception:
+        pass
+
     print("creating particle")
     particle = Particle(x=x0, v=v0, time=t0, gravity="newtonian solar system")
 
