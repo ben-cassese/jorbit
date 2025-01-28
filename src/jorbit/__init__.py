@@ -8,11 +8,11 @@ from jorbit.data.constants import (
     DEFAULT_ASTEROID_EPHEMERIS_URL,
     DEFAULT_PLANET_EPHEMERIS_URL,
 )
+from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.observation import Observations
 from jorbit.particle import Particle
-from jorbit.system import System
 
-__all__ = ["Observations", "Particle", "System"]
+__all__ = ["Ephemeris", "Observations", "Particle", "System"]
 
 
 if (not is_url_in_cache(DEFAULT_PLANET_EPHEMERIS_URL)) or (

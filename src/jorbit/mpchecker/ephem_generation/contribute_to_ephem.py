@@ -20,7 +20,7 @@ from jorbit import Particle
 def generate_ephem(particle_name, chunk_size, degree):
     # chunk size in days
     print(f"beginning for {particle_name}")
-    for _i in range(5):
+    for _i in range(20):
         try:
             obj = Horizons(
                 id=particle_name,
@@ -30,12 +30,21 @@ def generate_ephem(particle_name, chunk_size, degree):
             )
             vecs = obj.vectors(refplane="earth")
             break
+        except ValueError as e:
+            if ("Unknown target" in str(e)) or (
+                "Horizons Error: No ephemeris for target" in str(e)
+            ):
+                print(f"target {particle_name} is not in Horizons")
+                file_name = TEMP_DB.replace(".db", "_not_in_horizons.txt")
+                with open(file_name, "a") as f:
+                    f.write(f"{particle_name}\n")
+            raise
         except Exception as e:
             print(f"error getting vectors for {particle_name}, retrying")
-            if _i == 4:
-                print(f"failed to get vectors for {particle_name}")
+            if _i == 19:
+                print(f"failed to get vectors for {particle_name}\n*****\n\n")
                 raise e
-            time.sleep(2 + np.random.uniform(0, 1))
+            time.sleep(2 * _i + np.random.uniform(0, 10))
             pass
     print("horizons vectors acquired")
     x0 = jnp.array([vecs["x"], vecs["y"], vecs["z"]]).T[0]
@@ -192,8 +201,8 @@ def setup_db():
         )
 
 
-def contribute_to_ephem(line_start, line_stop):
-    with open("MPCORB.DAT") as f:
+def contribute_to_ephem(line_start, line_stop, target_file="MPCORB.DAT"):
+    with open(target_file) as f:
         lines = f.readlines()[line_start : line_stop + 1]
 
     targets = [line.split()[0] for line in lines]
@@ -219,6 +228,7 @@ def contribute_to_ephem(line_start, line_stop):
         "00107",
         "00511",
         "00704",
+        "134340",  # Pluto- forgot he's also an id_type=smallbody in Horizons
     ]
     targets = [target for target in targets if target not in forbidden_targets]
 
@@ -245,17 +255,13 @@ def contribute_to_ephem(line_start, line_stop):
 
 line_start, line_stop = int(sys.argv[1]), int(sys.argv[2])
 
-# this is silly, but all of the jobs writing to the same database simultaneously
-# made it infeasibly slow. so, write each job to its own database and then merge them
-# probably don't need to check for existing records anymore, kinda a bummer if
-# restarting the array
 print("setting up database")
 arr_id = os.environ.get("SLURM_ARRAY_TASK_ID", "ARRAY_ID_NOT_FOUND")
 job_id = os.environ.get("SLURM_JOB_ID", "JOB_ID_NOT_FOUND")
 if arr_id == "ARRAY_ID_NOT_FOUND" or job_id == "JOB_ID_NOT_FOUND":
     raise ValueError("SLURM environment variables not found")
 
-TEMP_DB = f"db_results/temp_results_{arr_id}_{job_id}.db"
+TEMP_DB = f"db_results/FINAL_temp_results_{arr_id}_{job_id}.db"
 
 setup_db()
 
@@ -266,4 +272,4 @@ forward_times = t0 + jnp.arange(0, 20.001, 10 * u.hour.to(u.year)) * u.year
 forward_pos = jnp.load("forward_pos.npy")
 
 print("beginning integrations")
-contribute_to_ephem(line_start, line_stop)
+contribute_to_ephem(line_start, line_stop, target_file="missed_targets.DAT")

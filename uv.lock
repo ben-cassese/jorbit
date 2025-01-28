@@ -497,6 +497,18 @@ wheels = [
 ]
 
 [[package]]
+name = "corner"
+version = "2.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/61/2d728798e9ae3bf899d962f77486cb29888d57f6fbf9561bc1435a6b1a74/corner-2.2.3.tar.gz", hash = "sha256:471b7b63395d8f1dee176bb779348ade38d56abd23404a48802a593607745e1c", size = 5932840 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/4a/5bd0a8b981c5a93153d9eb7c63143b407cc7f8dfc9f91eedc9b6f5289eca/corner-2.2.3-py3-none-any.whl", hash = "sha256:39674b223482456c3a78234dc7bdefd21188a2d47bb8cd468104a0501f6659ec", size = 15946 },
+]
+
+[[package]]
 name = "coverage"
 version = "7.6.10"
 source = { registry = "https://pypi.org/simple" }
@@ -653,18 +665,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ae/ed/aefcc8cd0ba62a0560c3c18c33925362d46c6075480bfa4df87b28e169a9/docutils-0.21.2.tar.gz", hash = "sha256:3a6b18732edf182daa3cd12775bbb338cf5691468f91eeeb109deff6ebfa986f", size = 2204444 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/d7/9322c609343d929e75e7e5e6255e614fcc67572cfd083959cdef3b7aad79/docutils-0.21.2-py3-none-any.whl", hash = "sha256:dafca5b9e384f0e419294eb4d2ff9fa826435bf15f15b7bd45723e8ad76811b2", size = 587408 },
-]
-
-[[package]]
-name = "emcee"
-version = "3.1.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/53/1045ee878cb24281387079f8ee4f0ade1622c6aae1ed1fd91a53e4fa5b19/emcee-3.1.6.tar.gz", hash = "sha256:11af4daf6ab8f9ca69681e3c29054665db7bbd87fd4eb8e437d2c3a1248c637d", size = 2871117 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/ef/2196b9bf88ffa1bde45853c72df021fbd07a8fa91a0f59a22d14a050dc04/emcee-3.1.6-py2.py3-none-any.whl", hash = "sha256:f2d63752023bdccf744461450e512a5b417ae7d28f18e12acd76a33de87580cb", size = 47351 },
 ]
 
 [[package]]
@@ -985,7 +985,6 @@ dependencies = [
     { name = "astropy" },
     { name = "astroquery" },
     { name = "chex" },
-    { name = "emcee" },
     { name = "jax" },
     { name = "jplephem" },
     { name = "mpmath" },
@@ -997,6 +996,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "black", extra = ["jupyter"] },
+    { name = "corner" },
     { name = "ipykernel" },
     { name = "matplotlib" },
     { name = "myst-parser" },
@@ -1022,7 +1022,6 @@ requires-dist = [
     { name = "astropy", specifier = ">=6.1.6" },
     { name = "astroquery", specifier = ">=0.4.7" },
     { name = "chex", specifier = ">=0.1.88" },
-    { name = "emcee", specifier = ">=3.1.6" },
     { name = "jax", specifier = ">=0.4.35" },
     { name = "jplephem", specifier = ">=2.22" },
     { name = "mpmath", specifier = ">=1.3.0" },
@@ -1034,6 +1033,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "black", extras = ["jupyter"], specifier = ">=24.10.0" },
+    { name = "corner", specifier = ">=2.2.3" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "myst-parser", specifier = ">=4.0.0" },

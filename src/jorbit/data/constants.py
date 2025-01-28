@@ -29,6 +29,10 @@ HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
 
 EPSILON = jnp.array(jnp.finfo(jnp.float64).eps)
 
+JORBIT_EPHEM_URL_BASE = (
+    "https://huggingface.co/datasets/jorbit/jorbit_mpchecker/resolve/main/"
+)
+
 ################################################################################
 # Ephemeris constants
 ################################################################################

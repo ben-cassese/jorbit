@@ -7,8 +7,6 @@ import astropy.units as u
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
-from emcee import EnsembleSampler
-from emcee.autocorr import AutocorrError
 from scipy.optimize import minimize
 
 from jorbit.accelerations import (
@@ -369,86 +367,125 @@ class Particle:
         else:
             raise ValueError("Failed to converge")
 
-    def fit_mcmc(
-        self,
-        max_likelihood_position,
-        n_walkers=32,
-        n_steps=1000,
-        n_burn_steps="auto",
-        thin="auto",
-        flat=True,
-        verbose=True,
-    ):
-        # get the initial flattened vector
-        tmp = max_likelihood_position.to_cartesian()
-        x0_vec = jnp.concatenate([tmp.x.flatten(), tmp.v.flatten()])
+    # def fit_mcmc(
+    #     self,
+    #     max_likelihood_position,
+    #     enforce_bounded_orbit=True,
+    #     n_walkers=32,
+    #     n_steps=1000,
+    #     n_burn_steps="auto",
+    #     thin="auto",
+    #     flat=True,
+    #     verbose=True,
+    # ):
+    #     # get the initial flattened vector
+    #     tmp = max_likelihood_position.to_keplerian()
+    #     x0_vec = jnp.concatenate([
+    #         tmp.semi.flatten(),
+    #         tmp.ecc.flatten(),
+    #         tmp.inc.flatten(),
+    #         tmp.Omega.flatten(),
+    #         tmp.omega.flatten(),
+    #         tmp.nu.flatten(),
+    #     ])
+    #     # # save the scale of each parameter- we'll rescale the samples back to this
+    #     # # at the end, but work in a space near all 1s
+    #     # parameter_scales = x0_vec
 
-        # save the scale of each parameter- we'll rescale the samples back to this
-        # at the end, but work in a space near all 1s
-        parameter_scales = x0_vec
+    #     # # set up the initial walker positions, small normal ball around max likelihood
+    #     # x0 = jnp.ones((n_walkers, len(x0_vec)))
+    #     x0 = jnp.tile(x0_vec, (n_walkers, 1))
+    #     # x0 = x0 + jax.random.normal(jax.random.PRNGKey(0), x0.shape) * 1e-5
+    #     grads = -self.scipy_objective_grad(x0_vec)
+    #     return x0, grads
 
-        # set up the initial walker positions, small normal ball around max likelihood
-        x0 = jnp.ones((n_walkers, len(x0_vec)))
-        x0 = x0 + jax.random.normal(jax.random.PRNGKey(0), x0.shape) * 0.01
+    #     def bounded_orbit_prior(x):
+    #         # c = CartesianState(
+    #         #     x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+    #         # )
+    #         # if c.to_keplerian().ecc >= 1-1e-3:
+    #         if x[1] >= 1-1e-3:
+    #             return -jnp.inf
+    #         return 0
 
-        # set up the sampler
-        sampler = EnsembleSampler(
-            n_walkers,
-            len(x0_vec),
-            lambda x: -self.scipy_objective(
-                x * parameter_scales
-            ),  # the objective is negative loglike
-            # moves=[StretchMove],
-        )
+    #     prior = bounded_orbit_prior if enforce_bounded_orbit else lambda x: 0
 
-        # return x0
+    #     def emcee_loglike(x):
+    #         # x = x * parameter_scales
+    #         p = prior(x)
+    #         if not jnp.isfinite(p):
+    #             return -jnp.inf
+    #         # c = CartesianState(
+    #         #     x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+    #         # )
+    #         c = KeplerianState(
+    #             semi=jnp.array([x[0]]),
+    #             ecc=jnp.array([x[1]]),
+    #             inc=jnp.array([x[2]]),
+    #             Omega=jnp.array([x[3]]),
+    #             omega=jnp.array([x[4]]),
+    #             nu=jnp.array([x[5]]),
+    #             time=self._time,
+    #         )
+    #         return self.loglike(c) + p
 
-        # run the sampler
-        sampler.run_mcmc(x0, n_steps, progress=verbose)
+    #     # set up the sampler
+    #     sampler = EnsembleSampler(
+    #         n_walkers,
+    #         len(x0_vec),
+    #         lambda x: emcee_loglike(x),
+    #         # moves=[StretchMove],
+    #     )
 
-        # post-process the chains
-        x = sampler.get_chain()
+    #     # run the sampler
+    #     sampler.run_mcmc(x0, n_steps, progress=verbose)
 
-        if n_burn_steps == "auto":
-            # find the point where each chain first crosses its median value
-            medians = jnp.median(x, axis=0)
-            above_median = x > medians[None, ...]
-            crossings = above_median[:-1] != above_median[1:]
-            first_med_crossings = jnp.argmax(crossings, axis=0)
+    #     # return sampler, parameter_scales, prior, x0
+    #     return sampler, prior, x0
 
-            # nan out the everything before the first crossings:
-            mask = (
-                jnp.arange(x.shape[0])[:, None, None] > first_med_crossings[None, ...]
-            )
-            x = jnp.where(mask, x, jnp.nan)
-        else:
-            x = x[n_burn_steps:]
+    #     # post-process the chains
+    #     x = sampler.get_chain()
 
-        if thin == "auto":
-            try:
-                tau = sampler.get_autocorr_time()
-                thin = int(jnp.ceil(2 * tau.max()))
-            except AutocorrError:
-                warnings.warn(
-                    "emcee could not compute the autocorrelation time, chain is likely too short. Proceeding without any thinning.",
-                    stacklevel=2,
-                )
-                thin = 1
+    #     if n_burn_steps == "auto":
+    #         # find the point where each chain first crosses its median value
+    #         medians = jnp.median(x, axis=0)
+    #         above_median = x > medians[None, ...]
+    #         crossings = above_median[:-1] != above_median[1:]
+    #         first_med_crossings = jnp.argmax(crossings, axis=0)
 
-        # thin the chain
-        x = x[::thin]
+    #         # nan out the everything before the first crossings:
+    #         mask = (
+    #             jnp.arange(x.shape[0])[:, None, None] > first_med_crossings[None, ...]
+    #         )
+    #         x = jnp.where(mask, x, jnp.nan)
+    #     else:
+    #         x = x[n_burn_steps:]
 
-        # rescale the samples back to the original scale
-        x = x * parameter_scales
+    #     if thin == "auto":
+    #         try:
+    #             tau = sampler.get_autocorr_time()
+    #             thin = int(jnp.ceil(2 * tau.max()))
+    #         except AutocorrError:
+    #             warnings.warn(
+    #                 "emcee could not compute the autocorrelation time, chain is likely too short. Proceeding without any thinning.",
+    #                 stacklevel=2,
+    #             )
+    #             thin = 1
 
-        # flatten the chain
-        if flat:
-            x = x.reshape(-1, x.shape[-1])
+    #     # thin the chain
+    #     x = x[::thin]
 
-        # get rid of the nans
-        x = x[~jnp.isnan(x).any(axis=-1)]
+    #     # rescale the samples back to the original scale
+    #     x = x * parameter_scales
 
-        return x
+    #     # flatten the chain
+    #     if flat:
+    #         x = x.reshape(-1, x.shape[-1])
+
+    #     # get rid of the nans
+    #     x = x[~jnp.isnan(x).any(axis=-1)]
+
+    #     return x
 
     def fit(self):
         pass
