@@ -380,14 +380,16 @@ class Particle:
     # ):
     #     # get the initial flattened vector
     #     tmp = max_likelihood_position.to_keplerian()
-    #     x0_vec = jnp.concatenate([
-    #         tmp.semi.flatten(),
-    #         tmp.ecc.flatten(),
-    #         tmp.inc.flatten(),
-    #         tmp.Omega.flatten(),
-    #         tmp.omega.flatten(),
-    #         tmp.nu.flatten(),
-    #     ])
+    #     x0_vec = jnp.concatenate(
+    #         [
+    #             tmp.semi.flatten(),
+    #             tmp.ecc.flatten(),
+    #             tmp.inc.flatten(),
+    #             tmp.Omega.flatten(),
+    #             tmp.omega.flatten(),
+    #             tmp.nu.flatten(),
+    #         ]
+    #     )
     #     # # save the scale of each parameter- we'll rescale the samples back to this
     #     # # at the end, but work in a space near all 1s
     #     # parameter_scales = x0_vec
@@ -404,7 +406,7 @@ class Particle:
     #         #     x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
     #         # )
     #         # if c.to_keplerian().ecc >= 1-1e-3:
-    #         if x[1] >= 1-1e-3:
+    #         if x[1] >= 1 - 1e-3:
     #             return -jnp.inf
     #         return 0
 
