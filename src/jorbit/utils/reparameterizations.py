@@ -83,21 +83,29 @@ def unit_cube_to_orbital_elements(u, a_low, a_high, uniform_inc):
     i = 2 * jnp.arcsin(_r)
     Omega = jnp.arctan2(q, p) + jnp.pi
 
-    a = u[4] * (a_high - a_low) + a_low
-
-    _r, _theta = square_to_unit_disk(u[5], u[6])
+    _r, _theta = square_to_unit_disk(u[4], u[5])
+    a = jnp.exp(jnp.log(a_low) + (jnp.log(a_high) - jnp.log(a_low)) * _r**2)
     lamb = _theta
     lamb = jnp.where(lamb < 0, lamb + 2 * jnp.pi, lamb)
     M = lamb - omega - Omega
     M = jnp.where(M < 0, M + 2 * jnp.pi, M)
     f = kepler(M, e)
 
-    return jnp.array([a, e, i, Omega, omega, f, _r])
+    return jnp.array(
+        [
+            a,
+            e,
+            i,
+            Omega,
+            omega,
+            f,
+        ]
+    )
 
 
 @partial(jax.jit, static_argnums=(3))
 def orbital_elements_to_unit_cube(orb, a_low, a_high, uniform_inc):
-    a, e, i, Omega, omega, f, r3 = orb
+    a, e, i, Omega, omega, f = orb
 
     theta1 = 3 * jnp.pi / 2 - omega
     theta1 = jnp.where(theta1 < 0, theta1 + 2 * jnp.pi, theta1)
@@ -111,12 +119,14 @@ def orbital_elements_to_unit_cube(orb, a_low, a_high, uniform_inc):
     theta2 = jnp.where(theta2 < 0, theta2 + 2 * jnp.pi, theta2)
     u2, u3 = unit_disk_to_square(r2, theta2)
 
-    u4 = (a - a_low) / (a_high - a_low)
+    # u4 = (a - a_low) / (a_high - a_low)
+    r3 = (jnp.log(a) - jnp.log(a_low)) / (jnp.log(a_high) - jnp.log(a_low))
+    r3 = jnp.sqrt(r3)
 
     M = M_from_f(f, e)  # This function must be provided.
     lamb = M + omega + Omega
     lamb = jnp.where(lamb < 0, lamb + 2 * jnp.pi, lamb)
     lamb = jnp.mod(lamb, 2 * jnp.pi)
-    u5, u6 = unit_disk_to_square(r3, lamb)
+    u4, u5 = unit_disk_to_square(r3, lamb)
 
-    return jnp.array([u0, u1, u2, u3, u4, u5, u6])
+    return jnp.array([u0, u1, u2, u3, u4, u5])
