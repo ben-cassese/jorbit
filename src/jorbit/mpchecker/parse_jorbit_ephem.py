@@ -5,9 +5,12 @@ warnings.filterwarnings("ignore", module="erfa")
 import jax
 
 jax.config.update("jax_enable_x64", True)
+
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
+import polars as pl
 from astropy.table import Table
 from astropy.time import Time
 from astropy.utils.data import download_file, is_url_in_cache
@@ -88,6 +91,44 @@ def setup_checks(coordinate, time, radius):
     return coordinate, radius, t0, tf, chunk_size, names
 
 
+def load_mpcorb():
+    column_spans = {
+        "Packed designation": (0, 7),
+        "H": (8, 13),
+        "G": (14, 19),
+        "Epoch": (20, 25),
+        "M": (26, 36),
+        "Peri": (37, 47),
+        "Node": (48, 58),
+        "Incl.": (59, 69),
+        "e": (70, 79),
+        "n": (80, 91),
+        "a": (92, 104),
+        "U": (105, 106),
+        "Reference": (107, 116),
+        "#Obs": (117, 122),
+        "#Opp": (123, 126),
+        "Arc": (127, 136),
+        "rms": (137, 141),
+        "Coarse Perts": (142, 145),
+        "Precise Perts": (146, 149),
+        "Computer": (150, 160),
+        "Flags": (161, 165),
+        "Unpacked Name": (166, 193),
+        "last obs": (194, 201),
+    }
+
+    col_names = list(column_spans.keys())
+    col_widths = [end - start + 1 for start, end in column_spans.values()]
+
+    file_path = download_file(JORBIT_EPHEM_URL_BASE + "MPCORB.DAT", cache=True)
+    df = pd.read_fwf(
+        file_path, widths=col_widths, names=col_names, dtype=str, skiprows=43
+    )
+    df = pl.DataFrame(df)
+    return df
+
+
 def mpchecker(coordinate, time, radius=20 * u.arcmin, chunk_coefficients=None):
 
     coordinate, radius, t0, tf, chunk_size, names = setup_checks(
@@ -138,33 +179,97 @@ def mpchecker(coordinate, time, radius=20 * u.arcmin, chunk_coefficients=None):
     return t
 
 
-def nearest_asteroid(coordinate, times):
+def nearest_asteroid_helper(coordinate, times):
 
     coordinate, _, t0, tf, chunk_size, names = setup_checks(
         coordinate, times, radius=0 * u.arcsec
     )
+    indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, None, None, None))(
+        times.tdb.jd, t0, tf, chunk_size
+    )
+    unique_indices = jnp.unique(indices)
+
+    if len(unique_indices) > 2:
+        warnings.warn(
+            f"Requested times span {len(unique_indices)} chunks of the jorbit ephemeris. "
+            "Beware of memory issues, as each chunk is ~250 MB and all will be  "
+            "downloaded, cached, and loaded into memory. ",
+            stacklevel=2,
+        )
+
+    coeffs = []
+    for ind in unique_indices:
+        chunk = jnp.load(
+            download_file(JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy")
+        )
+        coeffs.append(chunk)
+
+    coeffs = jnp.array(coeffs)
+    return (coordinate, _, t0, tf, chunk_size, names), coeffs
+
+
+def nearest_asteroid(coordinate, times, precomputed=None):
+
+    if precomputed is None:
+        coordinate, _, t0, tf, chunk_size, names = setup_checks(
+            coordinate, times, radius=0 * u.arcsec
+        )
+    else:
+        coordinate, _, t0, tf, chunk_size, names = precomputed[0]
 
     indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, None, None, None))(
         times.tdb.jd, t0, tf, chunk_size
     )
-
     unique_indices = jnp.unique(indices)
-    separations = np.zeros(len(times))
-    for ind in unique_indices:
-        coefficients = jnp.load(
-            download_file(JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy")
+
+    if (len(unique_indices) > 2) and (precomputed is None):
+        warnings.warn(
+            f"Requested times span {len(unique_indices)} chunks of the jorbit "
+            "ephemeris, each of which is ~250MB. Although only one of these will be "
+            "loaded into memory at a time, beware that all will be downloaded "
+            "and cached. ",
+            stacklevel=2,
         )
+    if precomputed is not None:
+        coefficients = precomputed[1]
+        assert len(coefficients) == len(unique_indices), (
+            "The number of ephemeris chunk coefficients provided does not match the "
+            "number of unique chunks implied by the requested times."
+        )
+    else:
+        coefficients = None
+
+    separations = np.zeros(len(times))
+    for i, ind in enumerate(unique_indices):
+        if coefficients is None:
+            chunk_coefficients = jnp.load(
+                download_file(
+                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
+                )
+            )
+        else:
+            chunk_coefficients = coefficients[i]
+
+        # do an initial calculation of *all* asteroids
+        mid_ind = (len(offsets[indices == ind]) - 1) // 2
+        offset = offsets[indices == ind][mid_ind]
+        ras, decs = multiple_states(chunk_coefficients, offset, t0, chunk_size)
+        seps = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
+            ras, decs, coordinate.ra.rad, coordinate.dec.rad
+        )
+        mask = seps < 108000.0  # 30 degrees
+        smol_coefficients = chunk_coefficients[mask]
 
         def scan_func(carry, scan_over):
-            coefficients = carry
+            coeffs = carry
             offset = scan_over
-            ras, decs = multiple_states(coefficients, offset, t0, chunk_size)
+            ras, decs = multiple_states(coeffs, offset, t0, chunk_size)
             seps = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
                 ras, decs, coordinate.ra.rad, coordinate.dec.rad
             )
-            return coefficients, jnp.min(seps)
+            return coeffs, jnp.min(seps)
 
-        _, seps = jax.lax.scan(scan_func, coefficients, offsets[indices == ind])
+        _, seps = jax.lax.scan(scan_func, smol_coefficients, offsets[indices == ind])
 
         separations[indices == ind] = seps
 
