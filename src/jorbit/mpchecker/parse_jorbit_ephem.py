@@ -9,13 +9,10 @@ jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
-import pandas as pd
 import polars as pl
-from astropy.table import Table
 from astropy.time import Time
-from astropy.utils.data import download_file, is_url_in_cache
+from astropy.utils.data import download_file
 
-from jorbit.astrometry.sky_projection import sky_sep
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 
 
@@ -86,97 +83,14 @@ def setup_checks(coordinate, time, radius):
     chunk_size = 30
 
     # get the names of all particles- this file is < 40 MB
-    names = np.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy"))
+    names = np.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy", cache=True))
 
     return coordinate, radius, t0, tf, chunk_size, names
 
 
 def load_mpcorb():
-    column_spans = {
-        "Packed designation": (0, 7),
-        "H": (8, 13),
-        "G": (14, 19),
-        "Epoch": (20, 25),
-        "M": (26, 36),
-        "Peri": (37, 47),
-        "Node": (48, 58),
-        "Incl.": (59, 69),
-        "e": (70, 79),
-        "n": (80, 91),
-        "a": (92, 104),
-        "U": (105, 106),
-        "Reference": (107, 116),
-        "#Obs": (117, 122),
-        "#Opp": (123, 126),
-        "Arc": (127, 136),
-        "rms": (137, 141),
-        "Coarse Perts": (142, 145),
-        "Precise Perts": (146, 149),
-        "Computer": (150, 160),
-        "Flags": (161, 165),
-        "Unpacked Name": (166, 193),
-        "last obs": (194, 201),
-    }
-
-    col_names = list(column_spans.keys())
-    col_widths = [end - start + 1 for start, end in column_spans.values()]
-
-    file_path = download_file(JORBIT_EPHEM_URL_BASE + "MPCORB.DAT", cache=True)
-    df = pd.read_fwf(
-        file_path, widths=col_widths, names=col_names, dtype=str, skiprows=43
-    )
-    df = pl.DataFrame(df)
+    df = pl.read_ipc(download_file(JORBIT_EPHEM_URL_BASE + "mpcorb.arrow", cache=True))
     return df
-
-
-def mpchecker(coordinate, time, radius=20 * u.arcmin, chunk_coefficients=None):
-
-    coordinate, radius, t0, tf, chunk_size, names = setup_checks(
-        coordinate, time, radius
-    )
-
-    index, offset = get_chunk_index(time.tdb.jd, t0, tf, chunk_size)
-
-    # figure out what chunk you're in
-    if chunk_coefficients is None:
-        file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
-        if not is_url_in_cache(file_name):
-            warnings.warn(
-                "The requested time falls in an ephemeris chunk that is not found in "
-                "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
-                "system memory constraints if checking many well-separated times.",
-                stacklevel=2,
-            )
-        file_name = download_file(file_name, cache=True)
-        coefficients = jnp.load(file_name)
-
-    # get the ra and dec of every minor planet (!)
-    ras, decs = multiple_states(coefficients, offset, t0, chunk_size)
-
-    # get the separation in arcsec
-    separations = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
-        ras, decs, coordinate.ra.rad, coordinate.dec.rad
-    )
-
-    # filter down to just those within the radius
-    mask = separations < radius
-    names = names[mask]
-    ras = ras[mask]
-    decs = decs[mask]
-    separations = separations[mask]
-
-    order = np.argsort(separations)
-    names = names[order]
-    ras = ras[order]
-    decs = decs[order]
-    separations = separations[order]
-
-    t = Table(
-        [names, separations, ras * u.rad.to(u.deg), decs * u.rad.to(u.deg)],
-        names=["name", "separation", "ra", "dec"],
-        units=[None, u.arcsec, u.deg, u.deg],
-    )
-    return t
 
 
 def nearest_asteroid_helper(coordinate, times):
@@ -200,7 +114,10 @@ def nearest_asteroid_helper(coordinate, times):
     coeffs = []
     for ind in unique_indices:
         chunk = jnp.load(
-            download_file(JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy")
+            download_file(
+                JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy",
+                cache=True,
+            )
         )
         coeffs.append(chunk)
 
@@ -208,69 +125,92 @@ def nearest_asteroid_helper(coordinate, times):
     return (coordinate, _, t0, tf, chunk_size, names), coeffs
 
 
-def nearest_asteroid(coordinate, times, precomputed=None):
+def unpacked_to_packed_designation(number_str):
+    # If it's a provisional designation (7 characters), return as is
+    if len(number_str) == 7:
+        return number_str
 
-    if precomputed is None:
-        coordinate, _, t0, tf, chunk_size, names = setup_checks(
-            coordinate, times, radius=0 * u.arcsec
-        )
-    else:
-        coordinate, _, t0, tf, chunk_size, names = precomputed[0]
+    # Convert to integer for numerical comparisons
+    num = int(number_str)
 
-    indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, None, None, None))(
-        times.tdb.jd, t0, tf, chunk_size
-    )
-    unique_indices = jnp.unique(indices)
+    # Low numbers (purely numeric) - return as is
+    if num < 100000:
+        return number_str
 
-    if (len(unique_indices) > 2) and (precomputed is None):
-        warnings.warn(
-            f"Requested times span {len(unique_indices)} chunks of the jorbit "
-            "ephemeris, each of which is ~250MB. Although only one of these will be "
-            "loaded into memory at a time, beware that all will be downloaded "
-            "and cached. ",
-            stacklevel=2,
-        )
-    if precomputed is not None:
-        coefficients = precomputed[1]
-        assert len(coefficients) == len(unique_indices), (
-            "The number of ephemeris chunk coefficients provided does not match the "
-            "number of unique chunks implied by the requested times."
-        )
-    else:
-        coefficients = None
+    # Medium numbers (10000-619999) - convert to letter + 4 digits
+    if num < 620000:
+        # Calculate the letter prefix and remaining digits
+        prefix_num = num // 10000
+        remaining = num % 10000
 
-    separations = np.zeros(len(times))
-    for i, ind in enumerate(unique_indices):
-        if coefficients is None:
-            chunk_coefficients = jnp.load(
-                download_file(
-                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
-                )
-            )
+        # Convert prefix number to letter (matching the original letter_to_number function)
+        if prefix_num >= 36:  # a-z for 36+
+            prefix = chr(ord("a") + (prefix_num - 36))
+        else:  # A-Z for 10-35
+            prefix = chr(ord("A") + (prefix_num - 10))
+
+        # Format the remaining digits with leading zeros
+        return f"{prefix}{remaining:04d}"
+
+    # High numbers (620000+) - convert to tilde + base62
+    def decimal_to_base62(n):
+        """Convert decimal number to base62 string."""
+        chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        if n == 0:
+            return "0"
+
+        result = ""
+        while n > 0:
+            n, remainder = divmod(n, 62)
+            result = chars[remainder] + result
+        return result
+
+    # Subtract the offset and convert to base62
+    base62_num = decimal_to_base62(num - 620000)
+    # Pad to ensure total length of 5 characters (including the tilde)
+    return f"~{base62_num:0>4}"
+
+
+def packed_to_unpacked_designation(code):
+
+    # if it's a provisional designation, just return it
+    if len(code) == 7:
+        return code
+
+    # if it's a numbered object, it could be written 3 forms:
+
+    # low numbered objects are just numbers
+    if code.isdigit():
+        return code
+
+    # medium-numbered objects are a letter followed by 4 digits
+    def letter_to_number(char):
+        if char.isupper():
+            return ord(char) - ord("A") + 10
         else:
-            chunk_coefficients = coefficients[i]
+            return ord(char) - ord("a") + 36
 
-        # do an initial calculation of *all* asteroids
-        mid_ind = (len(offsets[indices == ind]) - 1) // 2
-        offset = offsets[indices == ind][mid_ind]
-        ras, decs = multiple_states(chunk_coefficients, offset, t0, chunk_size)
-        seps = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
-            ras, decs, coordinate.ra.rad, coordinate.dec.rad
-        )
-        mask = seps < 108000.0  # 30 degrees
-        smol_coefficients = chunk_coefficients[mask]
+    if code[0].isalpha() and code[1:].isdigit():
+        prefix_value = letter_to_number(code[0])
+        num = (prefix_value * 10000) + int(code[1:])
+        return str(num)
 
-        def scan_func(carry, scan_over):
-            coeffs = carry
-            offset = scan_over
-            ras, decs = multiple_states(coeffs, offset, t0, chunk_size)
-            seps = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
-                ras, decs, coordinate.ra.rad, coordinate.dec.rad
-            )
-            return coeffs, jnp.min(seps)
+    # high-numbered objects are a tilde followed by a base-62 number
+    def base62_to_decimal(char):
+        if char.isdigit():
+            return int(char)
+        elif char.isupper():
+            return ord(char) - ord("A") + 10
+        else:
+            return ord(char) - ord("a") + 36
 
-        _, seps = jax.lax.scan(scan_func, smol_coefficients, offsets[indices == ind])
+    if code.startswith("~"):
+        # Convert each character to its decimal value and calculate total
+        total = 0
+        for position, char in enumerate(reversed(code[1:])):
+            decimal_value = base62_to_decimal(char)
+            total += decimal_value * (62**position)
+        num = total + 620000
+        return str(num)
 
-        separations[indices == ind] = seps
-
-    return separations
+    raise ValueError(f"Invalid MPC code format: {code}")
