@@ -12,6 +12,7 @@ from jorbit.data.constants import (
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.observation import Observations
 from jorbit.particle import Particle
+from jorbit.system import System
 
 __all__ = ["Ephemeris", "Observations", "Particle", "System"]
 

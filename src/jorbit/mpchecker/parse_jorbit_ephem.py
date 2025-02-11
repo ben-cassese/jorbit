@@ -10,10 +10,15 @@ import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
+from astropy.table import Table
 from astropy.time import Time
 from astropy.utils.data import download_file
 
+from jorbit import System
+from jorbit.astrometry.sky_projection import sky_sep
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
+from jorbit.utils.horizons import get_observer_positions
+from jorbit.utils.states import SystemState
 
 
 @jax.jit
@@ -214,3 +219,109 @@ def packed_to_unpacked_designation(code):
         return str(num)
 
     raise ValueError(f"Invalid MPC code format: {code}")
+
+
+@jax.jit
+def apparent_mag(h, g, target_position, observer_position):
+    # APmag= H + 5*log10(delta) + 5*log10(r) -2.5*log10((1-G)*phi1 + G*phi2)
+
+    delta_vec = target_position - observer_position
+    cos_phase = jnp.dot(target_position, delta_vec) / (
+        jnp.linalg.norm(target_position) * jnp.linalg.norm(delta_vec)
+    )
+    cos_phase = jnp.clip(cos_phase, -1.0, 1.0)
+    phase_angle = jnp.arccos(cos_phase)
+
+    tan_half_alpha = jnp.tan(phase_angle / 2)
+    phi1 = jnp.exp(-3.33 * tan_half_alpha**0.63)
+    phi2 = jnp.exp(-1.87 * tan_half_alpha**1.22)
+    phase_function = -2.5 * jnp.log10((1 - g) * phi1 + g * phi2)
+
+    r = jnp.linalg.norm(target_position)
+    delta = jnp.linalg.norm(delta_vec)
+    return h + 5 * jnp.log10(r * delta) + phase_function
+
+
+def extra_precision_calcs(
+    asteroid_flags, times, radius, observer, coordinate, relevant_mpcorb
+):
+    x0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "x0.npy", cache=True))
+    x0 = x0[asteroid_flags]
+    v0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "v0.npy", cache=True))
+    v0 = v0[asteroid_flags]
+
+    if observer == "geocentric":
+        observer = "500@399"
+
+    state = SystemState(
+        tracer_positions=x0,
+        tracer_velocities=v0,
+        massive_positions=jnp.empty((0, 3)),
+        massive_velocities=jnp.empty((0, 3)),
+        log_gms=jnp.empty((0,)),
+        acceleration_func_kwargs={},
+        time=Time("2020-01-01").tdb.jd,
+    )
+
+    sy = System(
+        state=state,
+        gravity="default solar system",
+        earliest_time=Time("1999-12-30"),
+        latest_time=Time("2040-01-02"),
+    )
+
+    # might as well only query once, will need both for the ephemeris and phase function
+    observer_positions = get_observer_positions(times, observer)
+    coords = sy.ephemeris(times=times, observer=observer_positions)
+    coord_table = Table(
+        [[str(i) for i in list(relevant_mpcorb["Unpacked Name"])], coords],
+        names=["name", "coord"],
+    )
+
+    positions, _ = sy.integrate(times=times)
+
+    hs = jnp.array([float(i) for i in list(relevant_mpcorb["H"])])
+    gs = jnp.array([float(i) for i in list(relevant_mpcorb["G"])])
+
+    mags = jax.vmap(
+        jax.vmap(apparent_mag, in_axes=(None, None, 0, 0)), in_axes=(0, 0, 1, None)
+    )(hs, gs, positions, observer_positions)
+    mag_table = Table(
+        [[str(i) for i in list(relevant_mpcorb["Unpacked Name"])], mags],
+        names=["name", "mag"],
+    )
+
+    c_ra = coordinate.ra.rad
+    c_dec = coordinate.dec.rad
+    coords_ra = coords.ra.rad
+    coords_dec = coords.dec.rad
+
+    seps = jax.vmap(
+        jax.vmap(sky_sep, in_axes=(None, None, 0, 0)), in_axes=(None, None, 0, 0)
+    )(
+        c_ra, c_dec, coords_ra, coords_dec
+    )  # (n_particles, times)
+
+    m_ref = jnp.min(mags)
+    fluxes = jnp.power(10, -0.4 * (mags - m_ref))
+
+    fluxes = jnp.where(seps < radius, fluxes, 0.0)
+    fluxes = jnp.sum(fluxes, axis=0)
+
+    total_mags = -2.5 * jnp.log10(fluxes) + m_ref
+
+    return coords, seps, coord_table, mags, mag_table, total_mags
+
+
+def get_relevant_mpcorb(asteroid_flags):
+    all_names = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy", cache=True))
+    names = all_names[asteroid_flags]
+    names = [unpacked_to_packed_designation(i) for i in names]
+    names = [str(n) for n in names]
+    relevant_mpcorb = load_mpcorb()
+    relevant_mpcorb = relevant_mpcorb.filter(pl.col("Packed designation").is_in(names))
+    relevant_mpcorb = relevant_mpcorb.select(
+        [pl.col("Unpacked Name"), pl.exclude("Unpacked Name")]
+    )
+    assert len(relevant_mpcorb) == len(names)
+    return relevant_mpcorb

@@ -9,22 +9,30 @@ jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
-import polars as pl
 from astropy.table import Table, hstack
 from astropy.utils.data import download_file, is_url_in_cache
 
 from jorbit.astrometry.sky_projection import sky_sep
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 from jorbit.mpchecker.parse_jorbit_ephem import (
+    extra_precision_calcs,
     get_chunk_index,
-    load_mpcorb,
+    get_relevant_mpcorb,
     multiple_states,
     setup_checks,
-    unpacked_to_packed_designation,
 )
 
 
-def mpchecker(coordinate, time, radius=20 * u.arcmin, chunk_coefficients=None):
+def mpchecker(
+    coordinate,
+    time,
+    radius=20 * u.arcmin,
+    extra_precision=False,
+    observer="geocentric",
+    chunk_coefficients=None,
+):
+    if observer != "geocentric":
+        extra_precision = True
 
     coordinate, radius, t0, tf, chunk_size, names = setup_checks(
         coordinate, time, radius
@@ -60,33 +68,53 @@ def mpchecker(coordinate, time, radius=20 * u.arcmin, chunk_coefficients=None):
     decs = decs[mask]
     separations = separations[mask]
 
-    order = np.argsort(separations)
-    names = names[order]
-    ras = ras[order]
-    decs = decs[order]
-    separations = separations[order]
+    relevant_mpcorb = get_relevant_mpcorb(mask)
 
-    x = [unpacked_to_packed_designation(i) for i in names]
-    mpcorb = load_mpcorb()
-    reference_df = pl.DataFrame({"Packed designation": x}).with_row_index("ordering")
-    mpcorb = (
-        mpcorb.join(reference_df, on="Packed designation", how="inner")
-        .sort("ordering")
-        .drop("ordering")
-    )
-    names = mpcorb["Unpacked Name"].to_numpy()
-    mpcorb = Table.from_pandas(mpcorb.drop("Unpacked Name").to_pandas())
+    if extra_precision:
+        coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
+            asteroid_flags=mask,
+            times=time,
+            radius=radius,
+            observer=observer,
+            coordinate=coordinate,
+            relevant_mpcorb=relevant_mpcorb,
+        )
+        separations = seps[:, 0]
+        ras = coords[:, 0].ra.rad
+        decs = coords[:, 0].dec.rad
 
-    t = Table(
-        [names, separations, ras * u.rad.to(u.deg), decs * u.rad.to(u.deg)],
-        names=["name", "separation", "ra", "dec"],
-        units=[None, u.arcsec, u.deg, u.deg],
-    )
-    t = hstack([t, mpcorb])
+        t = Table(
+            [separations, ras * u.rad.to(u.deg), decs * u.rad.to(u.deg), mags],
+            names=["separation", "ra", "dec", "est. Vmag"],
+            units=[u.arcsec, u.deg, u.deg, u.mag],
+        )
+
+    else:
+        t = Table(
+            [separations, ras * u.rad.to(u.deg), decs * u.rad.to(u.deg)],
+            names=["separation", "ra", "dec"],
+            units=[u.arcsec, u.deg, u.deg],
+        )
+
+    relevant_mpcorb = Table.from_pandas(relevant_mpcorb.to_pandas())
+    t = hstack([t, relevant_mpcorb])
+    col_order = ["Unpacked Name"] + [
+        col for col in t.colnames if col != "Unpacked Name"
+    ]
+    t = t[col_order]
+    t.sort("separation")
     return t
 
 
-def nearest_asteroid(coordinate, times, precomputed=None):
+def nearest_asteroid(
+    coordinate,
+    times,
+    precomputed=None,
+    radius=2 * u.arcmin,
+    compute_contamination=False,
+    observer="geocentric",
+):
+    radius = radius.to(u.arcsec).value
 
     if precomputed is None:
         coordinate, _, t0, tf, chunk_size, names = setup_checks(
@@ -114,15 +142,32 @@ def nearest_asteroid(coordinate, times, precomputed=None):
             "The number of ephemeris chunk coefficients provided does not match the "
             "number of unique chunks implied by the requested times."
         )
+        asteroid_flags = np.zeros(len(coefficients[0]), dtype=bool)
     else:
+        # load the first chunk to get the number of asteroids
+        tmp = jnp.load(
+            download_file(
+                JORBIT_EPHEM_URL_BASE
+                + f"chebyshev_coeffs_fwd_{unique_indices[0]:03d}.npy",
+                cache=True,
+            )
+        )
+        asteroid_flags = np.zeros(len(tmp), dtype=bool)
         coefficients = None
-
     separations = np.zeros(len(times))
     for i, ind in enumerate(unique_indices):
         if coefficients is None:
+            file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
+            if not is_url_in_cache(file_name):
+                warnings.warn(
+                    "The requested time falls in an ephemeris chunk that is not found in "
+                    "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
+                    "system memory constraints if checking many well-separated times.",
+                    stacklevel=2,
+                )
             chunk_coefficients = jnp.load(
                 download_file(
-                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy",
+                    file_name,
                     cache=True,
                 )
             )
@@ -140,16 +185,32 @@ def nearest_asteroid(coordinate, times, precomputed=None):
         smol_coefficients = chunk_coefficients[mask]
 
         def scan_func(carry, scan_over):
-            coeffs = carry
+            coeffs, flags = carry
             offset = scan_over
             ras, decs = multiple_states(coeffs, offset, t0, chunk_size)
             seps = jax.vmap(sky_sep, in_axes=(0, 0, None, None))(
                 ras, decs, coordinate.ra.rad, coordinate.dec.rad
             )
-            return coeffs, jnp.min(seps)
+            flags = jnp.where(seps < radius, True, flags)
+            return (coeffs, flags), jnp.min(seps)
 
-        _, seps = jax.lax.scan(scan_func, smol_coefficients, offsets[indices == ind])
+        (_, flags), seps = jax.lax.scan(
+            scan_func,
+            (smol_coefficients, jnp.zeros(len(smol_coefficients), dtype=bool)),
+            offsets[indices == ind],
+        )
 
         separations[indices == ind] = seps
+        asteroid_flags[mask] = jnp.where(flags, True, asteroid_flags[mask])
 
-    return separations
+    relevant_mpcorb = get_relevant_mpcorb(asteroid_flags)
+    relevant_mpcorb = Table.from_pandas(relevant_mpcorb.to_pandas())
+
+    if not compute_contamination:
+        return separations, relevant_mpcorb
+
+    coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
+        asteroid_flags, times, radius, observer, coordinate, relevant_mpcorb
+    )
+
+    return separations, relevant_mpcorb, coord_table, mag_table, total_mags

@@ -152,7 +152,7 @@ class Particle:
                 ssos="default solar system",
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
-        elif self.gravity == "default solar system":
+        elif gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
