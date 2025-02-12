@@ -8,11 +8,15 @@ jax.config.update("jax_enable_x64", True)
 
 import astropy.units as u
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy.table import Table, hstack
 from astropy.utils.data import download_file, is_url_in_cache
+from IPython.display import HTML
+from matplotlib.animation import FuncAnimation
+from matplotlib.patches import Circle
 
-from jorbit.astrometry.sky_projection import sky_sep
+from jorbit.astrometry.sky_projection import sky_sep, tangent_plane_projection
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 from jorbit.mpchecker.parse_jorbit_ephem import (
     extra_precision_calcs,
@@ -214,3 +218,87 @@ def nearest_asteroid(
     )
 
     return separations, relevant_mpcorb, coord_table, mag_table, total_mags
+
+
+def animate_region(coordinate, times, coord_table, radius, frame_interval=50):
+
+    radius = radius.to(u.arcsec).value
+    tmp = jax.vmap(
+        jax.vmap(tangent_plane_projection, in_axes=(None, None, 0, 0)),
+        in_axes=(None, None, 0, 0),
+    )(
+        coordinate.ra.rad,
+        coordinate.dec.rad,
+        coord_table["coord"].ra.rad,
+        coord_table["coord"].dec.rad,
+    )
+    xs, ys = tmp[..., 0], tmp[..., 1]
+    xs = xs.T
+    ys = ys.T
+
+    sizes = np.ones(xs.shape[1])
+    particle_names = [str(i) for i in list(coord_table["name"])]
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    # Add the reference circle
+    circle = Circle((0, 0), radius, fill=False, linestyle="--", color="gray")
+    ax.add_patch(circle)
+    ax.scatter(0, 0, s=100, c="k", marker="x", label="Reference point")
+
+    title = ax.set_title("")
+
+    # Initialize scatter plot
+    scatter = ax.scatter(
+        xs[0], ys[0], s=sizes * 100
+    )  # Multiply sizes by 100 for better visibility
+
+    # Initialize text annotations if names are provided
+    texts = []
+    texts = [
+        ax.text(
+            xs[0][i],
+            ys[0][i],
+            name,
+            horizontalalignment="center",
+            verticalalignment="bottom",
+            animated=True,
+            fontsize=8,
+            color="k",
+            clip_on=True,
+        )
+        for i, name in enumerate(particle_names)
+    ]
+
+    ax.set(
+        xlim=(-radius * 4, radius * 4),
+        ylim=(-radius * 4, radius * 4),
+        xlabel="delta RA [arcsec]",
+        ylabel="delta Dec [arcsec]",
+        aspect="equal",
+    )
+    ax.grid(True)
+    ax.autoscale(False)
+    plt.tight_layout()
+
+    def update(frame):
+        scatter.set_offsets(np.c_[xs[frame], ys[frame]])
+        title.set_text(times[frame].iso)
+        for i, text in enumerate(texts):
+            text.set_position((xs[frame][i], ys[frame][i] + 0.05))
+        return (scatter, *texts)
+
+    n_frames = len(xs)
+    anim = FuncAnimation(
+        fig, update, frames=n_frames, interval=frame_interval, blit=True
+    )
+
+    plt.close()
+
+    try:
+        get_ipython()
+        display(HTML(anim.to_jshtml()))
+    except NameError:
+        pass
+
+    return anim

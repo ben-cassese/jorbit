@@ -56,7 +56,7 @@ class System:
         self._integrator_state, self._integrator = self._setup_integrator()
 
     def __repr__(self):
-        return f"*************\njorbit System\n time: {Time(self._state.time, format="jd", scale="tdb").utc.iso}\n*************"
+        return f"*************\njorbit System\n time: {Time(self._state.time, format='jd', scale='tdb').utc.iso}\n*************"
 
     def _setup_acceleration_func(self, gravity):
 
