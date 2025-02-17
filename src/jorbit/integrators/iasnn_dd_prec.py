@@ -1,3 +1,13 @@
+"""
+An experimental module that implements an IAS15-style integrator but using an arbitrary
+number of substep acceleration evaluations. Built on a custom JAX pytree named
+DoubleDouble that stores the high and low bits of a double-double number in two
+separate arrays, and uses the DoubleDouble class to overload the basic arithmetic
+operations.
+
+Everything here should be considered experimental and subject to change.
+"""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,14 +20,52 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 
 
 @jax.jit
-def acceleration_func(x):
+def acceleration_func(x: jnp.ndarray) -> jnp.ndarray:
+    """
+    A dummy acceleration function for testing purposes, unit central potential.
+
+    Args:
+        x: (n_particles, 3) array of positions
+
+    Returns:
+        a: (n_particles, 3) array of accelerations
+    """
     r = dd_norm(x, axis=1)
     return -x / (r * r * r)
 
 
 # not jitted, not using pure jax here
-def setup_iasnn_integrator(n_internal_points):
+def setup_iasnn_integrator(n_internal_points: int) -> tuple:
+    """
+    Precompute the constants needed for an arbitrary-order IASNN-style integrator.
 
+    This creates the H, C, R, D arrays you see in the REBOUND source, and some
+    precomputed denominators for the Taylor expansion coefficients. Not jittable,
+    but should be called once per integrator instance.
+
+    Args:
+        n_internal_points (int):
+            The number of internal evaluations to use when estimating the acceleration
+            across a given step. IAS15 uses 7.
+
+    Returns:
+        tuple:
+            b_x_denoms (DoubleDouble):
+                The denominators for the Taylor expansion of the position.
+            b_v_denoms (DoubleDouble):
+                The denominators for the Taylor expansion of the velocity.
+            h (DoubleDouble):
+                The H array from REBOUND, a list of the roots of the Chebyshev polynomial.
+            r (DoubleDouble):
+                The R array from REBOUND, a list of the coefficients for the Taylor
+                expansion of the acceleration.
+            c (DoubleDouble):
+                The C array from REBOUND, a list of the coefficients for the Taylor
+                expansion of the acceleration.
+            d (DoubleDouble):
+                The D array from REBOUND, a matrix of coefficients for the Taylor
+                expansion of the acceleration.
+    """
     # taylor expansion coefficients
     b_x_denoms = (1.0 + jnp.arange(1, n_internal_points + 1, 1, dtype=jnp.float64)) * (
         2.0 + jnp.arange(1, n_internal_points + 1, 1, dtype=jnp.float64)
@@ -65,7 +113,41 @@ def setup_iasnn_integrator(n_internal_points):
     return DoubleDouble(b_x_denoms), DoubleDouble(b_v_denoms), h, r, c, d
 
 
-def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
+def _estimate_x_v_from_b(
+    a0: DoubleDouble,
+    v0: DoubleDouble,
+    x0: DoubleDouble,
+    dt: DoubleDouble,
+    b_x_denoms: DoubleDouble,
+    b_v_denoms: DoubleDouble,
+    h: DoubleDouble,
+    bp: DoubleDouble,
+) -> tuple:
+    """
+    Given the b coefficients, estimate the new position and velocity.
+
+    Args:
+        a0 (DoubleDouble):
+            The initial acceleration.
+        v0 (DoubleDouble):
+            The initial velocity.
+        x0 (DoubleDouble):
+            The initial position.
+        dt (DoubleDouble):
+            The timestep.
+        b_x_denoms (DoubleDouble):
+            The denominators for the Taylor expansion of the position.
+        b_v_denoms (DoubleDouble):
+            The denominators for the Taylor expansion of the velocity.
+        h (DoubleDouble):
+            The H array from REBOUND, a list of the roots of the Chebyshev polynomial.
+        bp (IAS15Helper):
+            The b coefficients.
+
+    Returns:
+        tuple:
+            The estimated position and velocity.
+    """
     # bp is *not* an IAS15Helper, it's just a DoubleDouble w/ shape
     # (n_internal_points, n_particles, 3)
     # aiming to stay shape-agnostic, enable higher or lower order scheme
@@ -99,7 +181,32 @@ def _estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
 
 
 @partial(jax.jit, static_argnums=(0,))
-def refine_intermediate_g(substep_num, g, r, at, a0):
+def refine_intermediate_g(
+    substep_num: int,
+    g: DoubleDouble,
+    r: DoubleDouble,
+    at: DoubleDouble,
+    a0: DoubleDouble,
+) -> DoubleDouble:
+    """
+    After evaluating the acceleration at a certain substep, refine the estimate of the g coefficients.
+
+    Args:
+        substep_num (int):
+            The substep number.
+        g (DoubleDouble):
+            The g coefficients.
+        r (DoubleDouble):
+            The R array from setup_iasnn_integrator.
+        at (DoubleDouble):
+            The acceleration at the current substep.
+        a0 (DoubleDouble):
+            The initial acceleration.
+
+    Returns:
+        DoubleDouble:
+            The refined g coefficients.
+    """
     # substep_num starts at 1, 1->h1, etc
     substep_num -= 1
 
@@ -116,7 +223,41 @@ def refine_intermediate_g(substep_num, g, r, at, a0):
 
 
 @partial(jax.jit, static_argnums=(6, 7))
-def _refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
+def _refine_b_and_g(
+    r: DoubleDouble,
+    c: DoubleDouble,
+    b: DoubleDouble,
+    g: DoubleDouble,
+    at: DoubleDouble,
+    a0: DoubleDouble,
+    substep_num: int,
+    return_g_diff: bool,
+) -> tuple:
+    """
+    Refine the b coefficients and the g coefficients after evaluating the acceleration at a certain substep.
+
+    Args:
+        r (DoubleDouble):
+            The R array from setup_iasnn_integrator.
+        c (DoubleDouble):
+            The C array from setup_iasnn_integrator.
+        b (DoubleDouble):
+            The b coefficients.
+        g (DoubleDouble):
+            The g coefficients.
+        at (DoubleDouble):
+            The acceleration at the current substep.
+        a0 (DoubleDouble):
+            The initial acceleration.
+        substep_num (int):
+            The substep number.
+        return_g_diff (bool):
+            Whether to return the difference in g coefficients (for convergence checking).
+
+    Returns:
+        tuple:
+            The refined b coefficients and the refined g coefficients.
+    """
     old_g = g
     new_g = refine_intermediate_g(substep_num=substep_num, g=g, r=r, at=at, a0=a0)
     g_diff = new_g - old_g[substep_num - 1]
@@ -142,13 +283,39 @@ def _refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
 
 @jax.jit
 def step(
-    x0,
-    v0,
-    b,
-    dt,
-    precomputed_setup,
-    convergence_threshold=DoubleDouble.from_string("1e-40"),
-):
+    x0: DoubleDouble,
+    v0: DoubleDouble,
+    b: DoubleDouble,
+    dt: DoubleDouble,
+    precomputed_setup: tuple,
+    convergence_threshold: DoubleDouble = DoubleDouble.from_string("1e-40"),
+) -> tuple:
+    """
+    Take a single step with an IASNN-style integrator.
+
+    This does all of the same predictor-corrector iteration as the default IAS15
+    integrator, but does *not* do any of the time validity checking, and currently does
+    not accept actual acceleration functions (need to write DoubleDouble versions of
+    those).
+
+    Args:
+        x0 (DoubleDouble):
+            The initial position.
+        v0 (DoubleDouble):
+            The initial velocity.
+        b (DoubleDouble):
+            The b coefficients.
+        dt (DoubleDouble):
+            The timestep.
+        precomputed_setup (tuple):
+            The precomputed constants from setup_iasnn_integrator.
+        convergence_threshold (DoubleDouble):
+            The convergence threshold for the predictor-corrector iteration.
+
+    Returns:
+        tuple:
+            The new position, velocity, and b coefficients.
+    """
     # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)

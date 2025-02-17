@@ -6,6 +6,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import warnings
+from collections.abc import Callable
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -31,14 +32,48 @@ from jorbit.ephemeris.process_bsp import extract_data, merge_data
 
 
 class Ephemeris:
+    """
+    A class for managing and processing a JPL DE solar system ephemeris.
+
+    Args:
+        ssos (str, optional):
+            Specification of solar system objects to include. Options are
+            "default planets" (for computing planet positions only) or
+            "default solar system" (for computing positions of planets and large
+            perturbing asteroids).
+        earliest_time (Time, optional):
+            The earliest time this ephemeris can compute. This must be > than the
+            earliest time in the DE ephemeris file, but ideally shouldn't be much
+            earlier than will be be actually used: a narrower time range allows for
+            smaller in-memory subsets of the ephemeris to be loaded.
+            Defaults to Time("1980-01-01").
+        latest_time (Time, optional):
+            Similar to earliest_time, but for the end time for ephemeris
+            calculations.
+            Defaults to Time("2050-01-01").
+        postprocessing_func (Optional[Callable], optional):
+            Function for post-processing state vectors.
+            Defaults to None.
+
+    Attributes:
+        ephs (tuple):
+            Tuple of EphemerisProcessor objects for different solar system object
+            groups
+        processor (Union[EphemerisProcessor, EphemerisPostProcessor]):
+            Main processor for ephemeris calculations
+        _combined_names (List[str]):
+            List of all object names
+        _combined_log_gms (List[float]):
+            List of logarithmic GM values for all objects
+    """
+
     def __init__(
         self,
-        ssos="default planets",
-        earliest_time=Time("1980-01-01"),
-        latest_time=Time("2050-01-01"),
-        postprocessing_func=None,
+        ssos: str = "default planets",
+        earliest_time: Time = Time("1980-01-01"),
+        latest_time: Time = Time("2050-01-01"),
+        postprocessing_func: Callable | None = None,
     ):
-
         if ssos == "default planets":
             ssos = [
                 {
@@ -116,6 +151,24 @@ class Ephemeris:
             self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
     def state(self, time: Time):
+        """
+        Calculate the state vectors for solar system objects at the given time(s).
+
+        This method computes position and velocity vectors for all tracked solar system
+        objects at the specified time(s). It can handle arbitrary-length Time inputs.
+
+        Args:
+            time (Time): Times at which to evaluate the ephemeris.
+
+        Returns:
+            Dict[str, Dict[str, Union[u.Quantity, float]]]:
+                Dictionary containing state information
+                for each object. The outer dictionary is keyed by object name, and each
+                inner dictionary contains
+                - 'x': Position vector (astropy.units.Quantity in au)
+                - 'v': Velocity vector (astropy.units.Quantity in au/day)
+                - 'log_gm': Logarithmic GM value (float)
+        """
         if time.shape == ():
             x, v = self.processor.state(time.tdb.jd)
         else:

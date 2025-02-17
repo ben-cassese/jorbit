@@ -7,7 +7,33 @@ from astropy.utils.data import download_file
 from jplephem.spk import SPK
 
 
-def extract_data(center, target, ephem_file, earliest_time, latest_time):
+def extract_data(
+    center: str, target: str, ephem_file: str, earliest_time: Time, latest_time: Time
+) -> tuple:
+    """
+    Extracts the Chebyshev coefficients for a given target and center from an SPK file.
+
+    Args:
+        center (str):
+            The center ID of an ephemeris segment.
+        target (str):
+            The target ID of an ephemeris segment.
+        ephem_file (str):
+            The path to the SPK file. Uses astropy's download_file function to download
+            and cache the file if it isn't present in the cache.
+        earliest_time (Time):
+            The start time for our region of interest. Smaller time windows will result
+            in smaller in-memory ephemeris objects.
+        latest_time (Time):
+            The latest time for the ephemeris.
+
+    Returns:
+        tuple:
+            A tuple containing the Chebyshev coefficients for the given target and
+            center. More specifically, the tuple contains
+            (init, intlen, coeff), where init is the initial time of the segment,
+            intlen is the interval length, and coeff is the Chebyshev coefficients.
+    """
     spk = SPK.open(download_file(ephem_file, cache=True))
 
     target_found = False
@@ -29,7 +55,35 @@ def extract_data(center, target, ephem_file, earliest_time, latest_time):
 
 def merge_data(
     inits: list, intlens: list, coeffs: list, earliest_time: Time, latest_time: Time
-):
+) -> tuple:
+    """
+    Merges data for multiple targets into a single set of coefficients.
+
+    This takes all of the data extracted from individual target/center segments and
+    merges them into larger jnp.ndarrays. All objects will now use the same number of
+    coefficients to describe each interval, so objects that were previously missing
+    high-order coefficients will have those zero padded. Also, all objects will now
+    have the same number of intervals (but those intervals will have distinct inits),
+    so objects that were previously missing intervals will have those also zero padded.
+
+
+    Args:
+        inits (list):
+            A list of initial times for each target.
+        intlens (list):
+            A list of interval lengths for each target.
+        coeffs (list):
+            A list of Chebyshev coefficients for each target.
+        earliest_time (Time):
+            The earliest time to consider.
+        latest_time (Time):
+            The latest time to consider.
+
+    Returns:
+        tuple:
+            A tuple containing the merged initial time, interval length, and coefficients.
+
+    """
     inits = jnp.array(inits)
     intlens = jnp.array(intlens)
 

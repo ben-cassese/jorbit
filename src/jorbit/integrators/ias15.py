@@ -28,6 +28,10 @@ from jorbit.utils.states import IAS15IntegratorState, SystemState
 
 @chex.dataclass
 class IAS15Helper:
+    """
+    A chex.dataclass that acts like the reb_dp7 struct in rebound.
+    """
+
     # the equivalent of the reb_dp7 struct in rebound, but obviously without pointers
     p0: jnp.ndarray
     p1: jnp.ndarray
@@ -39,6 +43,17 @@ class IAS15Helper:
 
 
 def initialize_ias15_helper(n_particles):
+    """
+    Initializes the IAS15Helper dataclass with zeros.
+
+    Args:
+        n_particles (int):
+            The number of particles.
+
+    Returns:
+        IAS15Helper:
+            An instance of the IAS15Helper dataclass with zeros.
+    """
     return IAS15Helper(
         p0=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         p1=jnp.zeros((n_particles, 3), dtype=jnp.float64),
@@ -51,6 +66,17 @@ def initialize_ias15_helper(n_particles):
 
 
 def initialize_ias15_integrator_state(a0):
+    """
+    Initializes the IAS15IntegratorState dataclass with zeros.
+
+    Args:
+        a0 (jnp.ndarray):
+            The initial acceleration.
+
+    Returns:
+        IAS15IntegratorState:
+            An instance of the IAS15IntegratorState dataclass with zeros.
+    """
     n_particles = a0.shape[0]
     return IAS15IntegratorState(
         g=initialize_ias15_helper(n_particles),
@@ -68,6 +94,21 @@ def initialize_ias15_integrator_state(a0):
 
 @jax.jit
 def add_cs(p, csp, inp):
+    """
+    Compensated summation
+
+    Args:
+        p (jnp.ndarray):
+            The current sum.
+        csp (jnp.ndarray):
+            The current compensation.
+        inp (jnp.ndarray):
+            The input to add.
+
+    Returns:
+        tuple:
+            The new sum and compensation.
+    """
     y = inp - csp
     t = p + y
     csp = (t - p) - y
@@ -77,6 +118,21 @@ def add_cs(p, csp, inp):
 
 @jax.jit
 def predict_next_step(ratio, _e, _b):
+    """
+    Predicts the next b coefficients for the IAS15 integrator.
+
+    Args:
+        ratio (float):
+            The ratio of the current step size to the previous step size.
+        _e (IAS15Helper):
+            The current error terms.
+        _b (IAS15Helper):
+            The current b terms.
+
+    Returns:
+        tuple:
+            The predicted error and b terms.
+    """
     e = IAS15Helper(
         p0=jnp.zeros_like(_e.p0, dtype=jnp.float64),
         p1=jnp.zeros_like(_e.p1, dtype=jnp.float64),
@@ -183,6 +239,23 @@ def ias15_step(
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     initial_integrator_state: IAS15IntegratorState,
 ) -> SystemState:
+    """
+    Take a single step using the IAS15 integrator.
+
+    Contains all of the predictor/corrector logic and step validity checks.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial system state.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial integrator state.
+
+    Returns:
+        SystemState:
+            The new system state.
+    """
 
     # for convenience, rename initial state
     t_beginning = initial_system_state.time
@@ -1174,7 +1247,32 @@ def ias15_evolve(
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
-):
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+    """
+    Evolve a system to multiple different timesteps using the IAS15 integrator.
+
+    Chains multiple ias15_step calls together until each timestep is reached. Keeps
+    track of the second to last step before each arrival time to avoid setting dt to
+    small values representing the final jumps. Limits the number of step attempts
+    between each arrival time to 10,000, but does *not* error if a time is not reached.
+    Meant to be as jittable as possible.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        times (jnp.ndarray):
+            The times to evolve the system to.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+            The positions and velocities of the system at each timestep,
+            the final state of the system, and the final state of the integrator.
+    """
+
     def evolve(
         initial_system_state, acceleration_func, final_time, initial_integrator_state
     ):
