@@ -9,7 +9,22 @@ from jorbit.utils.states import SystemState
 
 
 @jax.jit
-def sky_sep(ra1, dec1, ra2, dec2):
+def sky_sep(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
+    """
+    Compute the angular separation between two points on the sky.
+
+    Following Astropy's SkyCoord.separation, this uses the Vincenty formula.
+
+    Args:
+        ra1 (float): Right ascension of the first position in radians.
+        dec1 (float): Declination of the first position in radians.
+        ra2 (float): Right ascension of the second position in radians.
+        dec2 (float): Declination of the second position in radians.
+
+    Returns:
+        float: The angular separation in arcseconds.
+    """
+
     # all inputs are floats, ICRS positions in radians
     # output is in arcsec
 
@@ -32,7 +47,24 @@ def sky_sep(ra1, dec1, ra2, dec2):
 
 
 @jax.jit
-def tangent_plane_projection(ra_ref, dec_ref, ra, dec):
+def tangent_plane_projection(
+    ra_ref: float, dec_ref: float, ra: float, dec: float
+) -> jnp.ndarray:
+    """
+    Project a point on the sky onto a tangent plane at a reference point.
+
+    Somewhat overkill, rotates the positions to the equator to avoid any potential
+    issues near the poles.
+
+    Args:
+        ra_ref (float): Right ascension of the reference point in radians.
+        dec_ref (float): Declination of the reference point in radians.
+        ra (float): Right ascension of the point to project in radians.
+        dec (float): Declination of the point to project in radians.
+
+    Returns:
+        jnp.ndarray: The projected coordinates in arcseconds.
+    """
     # Convert to unit vectors
     cos_dec = jnp.cos(dec)
     sin_dec = jnp.sin(dec)
@@ -64,13 +96,41 @@ def tangent_plane_projection(ra_ref, dec_ref, ra, dec):
 
 @jax.jit
 def on_sky(
-    x,
-    v,
-    time,
-    observer_position,
-    acc_func,
-    acc_func_kwargs={},
-):
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    time: float,
+    observer_position: jnp.ndarray,
+    acc_func: callable,
+    acc_func_kwargs: dict = {},
+) -> tuple[float, float]:
+    """
+    Compute the on-sky position of a particle from a given observer position.
+
+    This function computes the on-sky position of a particle at a given time, correcting
+    for light travel time. It uses the IAS15 integrator and the provided acceleration
+    function to evolve the particle's position and velocity as needed. There's a
+    hard-coded three iteration limit to the light travel time correction, which is
+    sufficient for most cases but may need to be adjusted for extreme scenarios.
+
+    Note: you can vmap this function, but don't pass multiple particles at once: each
+    one needs its own light travel time correction, and the IAS15 integrator needs to
+    move a system of particles all to the same times.
+
+    Args:
+        x (jnp.ndarray): Position of the particle, shape (3,).
+        v (jnp.ndarray): Velocity of the particle, shape (3,).
+        time (float): Time at which to compute the on-sky position, JD, tdb.
+        observer_position (jnp.ndarray): Position of the observer, shape (3,).
+        acc_func (callable): Acceleration function to use during light travel time
+            correction
+        acc_func_kwargs (dict, optional): Additional arguments for the acceleration
+            function.
+
+    Returns:
+        tuple[float, float]:
+            The right ascension and declination of the particle in radians, ICRS.
+    """
+
     # has to be one particle at one time to get the light travel time right
     state = SystemState(
         massive_positions=jnp.empty((0, 3)),

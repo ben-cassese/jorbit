@@ -84,6 +84,10 @@ class Particle:
 
     def _setup_state(self, x, v, state, time, name):
 
+        if state is not None:
+            assert time is None, "Cannot provide both state and time"
+            time = state.time
+
         assert time is not None, "Must provide an epoch for the particle"
         if isinstance(time, type(Time("2023-01-01"))):
             time = time.tdb.jd
@@ -98,6 +102,9 @@ class Particle:
             state.time = time
             keplerian_state = state.to_keplerian()
             cartesian_state = state.to_cartesian()
+
+            x = state.x.flatten()
+            v = state.v.flatten()
 
         elif x is not None:
             assert v is not None, "Must provide both x and v"
@@ -285,7 +292,7 @@ class Particle:
         positions, velocities, final_system_state, final_integrator_state = _integrate(
             times, state, self.gravity, self._integrator, self._integrator_state
         )
-        return positions[0], velocities[0]
+        return positions[:, 0, :], velocities[:, 0, :]
 
     def ephemeris(self, times, observer, state=None):
         if isinstance(observer, str):

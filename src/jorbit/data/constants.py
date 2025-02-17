@@ -8,7 +8,10 @@ import jax.numpy as jnp
 ################################################################################
 
 SPEED_OF_LIGHT = 173.14463267424034
+"""c in AU/day."""
+
 INV_SPEED_OF_LIGHT = 1 / 173.14463267424034  # 1 / AU/day
+"""1 / c in day/AU."""
 
 # no longer used- horizons "ecliptic" J2000 is just a 84381.448" rotation about
 # the ICRS x-axis
@@ -25,25 +28,40 @@ ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT = jnp.array(
         [0.0, -0.397777155931913719203212896, 0.917482062069181818110850924],
     ]
 )
+"""
+Rotation matrix to convert from ICRS to Horizons Ecliptic J2000.
+
+The former is defined as a 84381.448" rotation about the ICRS x-axis. Values computed
+using mpmath with 24 digits of precision.
+"""
+
 HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
+"""Transpose of ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT."""
 
 EPSILON = jnp.array(jnp.finfo(jnp.float64).eps)
+"""Machine specific precision."""
 
 JORBIT_EPHEM_URL_BASE = (
     "https://huggingface.co/datasets/jorbit/jorbit_mpchecker/resolve/main/"
 )
+"""The URL root where are the jorbit ephemeris files are stored."""
 
 ################################################################################
 # Ephemeris constants
 ################################################################################
 
 DEFAULT_PLANET_EPHEMERIS_URL = "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de440.bsp"
+"""The default URL for the planet ephemeris."""
+
 DEFAULT_ASTEROID_EPHEMERIS_URL = (
     "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de441/sb441-n16.bsp"
 )
+"""The default URL for the asteroid ephemeris."""
+
 HUGE_ASTEROID_EPHEMERIS_URL = (
     "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de441/sb441-n373.bsp"
 )
+"""The URL for the asteroid ephemeris with 373 asteroids. Currently never used."""
 # also here's 441
 # "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de441.bsp"
 
@@ -62,6 +80,14 @@ ALL_PLANET_LOG_GMS = {
     "pluto": jnp.log(2.1750964648933581e-12),
     "sun": jnp.log(2.9591220828411951e-04),  # G in AU^3 / day^2
 }
+"""
+The log GM values of the planets and sun, units of AU^3 / day^2.
+
+These are NOT from the JPL ephemeris comments. They are actually from
+https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck, which lists Earth as apparently 1%
+different from its de440 and de441 value. Chasing that down was a top-5 debugging day
+for sure.
+"""
 
 LARGE_ASTEROID_LOG_GMS = {
     "ceres": jnp.log(1.3964518123081067e-13),
@@ -81,9 +107,11 @@ LARGE_ASTEROID_LOG_GMS = {
     "davida": jnp.log(8.683625349228651e-15),
     "interamnia": jnp.log(6.311034342087888e-15),
 }
+"""Similar to ALL_PLANET_LOG_GMS but for the 16 asteroid perturbers."""
 
 # just the sum of all the planets and large asteroids above
 TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932
+"""Just the sum of ALL_PLANET_LOG_GMS and LARGE_ASTEROID_LOG_GMS."""
 
 
 ALL_PLANET_IDS = {
@@ -98,6 +126,7 @@ ALL_PLANET_IDS = {
     "pluto": 9,
     "sun": 10,
 }
+"""The IDs of the planets and sun."""
 
 LARGE_ASTEROID_IDS = {
     "ceres": 2000001,
@@ -117,6 +146,7 @@ LARGE_ASTEROID_IDS = {
     "davida": 2000511,
     "interamnia": 2000704,
 }
+"""The SPK ID numbers for the 16 asteroid perturbers."""
 
 ALL_PLANET_NAMES = [
     "sun",
@@ -130,6 +160,7 @@ ALL_PLANET_NAMES = [
     "neptune",
     "pluto",
 ]
+"""The ordered names of the planets and sun."""
 
 LARGE_ASTEROID_NAMES = [
     "ceres",
@@ -149,127 +180,130 @@ LARGE_ASTEROID_NAMES = [
     "davida",
     "interamnia",
 ]
+"""The ordered names of the 16 asteroid perturbers."""
 
 ################################################################################
-# Yoshida constants
+# Yoshida constants.
+
+# No longer ever used now that we've removed the high order leapfrog integrator.
 ################################################################################
 
-# Taken from Section 4 of Yoshida 1990
-# DOI: 10.1016/0375-9601(90)90092-3
-Y4_Ws = jnp.array([1 / (2 - 2 ** (1 / 3))])
+# # Taken from Section 4 of Yoshida 1990
+# # DOI: 10.1016/0375-9601(90)90092-3
+# Y4_Ws = jnp.array([1 / (2 - 2 ** (1 / 3))])
 
-# Taken from Table 1 of Yoshida 1990
-# DOI: 10.1016/0375-9601(90)90092-3
-Y6_Ws = jnp.array([-0.117767998417887e1, 0.23557321335935, 0.78451361047756])
+# # Taken from Table 1 of Yoshida 1990
+# # DOI: 10.1016/0375-9601(90)90092-3
+# Y6_Ws = jnp.array([-0.117767998417887e1, 0.23557321335935, 0.78451361047756])
 
-# Taken from Table 2 of Yoshida 1990
-# DOI: 10.1016/0375-9601(90)90092-3
-Y8_Ws = jnp.array(
-    [
-        0.102799849391985e0,
-        -0.196061023297549e1,
-        0.193813913762276e1,
-        -0.158240635368243e0,
-        -0.144485223686048e1,
-        0.253693336566229e0,
-        0.914844246229740e0,
-    ]
-)
+# # Taken from Table 2 of Yoshida 1990
+# # DOI: 10.1016/0375-9601(90)90092-3
+# Y8_Ws = jnp.array(
+#     [
+#         0.102799849391985e0,
+#         -0.196061023297549e1,
+#         0.193813913762276e1,
+#         -0.158240635368243e0,
+#         -0.144485223686048e1,
+#         0.253693336566229e0,
+#         0.914844246229740e0,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y4_C = jnp.array(
-    [
-        0.675603595979828817023843904,
-        -0.17560359597982881702384390,
-        -0.17560359597982881702384390,
-        0.675603595979828817023843904,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y4_C = jnp.array(
+#     [
+#         0.675603595979828817023843904,
+#         -0.17560359597982881702384390,
+#         -0.17560359597982881702384390,
+#         0.675603595979828817023843904,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y4_D = jnp.array(
-    [
-        1.351207191959657634047687808,
-        -1.70241438391931526809537562,
-        1.351207191959657634047687808,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y4_D = jnp.array(
+#     [
+#         1.351207191959657634047687808,
+#         -1.70241438391931526809537562,
+#         1.351207191959657634047687808,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y6_C = jnp.array(
-    [
-        0.392256805238779981959140741,
-        0.510043411918454980824577660,
-        -0.47105338540976005035076923,
-        0.068753168252525087567050832,
-        0.068753168252525087567050832,
-        -0.47105338540976005035076923,
-        0.510043411918454980824577660,
-        0.392256805238779981959140741,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y6_C = jnp.array(
+#     [
+#         0.392256805238779981959140741,
+#         0.510043411918454980824577660,
+#         -0.47105338540976005035076923,
+#         0.068753168252525087567050832,
+#         0.068753168252525087567050832,
+#         -0.47105338540976005035076923,
+#         0.510043411918454980824577660,
+#         0.392256805238779981959140741,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y6_D = jnp.array(
-    [
-        0.78451361047755996391828148,
-        0.23557321335934999773087383,
-        -1.1776799841788700984324123,
-        1.31518632068392027356651397,
-        -1.1776799841788700984324123,
-        0.23557321335934999773087383,
-        0.78451361047755996391828148,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y6_D = jnp.array(
+#     [
+#         0.78451361047755996391828148,
+#         0.23557321335934999773087383,
+#         -1.1776799841788700984324123,
+#         1.31518632068392027356651397,
+#         -1.1776799841788700984324123,
+#         0.23557321335934999773087383,
+#         0.78451361047755996391828148,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y8_C = jnp.array(
-    [
-        0.457422123114870016191702006,
-        0.584268791397984516011732125,
-        -0.59557945014712546094592937,
-        -0.80154643611436146577453598,
-        0.889949251127258450511092746,
-        -0.01123554767636503193273256,
-        -0.92890519179175248809521292,
-        0.905626460089491464033883972,
-        0.905626460089491464033883972,
-        -0.92890519179175248809521292,
-        -0.01123554767636503193273256,
-        0.889949251127258450511092746,
-        -0.80154643611436146577453598,
-        -0.59557945014712546094592937,
-        0.584268791397984516011732125,
-        0.457422123114870016191702006,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y8_C = jnp.array(
+#     [
+#         0.457422123114870016191702006,
+#         0.584268791397984516011732125,
+#         -0.59557945014712546094592937,
+#         -0.80154643611436146577453598,
+#         0.889949251127258450511092746,
+#         -0.01123554767636503193273256,
+#         -0.92890519179175248809521292,
+#         0.905626460089491464033883972,
+#         0.905626460089491464033883972,
+#         -0.92890519179175248809521292,
+#         -0.01123554767636503193273256,
+#         0.889949251127258450511092746,
+#         -0.80154643611436146577453598,
+#         -0.59557945014712546094592937,
+#         0.584268791397984516011732125,
+#         0.457422123114870016191702006,
+#     ]
+# )
 
-# Created using the Decimal version of
-# jorbit.utils.generate_coefficients.create_yoshida_coeffs
-Y8_D = jnp.array(
-    [
-        0.91484424622974003238340401,
-        0.25369333656622899964006023,
-        -1.4448522368604799215319189,
-        -0.1582406353682430100171529,
-        1.93813913762275991103933847,
-        -1.9606102329754899749048036,
-        0.10279984939198499871437775,
-        1.70845307078699792935339019,
-        0.10279984939198499871437775,
-        -1.9606102329754899749048036,
-        1.93813913762275991103933847,
-        -0.1582406353682430100171529,
-        -1.4448522368604799215319189,
-        0.25369333656622899964006023,
-        0.91484424622974003238340401,
-    ]
-)
+# # Created using the Decimal version of
+# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
+# Y8_D = jnp.array(
+#     [
+#         0.91484424622974003238340401,
+#         0.25369333656622899964006023,
+#         -1.4448522368604799215319189,
+#         -0.1582406353682430100171529,
+#         1.93813913762275991103933847,
+#         -1.9606102329754899749048036,
+#         0.10279984939198499871437775,
+#         1.70845307078699792935339019,
+#         0.10279984939198499871437775,
+#         -1.9606102329754899749048036,
+#         1.93813913762275991103933847,
+#         -0.1582406353682430100171529,
+#         -1.4448522368604799215319189,
+#         0.25369333656622899964006023,
+#         0.91484424622974003238340401,
+#     ]
+# )
 
 ################################################################################
 # IAS15 constants
@@ -287,6 +321,7 @@ IAS15_H = jnp.array(
         0.977520613561287501891174488626,
     ]
 )
+"""The H array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_RR = jnp.array(
@@ -321,6 +356,7 @@ IAS15_RR = jnp.array(
         0.0921996667221917338008147,
     ]
 )
+"""The RR array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_C = jnp.array(
@@ -348,6 +384,7 @@ IAS15_C = jnp.array(
         -2.7558127197720458314421588,
     ]
 )
+"""The C array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
@@ -375,12 +412,20 @@ IAS15_D = jnp.array(
         2.7558127197720458314421588,
     ]
 )
+"""The D array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
+"""Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+
 IAS15_EPS_Modified = 0.1750670293218999749  # 0.1750670293218999748586614182797188957 = sqrt7(r->ri_ias15.epsilon*5040.0)
+"""Precomputed implementation of sqrt7(r->ri_ias15.epsilon*5040.0)"""
+
 IAS15_SAFETY_FACTOR = 0.25
+"""Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+
 IAS15_MIN_DT = 0.0
+"""Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
 ################################################################################
 # experimental DoubleDouble IAS15 constants
@@ -388,3 +433,4 @@ IAS15_MIN_DT = 0.0
 from jorbit.utils.doubledouble import DoubleDouble
 
 IASNN_DD_EPSILON = DoubleDouble(1e-32)
+"""DoubleDouble type epsilon."""

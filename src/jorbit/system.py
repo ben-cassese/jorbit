@@ -34,19 +34,20 @@ class System:
 
         if state is None:
             assert particles is not None
-            times = jnp.array([p.time for p in self.particles])
+            times = jnp.array([p._time for p in particles])
             t0 = times[0]
             assert jnp.allclose(
                 times, t0
             ), "All particles must have the same reference time"
 
             self._state = SystemState(
-                tracer_positions=jnp.array([p.tracer_positions for p in particles]),
-                tracer_velocities=jnp.array([p.tracer_velocities for p in particles]),
+                tracer_positions=jnp.array([p._x for p in particles]),
+                tracer_velocities=jnp.array([p._v for p in particles]),
                 massive_positions=jnp.empty((0, 3)),
                 massive_velocities=jnp.empty((0, 3)),
                 log_gms=jnp.empty((0,)),
                 time=t0,
+                acceleration_func_kwargs={},
             )
         else:
             self._state = state

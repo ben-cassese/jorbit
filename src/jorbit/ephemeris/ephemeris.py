@@ -116,12 +116,15 @@ class Ephemeris:
             self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
     def state(self, time: Time):
-        x, v = self.processor.state(time.tdb.jd)
+        if time.shape == ():
+            x, v = self.processor.state(time.tdb.jd)
+        else:
+            x, v = jax.vmap(self.processor.state)(time.tdb.jd)
         s = {}
         for n in range(len(self._combined_names)):
             s[self._combined_names[n]] = {
-                "x": x[n] * u.au,
-                "v": v[n] * u.au / u.day,
+                "x": x[n] * u.au if x.ndim == 2 else x[:, n] * u.au,
+                "v": v[n] * u.au / u.day if v.ndim == 2 else v[:, n] * u.au / u.day,
                 # "a": a[n] * u.au / u.day**2,
                 "log_gm": self._combined_log_gms[n],
             }

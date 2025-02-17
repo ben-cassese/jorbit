@@ -24,6 +24,21 @@ def ppn_gravity(
     inputs: SystemState,
     max_iterations: int = 10,
 ) -> jnp.ndarray:
+    """
+    Compute the acceleration felt by each particle due to PPN gravity.
+
+    Equivalent of rebx_calculate_gr_full in reboundx.
+
+    Args:
+        inputs (SystemState): The instantaneous state of the system.
+        max_iterations (int): The maximum number of interations for the GR corrections
+            to converge.
+
+    Returns:
+        jnp.ndarray:
+            The 3D acceleration felt by each particle, ordered by massive particles
+            first followed by tracer particles.
+    """
 
     c2 = inputs.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
 
@@ -43,7 +58,7 @@ def ppn_gravity(
     dx = positions[:, None, :] - positions[None, :, :]
     r2 = jnp.sum(dx * dx, axis=-1)
     r = jnp.sqrt(r2)
-    r3 = r2 * jnp.sqrt(r2)
+    r3 = r2 * r
 
     # Mask for i!=j calculations
     mask = ~jnp.eye(N, dtype=bool)

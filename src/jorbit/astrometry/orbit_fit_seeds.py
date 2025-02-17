@@ -10,6 +10,15 @@ from jorbit.utils.states import CartesianState, KeplerianState
 
 
 def gauss_method_orbit(obs: Observations) -> CartesianState:
+    """
+    Gauss's method for orbit determination from three observations.
+
+    Args:
+        obs (Observations): A set of three observations.
+
+    Returns:
+        CartesianState: The state of the best-fitting orbit.
+    """
 
     assert len(obs) == 3, "Gauss's method requires 3 (and only 3) observations"
 
@@ -128,7 +137,22 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     )
 
 
-def simple_circular(ra, dec, semi, time):
+def simple_circular(ra: float, dec: float, semi: float, time: float) -> CartesianState:
+    """
+    Compute a circular orbit of a given size that passes through a given coordinate.
+
+    A simpler alternative to Gauss's method, assumes that the particle is observed
+    at its highest excursion from the ecliptic.
+
+    Args:
+        ra (float): Right ascension of the object in radians, ICRS.
+        dec (float): Declination of the object in radians, ICRS.
+        semi (float): Semi-major axis of the orbit in AU.
+        time (float): Time of the observation in JD, tdb.
+
+    Returns:
+        CartesianState: The state of the implied orbit.
+    """
     phi = ra
     theta = jnp.pi / 2 - dec
 

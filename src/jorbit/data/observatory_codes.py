@@ -986,3 +986,8 @@ OBSERVATORY_CODES = {
     "ssb": "500@0",
     "palomar": "675@399",
 }
+"""
+A mapping between MPC-recognized observatories and their codes.
+
+Also includes some commonly-referenced spacecraft.
+"""

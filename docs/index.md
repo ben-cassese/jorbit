@@ -1,6 +1,6 @@
 jorbit
 =============
-<!-- 
+<!--
 <div align="center"> <img src="./_static/media/videos/_static/480p15/Banner_ManimCE_v0.17.3.gif" width="100%"> </div> -->
 
 

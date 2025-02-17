@@ -8,6 +8,20 @@ from jorbit.utils.states import SystemState
 
 @jax.jit
 def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
+    """
+    Compute the acceleration felt by each particle due to Newtonian gravity.
+
+    Set up to separate massive and tracer particles, so systems with many tracers
+    will not compute useless pairwise interactions.
+
+    Args:
+        inputs (SystemState): The instantaneous state of the system.
+
+    Returns:
+        jnp.ndarray:
+            The 3D acceleration felt by each particle, ordered by massive particles
+            first followed by tracer particles.
+    """
     M = inputs.massive_positions.shape[0]  # number of massive particles
 
     # 1. Compute accelerations on massive particles due to other massive particles

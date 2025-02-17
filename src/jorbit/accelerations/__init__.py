@@ -5,10 +5,25 @@ import jax.numpy as jnp
 
 from jorbit.accelerations.gr import ppn_gravity
 from jorbit.accelerations.newtonian import newtonian_gravity
+from jorbit.ephemeris.ephemeris_processors import EphemerisProcessor
 from jorbit.utils.states import SystemState
 
 
-def create_newtonian_ephemeris_acceleration_func(ephem_processor):
+def create_newtonian_ephemeris_acceleration_func(
+    ephem_processor: EphemerisProcessor,
+) -> jax.tree_util.Partial:
+    """
+    Create and return a function that adds newtonian gravity from fixed perturbers.
+
+    Args:
+        ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
+            the perturber positions and velocities.
+
+    Returns:
+        A jax.tree_util.Partial function that takes a SystemState and returns the
+            accelerations due to the perturbers.
+
+    """
 
     def func(inputs: SystemState) -> jnp.ndarray:
         perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
@@ -34,7 +49,21 @@ def create_newtonian_ephemeris_acceleration_func(ephem_processor):
     return jax.tree_util.Partial(func)
 
 
-def create_gr_ephemeris_acceleration_func(ephem_processor):
+def create_gr_ephemeris_acceleration_func(
+    ephem_processor: EphemerisProcessor,
+) -> jax.tree_util.Partial:
+    """
+    Create and return a function that adds gr gravity from fixed perturbers.
+
+    Args:
+        ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
+            the perturber positions and velocities.
+
+    Returns:
+        A jax.tree_util.Partial function that takes a SystemState and returns the
+            accelerations due to the perturbers.
+
+    """
 
     def func(inputs: SystemState) -> jnp.ndarray:
         perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
@@ -60,7 +89,24 @@ def create_gr_ephemeris_acceleration_func(ephem_processor):
     return jax.tree_util.Partial(func)
 
 
-def create_default_ephemeris_acceleration_func(ephem_processor):
+def create_default_ephemeris_acceleration_func(
+    ephem_processor: EphemerisProcessor,
+) -> jax.tree_util.Partial:
+    """
+    Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
+
+    This adds GR corrections for the 10 planets and newtonian corrections for the 16
+    asteroids.
+
+    Args:
+        ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
+            the perturber positions and velocities.
+
+    Returns:
+        A jax.tree_util.Partial function that takes a SystemState and returns the
+            accelerations due to the perturbers.
+
+    """
 
     def func(inputs: SystemState) -> jnp.ndarray:
         num_gr_perturbers = 10  # the "planets"
