@@ -1,3 +1,5 @@
+"""An experimental module for reparameterizations of orbital elements."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,7 +12,21 @@ from jorbit.utils.kepler import M_from_f, kepler
 
 
 @jax.jit
-def square_to_unit_disk(a, b):
+def square_to_unit_disk(a: float, b: float) -> tuple[float, float]:
+    """Map two points in the unit square to the unit disk.
+
+    Implements the algorithm from `Shirley & Chiu 1997 <https://doi.org/10.1080/10867651.1997.10487479>`_.
+
+    Args:
+        a (float):
+            x-coordinate in the unit square.
+        b (float):
+            y-coordinate in the unit square.
+
+    Returns:
+        tuple[float, float]:
+            (r, phi) in the unit disk.
+    """
     # https://doi.org/10.1080/10867651.1997.10487479
     a = 2 * a - 1
     b = 2 * b - 1
@@ -36,7 +52,21 @@ def square_to_unit_disk(a, b):
 
 
 @jax.jit
-def unit_disk_to_square(r, phi):
+def unit_disk_to_square(r: float, phi: float) -> tuple[float, float]:
+    """Map two points in the unit disk to the unit square.
+
+    Implements the algorithm from `Shirley & Chiu 1997 <https://doi.org/10.1080/10867651.1997.10487479>`_.
+
+    Args:
+        r (float):
+            Radius in the unit disk.
+        phi (float):
+            Angle in the unit disk.
+
+    Returns:
+        tuple[float, float]:
+            (x, y) in the unit square.
+    """
     # inverse of square_to_unit_disk
     cond1 = (phi <= jnp.pi / 4) | (phi > 7 * jnp.pi / 4)
     cond2 = (phi > jnp.pi / 4) & (phi <= 3 * jnp.pi / 4)
@@ -66,8 +96,30 @@ def unit_disk_to_square(r, phi):
 
 
 @partial(jax.jit, static_argnums=(3))
-def unit_cube_to_orbital_elements(u, a_low, a_high, uniform_inc):
+def unit_cube_to_orbital_elements(
+    u: jnp.ndarray, a_low: float, a_high: float, uniform_inc: bool
+) -> jnp.ndarray:
+    """Map six points in the unit cube to orbital elements.
 
+    One potential mapping from the unit cube to orbital elements. This particular one
+    samples in sqrt(e)*cos(omega), sqrt(e)*sin(omega), sin(i/2)sin(Omega),
+    sin(i/2)cos(Omega), log(a), and mean longitude. The goal was to a) avoid periodic
+    parameters for mcmc and b) keep everything in the unit cube for nested sampling.
+
+    Args:
+        u (jnp.ndarray):
+            Six points in the unit cube.
+        a_low (float):
+            Lower bound on the semi-major axis.
+        a_high (float):
+            Upper bound on the semi-major axis.
+        uniform_inc (bool):
+            Whether to use uniform inclination. If not, uses uniform in cos(i)
+
+    Returns:
+        jnp.ndarray:
+            Orbital elements.
+    """
     _r, _theta = square_to_unit_disk(u[0], u[1])
     _r = _r**2  # this gives us uniform e
     h = _r * jnp.cos(_theta)
@@ -106,7 +158,27 @@ def unit_cube_to_orbital_elements(u, a_low, a_high, uniform_inc):
 
 
 @partial(jax.jit, static_argnums=(3))
-def orbital_elements_to_unit_cube(orb, a_low, a_high, uniform_inc):
+def orbital_elements_to_unit_cube(
+    orb: jnp.ndarray, a_low: float, a_high: float, uniform_inc: bool
+) -> jnp.ndarray:
+    """The inverse mapping of unit_cube_to_orbital_elements.
+
+    Again, just one potential mapping from orbital elements to the unit cube.
+
+    Args:
+        orb (jnp.ndarray):
+            Orbital elements in a, e, i, Omega, omega, f order.
+        a_low (float):
+            Lower bound on the semi-major axis.
+        a_high (float):
+            Upper bound on the semi-major axis.
+        uniform_inc (bool):
+            Whether to use uniform inclination. If not, uses uniform in cos(i)
+
+    Returns:
+        jnp.ndarray:
+            Six points in the unit cube.
+    """
     a, e, i, Omega, omega, f = orb
     i = i * jnp.pi / 180
     Omega = Omega * jnp.pi / 180

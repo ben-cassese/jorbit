@@ -1,3 +1,5 @@
+"""The JAX-compatible functions for manipulating JPL DE ephemeris data."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -6,24 +8,29 @@ import jax.numpy as jnp
 
 @jax.tree_util.register_pytree_node_class
 class EphemerisProcessor:
-    """
-    A pytree-compatible class for processing JPL DE ephemeris data.
+    """A pytree-compatible class for processing JPL DE ephemeris data.
 
     This class provides functionality to evaluate Chebyshev polynomials for computing
     planetary positions and velocities from JPL Development Ephemerides (DE) data.
     It is compatible with JAX's pytree system for automatic differentiation and
     parallelization.
-
-    Args:
-        init (jnp.ndarray): Initial epoch times for each body in Julian days TDB.
-        intlen (jnp.ndarray): Length of each Chebyshev polynomial interval in seconds.
-        coeffs (jnp.ndarray): Chebyshev polynomial coefficients array of shape
-            (3, degree+1, n_intervals) where 3 represents x,y,z coordinates.
-        log_gms (jnp.ndarray): Natural log of gravitational parameters (GM) for
-            each body in AU^3/day^2.
     """
 
     def __init__(self, init, intlen, coeffs, log_gms):
+        """Initializes the EphemerisProcessor with Chebyshev polynomial data.
+
+        Args:
+            init (jnp.ndarray):
+                Initial epoch times for each body in Julian days TDB.
+            intlen (jnp.ndarray):
+                Length of each Chebyshev polynomial interval in seconds.
+            coeffs (jnp.ndarray):
+                Chebyshev polynomial coefficients array of shape
+                (3, degree+1, n_intervals) where 3 represents x,y,z coordinates.
+            log_gms (jnp.ndarray):
+                Natural log of gravitational parameters (GM) for each body in
+                AU^3/day^2.
+        """
         self.init = init
         self.intlen = intlen
         self.coeffs = coeffs
@@ -55,8 +62,7 @@ class EphemerisProcessor:
 
     @jax.jit
     def eval_cheby(self, coefficients, x):
-        """
-        Evaluates a Chebyshev polynomial using Clenshaw's algorithm.
+        """Evaluates a Chebyshev polynomial using Clenshaw's algorithm.
 
         Implements Clenshaw's recurrence formula for evaluating Chebyshev polynomials
         in a numerically stable way.
@@ -85,8 +91,7 @@ class EphemerisProcessor:
 
     @jax.jit
     def _individual_state(self, init, intlen, coeffs, tdb):
-        """
-        Computes position and velocity for a single body in the ephemeris at a given time.
+        """Computes position and velocity for a single body in the ephemeris at a given time.
 
         Args:
             init (float): Initial epoch time in Julian days TDB.
@@ -96,7 +101,8 @@ class EphemerisProcessor:
 
         Returns:
             tuple:
-                A tuple of jnp.ndarrays, first positions in AU, then velocities in AU/day.
+                A tuple of jnp.ndarrays, first positions in AU, then velocities in
+                AU/day.
         """
         tdb2 = 0.0  # leaving in case we ever decide to increase the time precision and use 2 floats
         _, _, n = coeffs.shape
@@ -138,8 +144,7 @@ class EphemerisProcessor:
 
     @jax.jit
     def state(self, tdb):
-        """
-        Computes positions and velocities for all bodies in the ephemeris at a given time.
+        """Computes positions and velocities for all bodies in the ephemeris at a given time.
 
         Args:
             tdb (float): Requested time in Julian days TDB (Barycentric Dynamical Time).
@@ -161,10 +166,6 @@ class EphemerisPostProcessor:
     Useful when one ephemeris (e.g. the asteroids) provides coordinates based on the
     positions of an object in another (e.g. the sun).
 
-    Args:
-        ephs (list[EphemerisProcessor]): List of ephemeris processor instances.
-        postprocessing_func (callable): Function to process the combined state vectors.
-
     Attributes:
         log_gms (jnp.ndarray):
             Concatenated array of natural log of gravitational parameters (GM) from all
@@ -172,6 +173,14 @@ class EphemerisPostProcessor:
     """
 
     def __init__(self, ephs, postprocessing_func):
+        """Initializes the EphemerisPostProcessor with multiple ephemeris processors.
+
+        Args:
+            ephs (list[EphemerisProcessor]):
+                List of ephemeris processor instances.
+            postprocessing_func (callable):
+                Function to process the combined state vectors.
+        """
         self.ephs = ephs
         self.postprocessing_func = postprocessing_func
         log_gms = jnp.empty(0)
@@ -180,8 +189,7 @@ class EphemerisPostProcessor:
         self.log_gms = log_gms
 
     def tree_flatten(self):
-        """
-        Flattens the class instance for JAX pytree compatibility.
+        """Flattens the class instance for JAX pytree compatibility.
 
         Returns:
             tuple: A tuple of (children, auxiliary_data) where children contains
@@ -194,8 +202,7 @@ class EphemerisPostProcessor:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        """
-        Reconstructs a class instance from flattened data.
+        """Reconstructs a class instance from flattened data.
 
         Args:
             aux_data: Auxiliary data (unused).

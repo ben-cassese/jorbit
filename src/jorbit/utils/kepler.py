@@ -1,5 +1,8 @@
-# this is a fork of squishyplanet/engine/kepler.py, which itself is a fork of
-# jaxoplanet/src/jaxoplanet/core/kepler.py, many thanks to the original authors
+"""Functions for solving Kepler's equation.
+
+This is a fork of squishyplanet/engine/kepler.py, which itself is a fork of
+jaxoplanet/src/jaxoplanet/core/kepler.py, many thanks to the original authors
+"""
 
 import jax
 
@@ -21,7 +24,6 @@ def kepler(M, ecc):
 
     Returns:
         Array: True anomaly in radians
-
     """
     sinf, cosf = _kepler(M, ecc)
     # this is the only bit that's different from jaxoplanet-
@@ -114,7 +116,19 @@ def _refine(M, ecc, ome, E):
 
 
 @jax.jit
-def M_from_f(f, ecc):
+def M_from_f(f: float, ecc: float) -> float:
+    """Compute the mean anomaly from the true anomaly and eccentricity.
+
+    Args:
+        f (float):
+            True anomaly in radians.
+        ecc (float):
+            Eccentricity.
+
+    Returns:
+        float:
+            Mean anomaly in radians.
+    """
     E = jnp.arctan2(jnp.sqrt(1 - ecc**2) * jnp.sin(f), ecc + jnp.cos(f))
     M = E - ecc * jnp.sin(E)
     return jnp.where(M < 0, M + 2 * jnp.pi, M)

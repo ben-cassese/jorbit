@@ -1,3 +1,5 @@
+"""Simple Newtonian gravity acceleration function."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -8,8 +10,7 @@ from jorbit.utils.states import SystemState
 
 @jax.jit
 def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
-    """
-    Compute the acceleration felt by each particle due to Newtonian gravity.
+    """Compute the acceleration felt by each particle due to Newtonian gravity.
 
     Set up to separate massive and tracer particles, so systems with many tracers
     will not compute useless pairwise interactions.

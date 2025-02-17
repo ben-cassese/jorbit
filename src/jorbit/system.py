@@ -1,6 +1,10 @@
+"""The System class and its supporting functions."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
+from collections.abc import Callable
+
 import astropy.units as u
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
@@ -19,16 +23,50 @@ from jorbit.utils.states import SystemState
 
 
 class System:
+    """A system of particles in the solar system.
+
+    Very similar in spirit to the `Particle` class, but now for multiple massless
+    particles.
+    """
+
     def __init__(
         self,
-        particles=None,
-        state=None,
-        gravity="default solar system",
-        integrator="ias15",
-        earliest_time=Time("1980-01-01"),
-        latest_time=Time("2050-01-01"),
+        particles: list | None = None,
+        state: SystemState | None = None,
+        gravity: str | Callable = "default solar system",
+        integrator: str = "ias15",
+        earliest_time: Time = Time("1980-01-01"),
+        latest_time: Time = Time("2050-01-01"),
     ):
+        """Initialize a System.
 
+        Args:
+            particles (list, optional):
+                A list of Particle objects. None if state is provided. Defaults to None.
+            state (SystemState, optional):
+                A SystemState object. None if particles is provided. Defaults to None.
+            gravity (str | Callable):
+                The gravitational acceleration function to use when integrating the
+                particle's orbit. Defaults to "default solar system", which corresponds
+                to parameterized post-Newtonian interactions with the 10 bodies in the
+                JPL DE440 ephemeris, plus Newtonian interactions with the 16 largest
+                asteroids in the asteroids_de441/sb441-n16.bsp ephemeris. Can also be
+                a jax.tree_util.Partial object that follows the same signature as the
+                acceleration functions in jorbit.accelerations.
+            integrator (str):
+                The integrator to use for the particle. Defaults to "ias15", which is a
+                15th order adaptive step-size integrator. Currently IAS15 is the only
+                option- this is a vestige of previous experiments with Gauss-Jackson
+                integrators that we might return to someday.
+            earliest_time (Time):
+                The earliest time we expect to integrate the particle to. Defaults to
+                Time("1980-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+            latest_time (Time):
+                The latest time we expect to integrate the particle to. Defaults to
+                Time("2050-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+        """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 
@@ -57,6 +95,7 @@ class System:
         self._integrator_state, self._integrator = self._setup_integrator()
 
     def __repr__(self):
+        """Return a string representation of the System."""
         return f"*************\njorbit System\n time: {Time(self._state.time, format='jd', scale='tdb').utc.iso}\n*************"
 
     def _setup_acceleration_func(self, gravity):
@@ -113,7 +152,23 @@ class System:
     # PUBLIC METHODS
     ################
 
-    def integrate(self, times):
+    def integrate(self, times: Time):
+        """Integrate the System to a given time.
+
+        Note: This method does not change the state of the system. It returns the
+        positions and velocitiesat the given times, but the system itself is not
+        changed.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to integrate to. Can be a single time or an array of times.
+                If provided as a jnp.array, the entries are assumed to be in TDB JD.
+
+        Returns:
+            tuple[jnp.ndarray, jnp.ndarray]:
+                The positions of the particle at the given times, in AU, and the
+                The velocities of the particle at the given times, in AU/day.
+        """
         if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
@@ -124,7 +179,25 @@ class System:
         )
         return positions, velocities
 
-    def ephemeris(self, times, observer):
+    def ephemeris(self, times: Time | jnp.ndarray, observer: str | jnp.ndarray):
+        """Compute an ephemeris for the system.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to compute the ephemeris for. Can be a single time or an array
+                of times. If provided as a jnp.array, the entries are assumed to be in
+                TDB JD.
+            observer (str | jnp.ndarray):
+                The observer to compute the ephemeris for. Can be a string representing
+                an observatory name, or a 3D position vector in AU. For more info on
+                acceptable strings, see the get_observer_positions function.
+
+        Returns:
+            coords (SkyCoord):
+                The ephemeris of each particle in the system at the given times, in ICRS
+                coordinates and as seen from that specific observer. Each particle has
+                its own light travel time correction applied individually.
+        """
         if isinstance(observer, str):
             observer_positions = get_observer_positions(times, observer)
         else:

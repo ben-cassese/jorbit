@@ -1,3 +1,5 @@
+"""Transformations between coordinate systems or representations of a particle's state."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -12,8 +14,7 @@ from jorbit.data.constants import (
 
 @jax.jit
 def icrs_to_horizons_ecliptic(xs: jnp.ndarray) -> jnp.ndarray:
-    """
-    Transform an ICRS 3D cartesian position to a Horizons ecliptic 3D cartesian position.
+    """Transform an ICRS 3D cartesian position to a Horizons ecliptic 3D cartesian position.
 
     Args:
         xs (jnp.ndarray): ICRS 3D cartesian position.
@@ -27,8 +28,7 @@ def icrs_to_horizons_ecliptic(xs: jnp.ndarray) -> jnp.ndarray:
 
 @jax.jit
 def horizons_ecliptic_to_icrs(xs: jnp.ndarray) -> jnp.ndarray:
-    """
-    Transform a Horizons ecliptic 3D cartesian position to an ICRS 3D cartesian position.
+    """Transform a Horizons ecliptic 3D cartesian position to an ICRS 3D cartesian position.
 
     Args:
         xs (jnp.ndarray): Horizons ecliptic 3D cartesian position.
@@ -44,8 +44,7 @@ def horizons_ecliptic_to_icrs(xs: jnp.ndarray) -> jnp.ndarray:
 def elements_to_cartesian(
     a: float, ecc: float, nu: float, inc: float, Omega: float, omega: float
 ) -> tuple:
-    """
-    Convert orbital elements to cartesian coordinates.
+    """Convert orbital elements to cartesian coordinates.
 
     Relies on the total mass of the solar system, which is assumed to be the sum of all
     GM values of the sun, planets, and 16 most massive asteroids as assumed by DE440.
@@ -126,8 +125,7 @@ def elements_to_cartesian(
 
 @jax.jit
 def cartesian_to_elements(x, v):
-    """
-    Convert cartesian coordinates to orbital elements.
+    """Convert cartesian coordinates to orbital elements.
 
     Relies on the total mass of the solar system, which is assumed to be the sum of all
     GM values of the sun, planets, and 16 most massive asteroids as assumed by DE440.

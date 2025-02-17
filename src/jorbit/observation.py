@@ -1,3 +1,5 @@
+"""Module for the Observations class."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -16,14 +18,40 @@ from jorbit.utils.mpc import read_mpc_file
 
 
 class Observations:
+    """The Observations class.
+
+    This is a container for astrometric observations of a particle at different times.
+    When a user supplies times, coordinates, and observatory names, this class will
+    under-the-hood pre-compute the required covariance matricies required for fitting,
+    query Horizons to get the Barycentric positions of the observers, and store
+    everything as ready-to-use-later JAX arrays.
+    """
+
     def __init__(
         self,
-        observed_coordinates=None,
-        times=None,
-        observatories=None,
-        astrometric_uncertainties=None,
-        mpc_file=None,
+        observed_coordinates: SkyCoord | None = None,
+        times: Time | None = None,
+        observatories: str | list[str] | None = None,
+        astrometric_uncertainties: u.Quantity | None = None,
+        mpc_file: str | None = None,
     ):
+        """Initialize the Observations class.
+
+        Args:
+            observed_coordinates (SkyCoord | None):
+                The observed coordinates of the particle. None if loading an MPC file.
+            times (Time):
+                The times of the observations. None if loading an MPC file.
+            observatories (str | list[str] | None):
+                The observatories where the observations were made. If only one
+                observatory is used, it's assumed that all observations were made from
+                that observatory. None if loading an MPC file.
+            astrometric_uncertainties (u.Quantity | None):
+                The astrometric uncertainties of the observations. None if loading an
+                MPC file.
+            mpc_file (str | None):
+                The path to an MPC file containing the observations.
+        """
         self._observed_coordinates = observed_coordinates
         self._times = times
         self._observatories = observatories
@@ -47,12 +75,15 @@ class Observations:
         self._final_init_checks()
 
     def __repr__(self):
+        """Return a string representation of the Observations class."""
         return f"Observations with {len(self._ra)} set(s) of observations"
 
     def __len__(self):
+        """Return the number of observations."""
         return len(self._ra)
 
     def __add__(self, newobs):
+        """Add two Observations objects together."""
         t = jnp.concatenate([self._times, newobs.times])
         ra = jnp.concatenate([self._ra, newobs.ra])
         dec = jnp.concatenate([self._dec, newobs.dec])
@@ -73,6 +104,7 @@ class Observations:
         )
 
     def __getitem__(self, index):
+        """Return a new Observations object from a slice of the current one."""
         return Observations(
             observed_coordinates=SkyCoord(
                 ra=self._ra[index], dec=self._dec[index], unit=u.rad
@@ -85,38 +117,47 @@ class Observations:
 
     @property
     def ra(self):
+        """Right ascension of the observations in radians, ICRS."""
         return self._ra
 
     @property
     def dec(self):
+        """Declination of the observations in radians, ICRS."""
         return self._dec
 
     @property
     def times(self):
+        """Times of the observations in JD TDB."""
         return self._times
 
     @property
     def observatories(self):
+        """Names of the observatories."""
         return self._observatories
 
     @property
     def astrometric_uncertainties(self):
+        """Astrometric uncertainties of the observations in arcseconds."""
         return self._astrometric_uncertainties
 
     @property
     def observer_positions(self):
+        """Barycentric cartesian positions of the observers in AU."""
         return self._observer_positions
 
     @property
     def cov_matrices(self):
+        """Covariance matrices of the observations in arcsec^2."""
         return self._cov_matrices
 
     @property
     def inv_cov_matrices(self):
+        """Inverse covariance matrices of the observations in arcsec^-2."""
         return self._inv_cov_matrices
 
     @property
     def cov_log_dets(self):
+        """Log determinants of the covariance matrices."""
         return self._cov_log_dets
 
     ####################################################################################

@@ -1,3 +1,5 @@
+"""Constants used throughout the package."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)

@@ -1,3 +1,5 @@
+"""The jorbit package."""
+
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")

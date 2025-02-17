@@ -1,3 +1,5 @@
+"""Functions for interacting with the Horizons API."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -58,7 +60,25 @@ class HorizonsQueryConfig(NamedTuple):
 def horizons_query_string(
     target: str, center: str, query_type: str, times: Time, skip_daylight: bool = False
 ) -> str:
+    """Constructs the query string for the Horizons API.
 
+    Args:
+        target (str):
+            The target object identifier.
+        center (str):
+            The center object identifier.
+        query_type (str):
+            The type of query, either 'VECTOR' or 'OBSERVER'.
+        times (Time):
+            The times for the query. Note it just needs to be an Astropy Time object-
+            we'll handle the different tdb/utc conversions internally.
+        skip_daylight (bool):
+            Whether to skip daylight in the query.
+
+    Returns:
+        str:
+            The constructed query string.
+    """
     assert len(times) > HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS
 
     if len(times) > HorizonsQueryConfig.MAX_TIMESTEPS:
@@ -118,7 +138,21 @@ def horizons_query_context(query_string: str) -> io.StringIO:
 def parse_horizons_response(
     response_text: str, columns: list[str], skip_empty: bool = False
 ) -> pd.DataFrame:
-    """Parses the Horizons API response into a DataFrame."""
+    """Parses the Horizons API response into a DataFrame.
+
+    Args:
+        response_text (str):
+            The response text from the Horizons API.
+        columns (list[str]):
+            The column names for the DataFrame.
+        skip_empty (bool):
+            Whether to skip empty lines in the response.
+
+    Returns:
+        pd.DataFrame:
+            The parsed DataFrame.
+
+    """
     lines = response_text.split("\n")
     try:
         start = lines.index("$$SOE")
@@ -145,7 +179,20 @@ def parse_horizons_response(
 
 
 def make_horizons_request(query_content: io.StringIO) -> str:
-    """Makes the HTTP request to Horizons API."""
+    """Makes the HTTP request to Horizons API.
+
+    Args:
+        query_content (io.StringIO):
+            The query content to send in the request.
+
+    Returns:
+        str:
+            The response text from the Horizons API.
+
+    Raises:
+        ValueError:
+            If the request fails.
+    """
     try:
         response = requests.post(
             HorizonsQueryConfig.HORIZONS_API_URL,
@@ -163,7 +210,29 @@ def horizons_bulk_vector_query(
     center: str,
     times: Time,
 ) -> pd.DataFrame:
+    """The main query function for our retrieval of vectors from the Horizons API.
 
+    This function creates the appropriate query string, executes the query, and parses
+    the response into a DataFrame. If we're requesting a small number of timesteps,
+    it'll use astroquery to retrieve the data, which allows for easy caching. However,
+    if we're requesting > 50 unique timesteps, astroquery will fail, so we instead fall
+    back to a manual API query. These results will not be cached.
+
+    Note: The Horizons API has a hard limit of 10,000 timesteps per query.
+
+    Args:
+        target (str):
+            The target object identifier.
+        center (str):
+            The center object identifier.
+        times (Time):
+            The times for the query. Note it just needs to be an Astropy Time object-
+            we'll handle the different tdb/utc conversions internally.
+
+    Returns:
+        pd.DataFrame:
+            A pandas DataFrame containing the vector data.
+    """
     if isinstance(times.jd, float):
         times = [times]
     if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
@@ -215,7 +284,31 @@ def horizons_bulk_vector_query(
 def horizons_bulk_astrometry_query(
     target: str, center: str, times: Time, skip_daylight: bool = False
 ) -> pd.DataFrame:
+    """The main query function for our retrieval of astrometry from the Horizons API.
 
+    This function creates the appropriate query string, executes the query, and parses
+    the response into a DataFrame. If we're requesting a small number of timesteps,
+    it'll use astroquery to retrieve the data, which allows for easy caching. However,
+    if we're requesting > 50 unique timesteps, astroquery will fail, so we instead fall
+    back to a manual API query. These results will not be cached.
+
+    Note: The Horizons API has a hard limit of 10,000 timesteps per query.
+
+    Args:
+        target (str):
+            The target object identifier.
+        center (str):
+            The center object identifier.
+        times (Time):
+            The times for the query. Note it just needs to be an Astropy Time object-
+            we'll handle the different tdb/utc conversions internally.
+        skip_daylight (bool):
+            Whether to skip daylight in the query.
+
+    Returns:
+        pd.DataFrame:
+            A pandas DataFrame containing the astrometry data.
+    """
     if isinstance(times.jd, float):
         times = [times]
     if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
@@ -266,7 +359,24 @@ def horizons_bulk_astrometry_query(
         raise ValueError(f"Astrometry query failed: {e!s}") from e
 
 
-def get_observer_positions(times, observatories):
+def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.ndarray:
+    """A wrapper to retrieve the barycentric positions of an observer from the Horizons API.
+
+    Args:
+        times (Time):
+            The times for the query. Can be a single Time, or a Time object with length
+            > 1. If length < 50, positions will be retrieved using astroquery, otherwise
+            a manual API query will be used. Note that length must be < 10,000.
+        observatories (str | list[str]):
+            The observatory name for the query. If '@' is included in the query, it's
+            assumed to be a Horizons-interpretable code. Otherwise it will be compared
+            to the list of observatory names in the jorbit.data.observatory_codes module
+            and mapped to its appropriate code.
+
+    Returns:
+        jnp.ndarray:
+            The barycentric positions of the observer in AU.
+    """
     if isinstance(times.jd, float):
         times = [times]
     if isinstance(observatories, str):
@@ -307,5 +417,5 @@ def get_observer_positions(times, observatories):
     _times = jnp.array([t.tdb.jd for t in _times])
     emb_from_observer = jnp.array(emb_from_observer_all)[jnp.argsort(_times)]
 
-    postions = emb_from_ssb - emb_from_observer
-    return postions
+    positions = emb_from_ssb - emb_from_observer
+    return positions

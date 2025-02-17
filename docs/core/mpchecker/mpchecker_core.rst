@@ -1,7 +1,7 @@
-.. _MPChecker_core:
+.. _MPChecker_helpers:
 
-MPChecker core
-==============
+MPChecker Helpers
+=================
 
 tmp
 

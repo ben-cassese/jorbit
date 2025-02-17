@@ -1,9 +1,8 @@
-"""
-An experimental module that implements an IAS15-style integrator but using an arbitrary
-number of substep acceleration evaluations. Built on a custom JAX pytree named
-DoubleDouble that stores the high and low bits of a double-double number in two
-separate arrays, and uses the DoubleDouble class to overload the basic arithmetic
-operations.
+"""An experimental module implementing an IAS15-style integrator using an arbitrary number of substep acceleration evaluations.
+
+Built on a custom JAX pytree named DoubleDouble that stores the high and low bits of a
+double-double number in two separate arrays, and uses the DoubleDouble class to overload
+the basic arithmetic operations.
 
 Everything here should be considered experimental and subject to change.
 """
@@ -21,8 +20,7 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 
 @jax.jit
 def acceleration_func(x: jnp.ndarray) -> jnp.ndarray:
-    """
-    A dummy acceleration function for testing purposes, unit central potential.
+    """A dummy acceleration function for testing purposes, unit central potential.
 
     Args:
         x: (n_particles, 3) array of positions
@@ -36,8 +34,7 @@ def acceleration_func(x: jnp.ndarray) -> jnp.ndarray:
 
 # not jitted, not using pure jax here
 def setup_iasnn_integrator(n_internal_points: int) -> tuple:
-    """
-    Precompute the constants needed for an arbitrary-order IASNN-style integrator.
+    """Precompute the constants needed for an arbitrary-order IASNN-style integrator.
 
     This creates the H, C, R, D arrays you see in the REBOUND source, and some
     precomputed denominators for the Taylor expansion coefficients. Not jittable,
@@ -123,8 +120,7 @@ def _estimate_x_v_from_b(
     h: DoubleDouble,
     bp: DoubleDouble,
 ) -> tuple:
-    """
-    Given the b coefficients, estimate the new position and velocity.
+    """Given the b coefficients, estimate the new position and velocity.
 
     Args:
         a0 (DoubleDouble):
@@ -188,8 +184,7 @@ def refine_intermediate_g(
     at: DoubleDouble,
     a0: DoubleDouble,
 ) -> DoubleDouble:
-    """
-    After evaluating the acceleration at a certain substep, refine the estimate of the g coefficients.
+    """After evaluating the acceleration at a certain substep, refine the estimate of the g coefficients.
 
     Args:
         substep_num (int):
@@ -233,8 +228,7 @@ def _refine_b_and_g(
     substep_num: int,
     return_g_diff: bool,
 ) -> tuple:
-    """
-    Refine the b coefficients and the g coefficients after evaluating the acceleration at a certain substep.
+    """Refine the b coefficients and the g coefficients after evaluating the acceleration at a certain substep.
 
     Args:
         r (DoubleDouble):
@@ -290,8 +284,7 @@ def step(
     precomputed_setup: tuple,
     convergence_threshold: DoubleDouble = DoubleDouble.from_string("1e-40"),
 ) -> tuple:
-    """
-    Take a single step with an IASNN-style integrator.
+    """Take a single step with an IASNN-style integrator.
 
     This does all of the same predictor-corrector iteration as the default IAS15
     integrator, but does *not* do any of the time validity checking, and currently does

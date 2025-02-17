@@ -1,3 +1,5 @@
+"""Various tools for projecting positions onto the sky."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,8 +12,7 @@ from jorbit.utils.states import SystemState
 
 @jax.jit
 def sky_sep(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
-    """
-    Compute the angular separation between two points on the sky.
+    """Compute the angular separation between two points on the sky.
 
     Following Astropy's SkyCoord.separation, this uses the Vincenty formula.
 
@@ -24,7 +25,6 @@ def sky_sep(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
     Returns:
         float: The angular separation in arcseconds.
     """
-
     # all inputs are floats, ICRS positions in radians
     # output is in arcsec
 
@@ -50,8 +50,7 @@ def sky_sep(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
 def tangent_plane_projection(
     ra_ref: float, dec_ref: float, ra: float, dec: float
 ) -> jnp.ndarray:
-    """
-    Project a point on the sky onto a tangent plane at a reference point.
+    """Project a point on the sky onto a tangent plane at a reference point.
 
     Somewhat overkill, rotates the positions to the equator to avoid any potential
     issues near the poles.
@@ -103,8 +102,7 @@ def on_sky(
     acc_func: callable,
     acc_func_kwargs: dict = {},
 ) -> tuple[float, float]:
-    """
-    Compute the on-sky position of a particle from a given observer position.
+    """Compute the on-sky position of a particle from a given observer position.
 
     This function computes the on-sky position of a particle at a given time, correcting
     for light travel time. It uses the IAS15 integrator and the provided acceleration
@@ -130,7 +128,6 @@ def on_sky(
         tuple[float, float]:
             The right ascension and declination of the particle in radians, ICRS.
     """
-
     # has to be one particle at one time to get the light travel time right
     state = SystemState(
         massive_positions=jnp.empty((0, 3)),

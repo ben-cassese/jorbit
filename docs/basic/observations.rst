@@ -3,9 +3,6 @@
 Observations
 ============
 
-tmp
-
-
 .. automodule:: jorbit.observation
     :members:
     :member-order: groupwise

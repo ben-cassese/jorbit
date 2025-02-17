@@ -3,9 +3,6 @@
 Particle
 ========
 
-tmp
-
-
 .. automodule:: jorbit.particle
     :members:
     :member-order: groupwise

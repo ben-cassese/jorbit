@@ -22,11 +22,12 @@ release = "0.1.0"
 
 extensions = [
     # "sphinx_rtd_theme",
+    "sphinx.ext.napoleon",
     "sphinx.ext.autodoc",
+    "sphinx_autodoc_typehints",
     "sphinx.ext.doctest",
     "sphinx.ext.todo",
     "sphinx.ext.mathjax",
-    "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "nbsphinx",
     "sphinx_automodapi.automodapi",
@@ -56,7 +57,7 @@ html_theme_options = {
     "repository_url": "https://github.com/ben-cassese/jorbit",
     "repository_branch": "main",
     "use_repository_button": True,
-    "use_download_button": True,
+    "use_download_button": False,
     "show_prev_next": False,
     "logo": {
         "text": "jorbit",
@@ -70,3 +71,9 @@ html_context = {"default_mode": "light"}
 html_sidebars = {
     "**": ["navbar-logo.html", "search-field.html", "sbt-sidebar-nav.html"]
 }
+
+autodoc_typehints = "description"
+python_use_unqualified_type_names = True
+autodoc_typehints_format = "fully-qualified"
+napoleon_use_param = True
+napoleon_use_rtype = True

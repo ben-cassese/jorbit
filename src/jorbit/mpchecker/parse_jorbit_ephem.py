@@ -1,3 +1,5 @@
+"""The helper functions for the mpchecker."""
+
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
@@ -10,6 +12,7 @@ import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
+from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 from astropy.utils.data import download_file
@@ -23,9 +26,27 @@ from jorbit.utils.states import SystemState
 
 @jax.jit
 def get_chunk_index(
-    time, t0=Time("2020-01-01").tdb.jd, tf=Time("2040-01-01").tdb.jd, chunk_size=30
-):
+    time: Time,
+    t0: float = Time("2020-01-01").tdb.jd,
+    tf: float = Time("2040-01-01").tdb.jd,
+    chunk_size: int = 30,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Get the index of given piecewise chunk of Chebyshev coefficients and the offset within that chunk.
 
+    Args:
+        time (Time):
+            The time in question.
+        t0 (float):
+            The start time of the ephemeris, in JD TDB.
+        tf (float):
+            The end time of the ephemeris, in JD TDB.
+        chunk_size (int):
+            The size of each chunk, in days.
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            The index of the chunk and the offset within that chunk.
+    """
     # 2451545.0 is the J2000 epoch in TDB
     init = (t0 - 2451545.0) * 86400.0
     intlen = chunk_size * 86400.0
@@ -44,7 +65,25 @@ def get_chunk_index(
 
 
 @jax.jit
-def eval_cheby(coefficients, x):
+def eval_cheby(
+    coefficients: jnp.ndarray, x: jnp.ndarray
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Evaluate the pair of Chebyshev polynomials describing RA, Dec at a given point.
+
+    Similar to eval_cheby in the EphemerisProcessor class, but instead of evaluating
+    three polynomials to give a cartesian position (and their derivatives to get
+    velocity), this evaluates two polynomials to reconstruct the geocentric RA and Dec.
+
+    Args:
+        coefficients (jnp.ndarray):
+            The Chebyshev coefficients.
+        x (jnp.ndarray):
+            The point at which to evaluate the polynomials.
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            The RA and Dec at the given point.
+    """
     b_ii = jnp.zeros(2)
     b_i = jnp.zeros(2)
 
@@ -60,7 +99,25 @@ def eval_cheby(coefficients, x):
 
 
 @jax.jit
-def individual_state(coefficients, offset, t0, chunk_size):
+def individual_state(
+    coefficients: jnp.ndarray, offset: float, t0: float, chunk_size: int
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Get the state of a single particle at a given time.
+
+    Args:
+        coefficients (jnp.ndarray):
+            The Chebyshev coefficients.
+        offset (float):
+            The offset within the chunk.
+        t0 (float):
+            The start time of the ephemeris, in JD TDB.
+        chunk_size (int):
+            The size of each chunk, in days.
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            The RA and Dec at the given time.
+    """
     intlen = chunk_size * 86400.0
 
     s = 2.0 * offset / intlen - 1.0
@@ -70,13 +127,47 @@ def individual_state(coefficients, offset, t0, chunk_size):
 
 
 @jax.jit
-def multiple_states(coefficients, offset, t0, chunk_size):
+def multiple_states(
+    coefficients: jnp.ndarray, offset: float, t0: float, chunk_size: int
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Get the state of multiple particles at a given time.
+
+    Just a vmapping of individual_state.
+
+    Args:
+        coefficients (jnp.ndarray):
+            The Chebyshev coefficients, (nparticles, N_coeffs, 2)
+        offset (float):
+            The offset within the chunk.
+        t0 (float):
+            The start time of the ephemeris, in JD TDB.
+        chunk_size (int):
+            The size of each chunk, in days.
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            The RAs and Decs of each particle at the given time.
+    """
     return jax.vmap(individual_state, in_axes=(0, None, None, None))(
         coefficients, offset, t0, chunk_size
     )
 
 
-def setup_checks(coordinate, time, radius):
+def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Unit):
+    """Check that inputs are valid for the ephemeris, convert to standard forms.
+
+    Args:
+        coordinate (SkyCoord):
+            The coordinate of the target.
+        time (Time):
+            The time of the observation.
+        radius (u.Unit):
+            The radius of the field of view. Must be a unit of angle.
+
+    Returns:
+        tuple[SkyCoord, u.Quantity, float, float, int, np.ndarray]:
+            The coordinate, radius, start time, end time, chunk size, and names.
+    """
     assert np.all(time > Time("2020-01-01")), "All times must be after 2020-01-01"
     assert np.all(time < Time("2040-01-01")), "All times must be before 2040-01-01"
     coordinate = coordinate.transform_to("icrs")
@@ -93,13 +184,31 @@ def setup_checks(coordinate, time, radius):
     return coordinate, radius, t0, tf, chunk_size, names
 
 
-def load_mpcorb():
+def load_mpcorb() -> pl.DataFrame:
+    """Load the mpcorb file used to generate the latest Jorbit ephemeris.
+
+    Returns:
+        pl.DataFrame:
+            The mpcorb file.
+    """
     df = pl.read_ipc(download_file(JORBIT_EPHEM_URL_BASE + "mpcorb.arrow", cache=True))
     return df
 
 
-def nearest_asteroid_helper(coordinate, times):
+def nearest_asteroid_helper(coordinate: SkyCoord, times: Time) -> tuple:
+    """Pre-compute and load material for the nearest_asteroid function.
 
+    Args:
+        coordinate (SkyCoord):
+            The coordinate of the target.
+        times (Time):
+            The times of the observation.
+
+    Returns:
+        tuple[tuple, jnp.ndarray]:
+            The coordinate, radius, start time, end time, chunk size, and names, then
+            a merged array of all the relevant Chebyshev coefficients.
+    """
     coordinate, _, t0, tf, chunk_size, names = setup_checks(
         coordinate, times, radius=0 * u.arcsec
     )
@@ -130,9 +239,27 @@ def nearest_asteroid_helper(coordinate, times):
     return (coordinate, _, t0, tf, chunk_size, names), coeffs
 
 
-def unpacked_to_packed_designation(number_str):
+def unpacked_to_packed_designation(number_str: str) -> str:
+    """Convert an unpacked designation to a packed designation.
+
+    Useful for translating between the leftmost and rightmost columns of a mpcorb file.
+    Correctly handles provisional designations, low-numbered objects, medium-numbered
+    objects, and high-numbered objects.
+
+    Args:
+        number_str (str):
+            The unpacked designation. If is 7 digits and begins with a letter, it's
+            assumed to be a provisional designation and is returned unchanged.
+            Otherwise it's assumed to be a numbered object and will be packed into a 5
+            digit form.
+
+    Returns:
+        str:
+            The packed designation.
+    """
     # If it's a provisional designation (7 characters), return as is
-    if len(number_str) == 7:
+    # adding this isalpha check in case we reach > 10^7 numbered objects soonish
+    if (len(number_str) == 7) and number_str[0].isalpha():
         return number_str
 
     # Convert to integer for numerical comparisons
@@ -176,8 +303,22 @@ def unpacked_to_packed_designation(number_str):
     return f"~{base62_num:0>4}"
 
 
-def packed_to_unpacked_designation(code):
+def packed_to_unpacked_designation(code: str) -> str:
+    """Convert a packed designation to an unpacked designation.
 
+    Useful for translating between the leftmost and rightmost columns of a mpcorb file.
+    Correctly handles provisional designations, low-numbered objects, medium-numbered
+    objects, and high-numbered objects.
+
+    Args:
+        code (str):
+            The packed designation. 5 characters for numbered objects, 7 for
+            provisional.
+
+    Returns:
+        str:
+            The unpacked designation.
+    """
     # if it's a provisional designation, just return it
     if len(code) == 7:
         return code
@@ -222,7 +363,38 @@ def packed_to_unpacked_designation(code):
 
 
 @jax.jit
-def apparent_mag(h, g, target_position, observer_position):
+def apparent_mag(
+    h: float, g: float, target_position: jnp.ndarray, observer_position: jnp.ndarray
+) -> float:
+    r"""Calculate the apparent magnitude of an asteroid at a certain position from a certain observer.
+
+    Implements the same formula as JPL Horizons,
+
+    .. math::
+        APmag= H + 5*\\log_{10}(\\Delta) + 5*\\log_{10}(r) -2.5*\\log_{10}((1-G)*\\phi_1 + G*\\phi_2)
+
+    where :math:`\\Delta` is the distance from the observer to the target, :math:`r` is
+    the distance from the target to the Sun, and :math:`\\phi_1` and :math:`\\phi_2` are
+    phase functions that depend on the phase angle :math:`\\alpha`.
+
+    Note a minor inconsistency here: the coordinates are defined in barycentric
+    coordinates, but here we assume they're heliocentric just to avoid having to query
+    the position of the sun. Shouldn't matter much.
+
+    Args:
+        h (float):
+            The absolute magnitude of the asteroid.
+        g (float):
+            The slope parameter of the asteroid.
+        target_position (jnp.ndarray):
+            The position of the target in barycentric coordinates.
+        observer_position (jnp.ndarray):
+            The position of the observer in barycentric coordinates.
+
+    Returns:
+        float:
+            The apparent magnitude of the asteroid.
+    """
     # APmag= H + 5*log10(delta) + 5*log10(r) -2.5*log10((1-G)*phi1 + G*phi2)
 
     delta_vec = target_position - observer_position
@@ -243,8 +415,34 @@ def apparent_mag(h, g, target_position, observer_position):
 
 
 def extra_precision_calcs(
-    asteroid_flags, times, radius, observer, coordinate, relevant_mpcorb
-):
+    asteroid_flags: jnp.ndarray,
+    times: Time,
+    radius: u.Unit,
+    observer: str,
+    coordinate: SkyCoord,
+    relevant_mpcorb: pl.DataFrame,
+) -> tuple:
+    """Helper function for running N-body ephemeris calculations.
+
+    Args:
+        asteroid_flags (jnp.ndarray):
+            A boolean array indicating which asteroids to include.
+        times (Time):
+            The times of the observation.
+        radius (u.Unit):
+            The radius of the field of view. Must be a unit of angle.
+        observer (str):
+            The observer to use. Must be a valid Horizons observer code.
+        coordinate (SkyCoord):
+            The coordinate of the target.
+        relevant_mpcorb (pl.DataFrame):
+            The mpcorb file used to generate the latest Jorbit ephemeris.
+
+    Returns:
+        tuple:
+            The ephemeris, separations, coordinate table, magnitudes, magnitude table,
+            and total magnitudes.
+    """
     x0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "x0.npy", cache=True))
     x0 = x0[asteroid_flags]
     v0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "v0.npy", cache=True))
@@ -313,7 +511,21 @@ def extra_precision_calcs(
     return coords, seps, coord_table, mags, mag_table, total_mags
 
 
-def get_relevant_mpcorb(asteroid_flags):
+def get_relevant_mpcorb(asteroid_flags: jnp.ndarray) -> pl.DataFrame:
+    """Filter an MPCORB file to only include relevant asteroids.
+
+    Given a boolean array corresponding to the asteroid in the Jorbit ephemeris, filter
+    the MPCORB file to only include those asteroids. Note that not all asteroids in the
+    MPCORB file are in the Jorbit ephemeris since not all had Horizons data available.
+
+    Args:
+        asteroid_flags (jnp.ndarray):
+            A boolean array indicating which asteroids to include.
+
+    Returns:
+        pl.DataFrame:
+            The filtered MPCORB file.
+    """
     all_names = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy", cache=True))
     names = all_names[asteroid_flags]
     names = [unpacked_to_packed_designation(i) for i in names]

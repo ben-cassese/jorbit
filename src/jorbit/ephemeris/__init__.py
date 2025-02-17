@@ -1,3 +1,5 @@
+"""Manage JPL DE ephemeris data."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)

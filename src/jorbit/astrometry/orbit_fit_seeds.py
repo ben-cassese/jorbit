@@ -1,3 +1,5 @@
+"""Methods for an initial orbit fit from astrometry, incl. Gauss's method."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,8 +12,7 @@ from jorbit.utils.states import CartesianState, KeplerianState
 
 
 def gauss_method_orbit(obs: Observations) -> CartesianState:
-    """
-    Gauss's method for orbit determination from three observations.
+    """Gauss's method for orbit determination from three observations.
 
     Args:
         obs (Observations): A set of three observations.
@@ -19,7 +20,6 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     Returns:
         CartesianState: The state of the best-fitting orbit.
     """
-
     assert len(obs) == 3, "Gauss's method requires 3 (and only 3) observations"
 
     def radec_to_unit(ra, dec):
@@ -138,8 +138,7 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
 
 
 def simple_circular(ra: float, dec: float, semi: float, time: float) -> CartesianState:
-    """
-    Compute a circular orbit of a given size that passes through a given coordinate.
+    """Compute a circular orbit of a given size that passes through a given coordinate.
 
     A simpler alternative to Gauss's method, assumes that the particle is observed
     at its highest excursion from the ecliptic.

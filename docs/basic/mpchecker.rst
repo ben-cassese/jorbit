@@ -3,9 +3,6 @@
 MPChecker
 ============
 
-tmp
-
-
 .. automodule:: jorbit.mpchecker.interface
     :members:
     :member-order: groupwise

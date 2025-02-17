@@ -1,3 +1,10 @@
+"""An experimental/testing module for testing the DoubleDouble integrator stuff.
+
+This implements arbitrary-order IAS15-style integrators using the mpmath library.
+It's about as anti-JAX as you can get, but it's useful for testing the DoubleDouble
+operations.
+"""
+
 import mpmath as mpm
 import numpy as np
 from mpmath import matrix, mp, mpf
@@ -7,12 +14,48 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 mp.dps = 70
 
 
-def acceleration_func(x):
+def acceleration_func(x: mpm.matrix) -> mpm.matrix:
+    """A dummy acceleration function for testing purposes, unit central potential.
+
+    Args:
+        x: (n_particles, 3) array of positions
+
+    Returns:
+        a: (n_particles, 3) array of accelerations
+    """
     r = mpm.norm(x)
     return -x / (r * r * r)
 
 
-def precompute(n_internal_points):
+def precompute(n_internal_points: int) -> tuple:
+    """Precompute the constants needed for an arbitrary-order IASNN-style integrator.
+
+    This creates the H, C, R, D arrays you see in the REBOUND source, and some
+    precomputed denominators for the Taylor expansion coefficients.
+
+    Args:
+        n_internal_points (int):
+            The number of internal evaluations to use when estimating the acceleration
+            across a given step. IAS15 uses 7.
+
+    Returns:
+        tuple:
+            b_x_denoms (mpm.matrix):
+                The denominators for the Taylor expansion of the position.
+            b_v_denoms (mpm.matrix):
+                The denominators for the Taylor expansion of the velocity.
+            h (mpm.matrix):
+                The H array from REBOUND, a list of the roots of the Chebyshev polynomial.
+            r (mpm.matrix):
+                The R array from REBOUND, a list of the coefficients for the Taylor
+                expansion of the acceleration.
+            c (mpm.matrix):
+                The C array from REBOUND, a list of the coefficients for the Taylor
+                expansion of the acceleration.
+            d (mpm.matrix):
+                The D array from REBOUND, a matrix of coefficients for the Taylor
+                expansion of the acceleration.
+    """
     b_x_denoms = (1.0 + np.arange(1, n_internal_points + 1, 1)) * (
         2.0 + np.arange(1, n_internal_points + 1, 1)
     )
@@ -41,7 +84,17 @@ def precompute(n_internal_points):
     return b_x_denoms, b_v_denoms, h, r.apply(lambda x: 1 / x), c, d_matrix
 
 
-def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
+def estimate_x_v_from_b(
+    a0: mpm.matrix,
+    v0: mpm.matrix,
+    x0: mpm.matrix,
+    dt: mpm.matrix,
+    b_x_denoms: mpm.matrix,
+    b_v_denoms: mpm.matrix,
+    h: mpm.matrix,
+    bp: mpm.matrix,
+) -> tuple:
+    """Same as the estimate_x_v_from_b in the DoubleDouble integrator, but using mpmath."""
     n_internal_points = len(bp)
     # Initialize xcoeffs with zeros
     # Shape will be (10, 3) - 7 points from bp + 3 initial conditions
@@ -100,7 +153,10 @@ def estimate_x_v_from_b(a0, v0, x0, dt, b_x_denoms, b_v_denoms, h, bp):
     return estimated_x.T, estimated_v.T
 
 
-def refine_intermediate_g(substep_num, g, r, at, a0):
+def refine_intermediate_g(
+    substep_num: int, g: mpm.matrix, r: mpm.matrix, at: mpm.matrix, a0: mpm.matrix
+) -> mpm.matrix:
+    """Same as the refine_intermediate_g in the DoubleDouble integrator, but using mpmath."""
     substep_num -= 1
     start_pos = (substep_num * (substep_num + 1)) // 2
 
@@ -114,8 +170,17 @@ def refine_intermediate_g(substep_num, g, r, at, a0):
     return result
 
 
-def refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
-
+def refine_b_and_g(
+    r: mpm.matrix,
+    c: mpm.matrix,
+    b: mpm.matrix,
+    g: mpm.matrix,
+    at: mpm.matrix,
+    a0: mpm.matrix,
+    substep_num: int,
+    return_g_diff: bool,
+) -> tuple:
+    """Same as the refine_b_and_g in the DoubleDouble integrator, but using mpmath."""
     old_g = g[substep_num - 1, :]
     new_g = refine_intermediate_g(substep_num=substep_num, g=g, r=r, at=at, a0=a0)
     g_diff = new_g - old_g
@@ -138,8 +203,15 @@ def refine_b_and_g(r, c, b, g, at, a0, substep_num, return_g_diff):
 
 
 def step(
-    x0, v0, b, dt, precomputed_setup, verbose=False, convergence_threshold=mpf("1e-40")
+    x0: mpm.matrix,
+    v0: mpm.matrix,
+    b: mpm.matrix,
+    dt: mpm.matrix,
+    precomputed_setup: tuple,
+    verbose: bool = False,
+    convergence_threshold: mpm.mpf = mpf("1e-40"),
 ):
+    """Same as the step in the DoubleDouble integrator, but using mpmath."""
     b_x_denoms, b_v_denoms, h, r, c, d = precomputed_setup
     n_internal_points = len(b)
     a0 = acceleration_func(x0)

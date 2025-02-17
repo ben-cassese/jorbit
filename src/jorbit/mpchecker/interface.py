@@ -1,3 +1,5 @@
+"""The public interface to the mpchecker functions."""
+
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
@@ -10,7 +12,9 @@ import astropy.units as u
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+from astropy.coordinates import SkyCoord
 from astropy.table import Table, hstack
+from astropy.time import Time
 from astropy.utils.data import download_file, is_url_in_cache
 from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
@@ -28,13 +32,52 @@ from jorbit.mpchecker.parse_jorbit_ephem import (
 
 
 def mpchecker(
-    coordinate,
-    time,
-    radius=20 * u.arcmin,
-    extra_precision=False,
-    observer="geocentric",
-    chunk_coefficients=None,
-):
+    coordinate: SkyCoord,
+    time: Time,
+    radius: u.Unit = 20 * u.arcmin,
+    extra_precision: bool = False,
+    observer: str = "geocentric",
+    chunk_coefficients: jnp.ndarray | None = None,
+) -> Table:
+    """Find the minor planets within a given radius of a coordinate at a given time.
+
+    This is a local implementation of the MPC's 'mpchecker' service. It uses a cached
+    integration that began with particle states taken from JPL Horizons and were
+    evolved using Jorbit and Newtonian gravity (but all major solar system perturbers).
+    Instead of saving the cartesian positions, we saved the on-sky coordinates of each
+    particle at each time step as seen by a geocentric observer. Between this assumption
+    and the neglect of GR effects, the cached positions are only accurate to within
+    ~an arcsec. However, if using "extra_precision", this will first run the
+    quick/coarse search, figure out which minor planets fell within the radius, then
+    actually run an N-body integration using Jorbit to get their positions as seen from
+    a specific observer. These positions should agree with Horizons to ~1 mas.
+
+    Args:
+        coordinate (SkyCoord):
+            The coordinate to search around.
+        time (Time):
+            The time to search at.
+        radius (u.Unit):
+            The radius to search within. Note that for the coarse search, speed
+            shouldn't depend too strongly on radius, but the speed of the extra
+            precision search will depend on the number of particles that need to be
+            integrated. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
+        extra_precision (bool):
+            Whether to run the extra precision search. This will be slower, but more
+            accurate. Will be "true" if the observer is not geocentric.
+        observer (str):
+            The observatory from which the observations are made. Can be a string name
+            or Horizons-style @399 code.
+        chunk_coefficients (jnp.ndarray | None):
+            Optionally pass the relevant chunk coefficients to avoid I/O operations if
+            running this repeatedly.
+
+    Returns:
+        Table:
+            A table of the minor planets within the given radius of the coordinate at
+            the given time. The exact columns depend on whether extra precision was
+            requested.
+    """
     if observer != "geocentric":
         extra_precision = True
 
@@ -111,13 +154,59 @@ def mpchecker(
 
 
 def nearest_asteroid(
-    coordinate,
-    times,
-    precomputed=None,
-    radius=2 * u.arcmin,
-    compute_contamination=False,
-    observer="geocentric",
-):
+    coordinate: SkyCoord,
+    times: Time,
+    precomputed: tuple | None = None,
+    radius: u.Unit = 2 * u.arcmin,
+    compute_contamination: bool = False,
+    observer: str = "geocentric",
+) -> tuple:
+    """Identify minor planets passing through a region of the sky at a series of times.
+
+    This is a more dynamic version of the mpchecker function that's designed to find
+    the nearest minor planet to a given coordinate at a series of times. If one wants to
+    do a quick check to see if any minor planets got close to a given coordinate over a
+    series of times, they can leave compute_contamination as False. This will return a
+    limited amount of information about the nearest minor planet at each time, but will
+    not compute their magnitudes or re-integrate their orbits for higher precision. If
+    compute_contamination is True, it will first run the coarse search, then
+    re-integrate the orbits of all minor planets that fell within the search radius at
+    any time, compute their on-sky coordinates and Vmags as seen from a specific
+    observer, and produce more detailed tables of the results.
+
+    Args:
+        coordinate (SkyCoord):
+            The coordinate to search around.
+        times (Time):
+            The times to search at. Can handle arbitrary length Times, but speed will
+            depend on the total length.
+        precomputed (tuple | None):
+            Optionally pass the relevant chunk coefficients to avoid I/O operations if
+            running this repeatedly.
+        radius (u.Unit):
+            The radius to search within when computing total magntiude/flagging
+            individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
+        compute_contamination (bool):
+            Whether to compute the total magntiude of all asteroids within the search
+            radius at each time. Uses the same formula as Horizons for converting H and
+            G to Vmags, and each asteroids' individual H and G values from the
+            MPCORB.DAT table that the cached ephemeris was built from.
+        observer (str):
+            The observatory from which the observations are made. Can be a string name
+            or Horizons-style @399 code.
+
+    Returns:
+        tuple:
+            If compute_contamination is False, returns a tuple of the distance to the
+            nearest minor planet at each time and a table of the minor planets that
+            fell within the search radius at any time. If compute_contamination is True,
+            returns a tuple of the distance to the nearest minor planet at each time, a
+            table of the minor planets that fell within the search radius at any time,
+            a table of the coordinates of all minor planets within the search radius at
+            each time, a table of the Vmags of all minor planets within the search
+            radius at each time, and a table of the total Vmags of all minor planets
+            within the search radius at each time.
+    """
     radius = radius.to(u.arcsec).value
 
     if precomputed is None:
@@ -220,8 +309,35 @@ def nearest_asteroid(
     return separations, relevant_mpcorb, coord_table, mag_table, total_mags
 
 
-def animate_region(coordinate, times, coord_table, radius, frame_interval=50):
+def animate_region(
+    coordinate: SkyCoord,
+    times: Time,
+    coord_table: Table,
+    radius: u.Unit,
+    frame_interval: int = 50,
+) -> FuncAnimation:
+    """Animate the results of nearest_asteroid.
 
+    Args:
+        coordinate (SkyCoord):
+            The coordinate to search around.
+        times (Time):
+            The times to search at.
+        coord_table (Table):
+            The table of minor planets that fell within the search radius at any time.
+            Computed via nearest_asteroid.
+        radius (u.Unit):
+            The radius to search within when computing total magntiude/flagging
+            individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
+        frame_interval (int):
+            The interval between frames in milliseconds.
+
+    Returns:
+        FuncAnimation:
+            The animation of the minor planets passing through the region of the sky.
+            If running in a Jupyter notebook, should render in the cell. Can be saved as
+            a gif via animate_region(...).save('animation.gif', writer='pillow').
+    """
     radius = radius.to(u.arcsec).value
     tmp = jax.vmap(
         jax.vmap(tangent_plane_projection, in_axes=(None, None, 0, 0)),

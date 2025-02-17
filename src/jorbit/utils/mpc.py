@@ -1,10 +1,30 @@
+"""A function for parsing an MPC observations file."""
+
 import astropy.units as u
 import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 
-def read_mpc_file(mpc_file):
+def read_mpc_file(
+    mpc_file: str,
+) -> tuple[SkyCoord, list[Time], list[str], list[u.Quantity]]:
+    """Read an MPC observations file and extract the relevant data.
+
+    Haven't checked on this in a while - it may be out of date.
+
+    Args:
+        mpc_file (str):
+            Path to the MPC observations file.
+
+    Returns:
+        tuple[SkyCoord, list[Time], list[str], list[u.Quantity]]:
+            A tuple containing the following elements.
+            (SkyCoord, The observed coordinates;
+            list[Time], The times of observation;
+            list[str], The observatory locations;
+            list[u.Quantity], The astrometric uncertainties)
+    """
     cols = [
         (0, 5),
         (5, 12),

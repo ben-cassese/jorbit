@@ -412,6 +412,15 @@ wheels = [
 ]
 
 [[package]]
+name = "codespell"
+version = "2.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/e0/709453393c0ea77d007d907dd436b3ee262e28b30995ea1aa36c6ffbccaf/codespell-2.4.1.tar.gz", hash = "sha256:299fcdcb09d23e81e35a671bbe746d5ad7e8385972e65dbb833a2eaac33c01e5", size = 344740 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/01/b394922252051e97aab231d416c86da3d8a6d781eeadcdca1082867de64e/codespell-2.4.1-py3-none-any.whl", hash = "sha256:3dadafa67df7e4a3dbf51e0d7315061b80d265f9552ebd699b3dd6834b47e425", size = 344501 },
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1011,6 +1020,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "black", extra = ["jupyter"] },
+    { name = "codespell" },
     { name = "corner" },
     { name = "ipykernel" },
     { name = "matplotlib" },
@@ -1024,6 +1034,7 @@ dev = [
     { name = "reboundx" },
     { name = "ruff" },
     { name = "sphinx" },
+    { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-automodapi" },
     { name = "sphinx-book-theme" },
     { name = "sphinxcontrib-video" },
@@ -1051,6 +1062,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "black", extras = ["jupyter"], specifier = ">=24.10.0" },
+    { name = "codespell", specifier = ">=2.4.1" },
     { name = "corner", specifier = ">=2.2.3" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "matplotlib", specifier = ">=3.9.2" },
@@ -1064,6 +1076,7 @@ dev = [
     { name = "reboundx", specifier = ">=4.4.0" },
     { name = "ruff", specifier = ">=0.9.2" },
     { name = "sphinx", specifier = ">=8.1.3" },
+    { name = "sphinx-autodoc-typehints", specifier = ">=3.0.1" },
     { name = "sphinx-automodapi", specifier = ">=0.18.0" },
     { name = "sphinx-book-theme", specifier = ">=1.1.3" },
     { name = "sphinxcontrib-video", specifier = ">=0.3.1" },
@@ -2524,6 +2537,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6f/6d/be0b61178fe2cdcb67e2a92fc9ebb488e3c51c4f74a36a7824c0adf23425/sphinx-8.1.3.tar.gz", hash = "sha256:43c1911eecb0d3e161ad78611bc905d1ad0e523e4ddc202a58a821773dc4c927", size = 8184611 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/26/60/1ddff83a56d33aaf6f10ec8ce84b4c007d9368b21008876fceda7e7381ef/sphinx-8.1.3-py3-none-any.whl", hash = "sha256:09719015511837b76bf6e03e42eb7595ac8c2e41eeb9c29c5b755c6b677992a2", size = 3487125 },
+]
+
+[[package]]
+name = "sphinx-autodoc-typehints"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sphinx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/f0/43c6a5ff3e7b08a8c3b32f81b859f1b518ccc31e45f22e2b41ced38be7b9/sphinx_autodoc_typehints-3.0.1.tar.gz", hash = "sha256:b9b40dd15dee54f6f810c924f863f9cf1c54f9f3265c495140ea01be7f44fa55", size = 36282 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/dc/dc46c5c7c566b7ec5e8f860f9c89533bf03c0e6aadc96fb9b337867e4460/sphinx_autodoc_typehints-3.0.1-py3-none-any.whl", hash = "sha256:4b64b676a14b5b79cefb6628a6dc8070e320d4963e8ff640a2f3e9390ae9045a", size = 20245 },
 ]
 
 [[package]]

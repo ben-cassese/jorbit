@@ -1,11 +1,14 @@
-# These are pythonized/jaxified versions of acceleration models within REBOUNDx,
-# Tamayo et al. (2020) (DOI: 10.1093/mnras/stz2870). The gr_full function is the
-# equivalent of rebx_calculate_gr_full in REBOUNDx, which is itself based on
-# Newhall et al. (1984) (bibcode: 1983A&A...125..150N)
-# The original code is available at https://github.com/dtamayo/reboundx/blob/502abf3066d9bae174cb20538294c916e73391cd/src/gr_full.c
-# Accessed Fall 2024.
+"""General Relativity/PPN acceleration model.
 
-# Many thanks to the REBOUNDx developers for their work, and for making it open source!
+These are pythonized/jaxified versions of acceleration models within REBOUNDx,
+Tamayo et al. (2020) (DOI: 10.1093/mnras/stz2870). The gr_full function is the
+equivalent of rebx_calculate_gr_full in REBOUNDx, which is itself based on
+Newhall et al. (1984) (bibcode: 1983A&A...125..150N)
+The original code is available at https://github.com/dtamayo/reboundx/blob/502abf3066d9bae174cb20538294c916e73391cd/src/gr_full.c
+
+Many thanks to the REBOUNDx developers for their work, and for making it open source!
+Accessed Fall 2024
+"""
 
 import jax
 
@@ -24,14 +27,13 @@ def ppn_gravity(
     inputs: SystemState,
     max_iterations: int = 10,
 ) -> jnp.ndarray:
-    """
-    Compute the acceleration felt by each particle due to PPN gravity.
+    """Compute the acceleration felt by each particle due to PPN gravity.
 
     Equivalent of rebx_calculate_gr_full in reboundx.
 
     Args:
         inputs (SystemState): The instantaneous state of the system.
-        max_iterations (int): The maximum number of interations for the GR corrections
+        max_iterations (int): The maximum number of iterations for the GR corrections
             to converge.
 
     Returns:
@@ -39,7 +41,6 @@ def ppn_gravity(
             The 3D acceleration felt by each particle, ordered by massive particles
             first followed by tracer particles.
     """
-
     c2 = inputs.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
 
     # surrendering on the efficient handling of tracers vs. massive particles-

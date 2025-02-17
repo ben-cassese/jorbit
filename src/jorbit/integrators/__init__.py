@@ -1,3 +1,5 @@
+"""All functions related to integrating a SystemState."""
+
 __all__ = [
     "ias15_evolve",
     "ias15_step",

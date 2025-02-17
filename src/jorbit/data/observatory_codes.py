@@ -1,3 +1,5 @@
+"""MPC-recognized observatory codes."""
+
 OBSERVATORY_CODES = {
     "greenwich": "000@399",
     "crowborough": "001@399",

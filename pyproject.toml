@@ -48,6 +48,8 @@ dev = [
     "reboundx>=4.4.0",
     "ruff>=0.9.2",
     "corner>=2.2.3",
+    "codespell>=2.4.1",
+    "sphinx-autodoc-typehints>=3.0.1",
 ]
 
 [tool.ruff.lint]
@@ -57,4 +59,13 @@ ignore = [
     "B006", # unsure of this one- right now using {} as default for acceleration_func_kwargs
     "RUF012", # annoying when using NamedTuples
 ]
-extend-select = ["W", "I", "B", "SIM", "UP", "RUF"]
+extend-select = ["W", "I", "B", "D", "UP", "SIM", "RUF"]
+exclude = [
+    "tests/*",
+    "docs/*",
+    "src/jorbit/mpchecker/ephem_generation/*",
+]
+pydocstyle.convention = "google"
+
+[tool.codespell]
+skip = "./docs/_build/*, ./scratch.ipynb, ./src/jorbit/data/observatory_codes.py"

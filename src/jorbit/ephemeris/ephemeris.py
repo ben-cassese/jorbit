@@ -1,6 +1,4 @@
-# the processing of the .bsp file partially relies on, then is heavily influenced by,
-# the implementation in the jplephem package:
-# https://github.com/brandon-rhodes/python-jplephem/blob/master/jplephem/spk.py
+"""The user-facing ephemeris class and wrapper around EphemerisProcessor."""
 
 import jax
 
@@ -32,28 +30,7 @@ from jorbit.ephemeris.process_bsp import extract_data, merge_data
 
 
 class Ephemeris:
-    """
-    A class for managing and processing a JPL DE solar system ephemeris.
-
-    Args:
-        ssos (str, optional):
-            Specification of solar system objects to include. Options are
-            "default planets" (for computing planet positions only) or
-            "default solar system" (for computing positions of planets and large
-            perturbing asteroids).
-        earliest_time (Time, optional):
-            The earliest time this ephemeris can compute. This must be > than the
-            earliest time in the DE ephemeris file, but ideally shouldn't be much
-            earlier than will be be actually used: a narrower time range allows for
-            smaller in-memory subsets of the ephemeris to be loaded.
-            Defaults to Time("1980-01-01").
-        latest_time (Time, optional):
-            Similar to earliest_time, but for the end time for ephemeris
-            calculations.
-            Defaults to Time("2050-01-01").
-        postprocessing_func (Optional[Callable], optional):
-            Function for post-processing state vectors.
-            Defaults to None.
+    """A class for managing and processing a JPL DE solar system ephemeris.
 
     Attributes:
         ephs (tuple):
@@ -74,6 +51,28 @@ class Ephemeris:
         latest_time: Time = Time("2050-01-01"),
         postprocessing_func: Callable | None = None,
     ):
+        """Initialize the Ephemeris object.
+
+        Args:
+            ssos (str, optional):
+                Specification of solar system objects to include. Options are
+                "default planets" (for computing planet positions only) or
+                "default solar system" (for computing positions of planets and large
+                perturbing asteroids).
+            earliest_time (Time, optional):
+                The earliest time this ephemeris can compute. This must be > than the
+                earliest time in the DE ephemeris file, but ideally shouldn't be much
+                earlier than will be be actually used: a narrower time range allows for
+                smaller in-memory subsets of the ephemeris to be loaded.
+                Defaults to Time("1980-01-01").
+            latest_time (Time, optional):
+                Similar to earliest_time, but for the end time for ephemeris
+                calculations.
+                Defaults to Time("2050-01-01").
+            postprocessing_func (Optional[Callable], optional):
+                Function for post-processing state vectors.
+                Defaults to None.
+        """
         if ssos == "default planets":
             ssos = [
                 {
@@ -151,8 +150,7 @@ class Ephemeris:
             self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
     def state(self, time: Time):
-        """
-        Calculate the state vectors for solar system objects at the given time(s).
+        """Calculate the state vectors for solar system objects at the given time(s).
 
         This method computes position and velocity vectors for all tracked solar system
         objects at the specified time(s). It can handle arbitrary-length Time inputs.

@@ -3,9 +3,6 @@
 System
 ========
 
-tmp
-
-
 .. automodule:: jorbit.system
     :members:
     :member-order: groupwise

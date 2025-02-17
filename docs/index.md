@@ -17,7 +17,6 @@ Hopefully PSJ
 :caption: User Guide
 
 user_guide/installation
-user_guide/quickstart
 user_guide/contributing
 user_guide/changelog
 ```
@@ -39,9 +38,9 @@ tutorials/fit_an_orbit.ipynb
 
 
 ```{toctree}
-:maxdepth: 3
+:maxdepth: 1
 :hidden:
-:caption: API
+:caption: Common API
 
 basic/particle
 basic/observations
@@ -54,6 +53,14 @@ basic/ephemeris
 ```{toctree}
 :maxdepth: 1
 :hidden:
+:caption: Core API
+:titlesonly:
 
-core_api
+core/accelerations/accelerations
+core/astrometry/astrometry
+core/data/data
+core/ephemeris/ephemeris
+core/integrators/integrators
+core/mpchecker/mpchecker
+core/misc/misc
 ```

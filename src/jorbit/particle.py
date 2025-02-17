@@ -1,7 +1,10 @@
+"""The Particle class and its supporting functions."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 import warnings
+from collections.abc import Callable
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -9,6 +12,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from scipy.optimize import minimize
 
+from jorbit import Observations
 from jorbit.accelerations import (
     create_default_ephemeris_acceleration_func,
     create_gr_ephemeris_acceleration_func,
@@ -23,21 +27,93 @@ from jorbit.utils.states import CartesianState, KeplerianState
 
 
 class Particle:
+    """An object representing a single particle in the solar system.
+
+    This class is used to represent and manipulate a single particle moving within the
+    solar system. It is mostly a collection of convenience wrappers around the more
+    general integrators and accelerations, but it also provides some useful methods for
+    projecting the particle's position onto the sky and fitting orbits to observations.
+
+    By construction, `Particle` objects are massless.
+
+    Note: none of the methods associated with this class will alter the underlying state
+    of the particle. For example, "integrate" will give you the positions and velocities
+    of the particle at future times, but after it returns, the particle will still be
+    at its original state.
+
+    Attributes:
+        state: The state of the particle, either in Cartesian or Keplerian coordinates.
+        time: The time of the particle's state.
+        x: The position of the particle in Cartesian coordinates.
+        v: The velocity of the particle in Cartesian coordinates.
+        observations: A collection of observations of the particle.
+        name: The name of the particle.
+        gravity: The gravitational acceleration function to use for the particle.
+        integrator: The integrator to use for the particle.
+        earliest_time: The earliest time for which ephemeris data is available.
+        latest_time: The latest time for which ephemeris data is available.
+        fit_seed: A seed for fitting the orbit of the particle.
+    """
+
     def __init__(
         self,
-        state=None,
-        time=None,
-        x=None,
-        v=None,
-        observations=None,
-        name="",
-        gravity="default solar system",
-        integrator="ias15",
-        earliest_time=Time("1980-01-01"),
-        latest_time=Time("2050-01-01"),
-        fit_seed=None,
+        state: KeplerianState | CartesianState | None = None,
+        time: Time | None = None,
+        x: jnp.ndarray | None = None,
+        v: jnp.ndarray | None = None,
+        observations: Observations | None = None,
+        name: str = "",
+        gravity: str | Callable = "default solar system",
+        integrator: str = "ias15",
+        earliest_time: Time = Time("1980-01-01"),
+        latest_time: Time = Time("2050-01-01"),
+        fit_seed: KeplerianState | CartesianState | None = None,
     ):
+        """Initialize a Particle object.
 
+        Args:
+            state (KeplerianState | CartesianState | None):
+                The state of the particle. None if x and v are provided.
+            time (Time | None):
+                The time of the particle's state. None if state is provided, since that
+                will have its own time baked-in.
+            x (jnp.ndarray | None):
+                The 3D barycentric cartesian position of the particle in AU. None if
+                state is provided.
+            v (jnp.ndarray | None):
+                The 3D barycentric cartesian velocity of the particle in AU/day. None if
+                state is provided.
+            observations (Observations | None):
+                Optional Observations associated with the particle. Necessary if fitting
+                or evaluating likelihoods.
+            name (str):
+                The name of the particle. Defaults to "".
+            gravity (str | Callable):
+                The gravitational acceleration function to use when integrating the
+                particle's orbit. Defaults to "default solar system", which corresponds
+                to parameterized post-Newtonian interactions with the 10 bodies in the
+                JPL DE440 ephemeris, plus Newtonian interactions with the 16 largest
+                asteroids in the asteroids_de441/sb441-n16.bsp ephemeris. Can also be
+                a jax.tree_util.Partial object that follows the same signature as the
+                acceleration functions in jorbit.accelerations.
+            integrator (str):
+                The integrator to use for the particle. Defaults to "ias15", which is a
+                15th order adaptive step-size integrator. Currently IAS15 is the only
+                option- this is a vestige of previous experiments with Gauss-Jackson
+                integrators that we might return to someday.
+            earliest_time (Time):
+                The earliest time we expect to integrate the particle to. Defaults to
+                Time("1980-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+            latest_time (Time):
+                The latest time we expect to integrate the particle to. Defaults to
+                Time("2050-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+            fit_seed (KeplerianState | CartesianState | None):
+                A seed for fitting the orbit of the particle. If None, a seed will be
+                generated from the observations if they exist. Otherwise, a circular
+                orbit with semi-major axis 2.5 AU will be used.
+        """
         self._observations = observations
         self._earliest_time = earliest_time
         self._latest_time = latest_time
@@ -68,14 +144,17 @@ class Particle:
         ) = self._setup_likelihood()
 
     def __repr__(self):
+        """Return a string representation of the Particle object."""
         return f"Particle: {self._name}"
 
     @property
     def cartesian_state(self):
+        """Return the Cartesian state of the particle."""
         return self._cartesian_state
 
     @property
     def keplerian_state(self):
+        """Return the Keplerian state of the particle."""
         return self._keplerian_state
 
     ###############
@@ -281,6 +360,25 @@ class Particle:
     ################
 
     def integrate(self, times, state=None):
+        """Integrate the particle's orbit to a given time.
+
+        Note that this method does not change the state of the particle. It returns the
+        positions and velocities of the particle at the given times, but the particle
+        itself is not changed.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to integrate to. Can be a single time or an array of times.
+                If provided as a jnp.array, the entries are assumed to be in TDB JD.
+            state (CartesianState | None):
+                The state to integrate from. If None, the particle's current state will
+                be used. Usually not necessary to provide this.
+
+        Returns:
+            tuple[jnp.ndarray, jnp.ndarray]:
+                The positions of the particle at the given times, in AU, and the
+                The velocities of the particle at the given times, in AU/day.
+        """
         if state is None:
             state = self._cartesian_state
 
@@ -295,6 +393,27 @@ class Particle:
         return positions[:, 0, :], velocities[:, 0, :]
 
     def ephemeris(self, times, observer, state=None):
+        """Compute an ephemeris for the particle.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to compute the ephemeris for. Can be a single time or an array
+                of times. If provided as a jnp.array, the entries are assumed to be in
+                TDB JD.
+            observer (str | jnp.ndarray):
+                The observer to compute the ephemeris for. Can be a string representing
+                an observatory name, or a 3D position vector in AU. For more info on
+                acceptable strings, see the get_observer_positions function.
+            state (CartesianState | None):
+                The state to compute the ephemeris from. If None, the particle's current
+                state will be used. Usually not necessary to provide this.
+
+        Returns:
+            coords (SkyCoord):
+                The ephemeris of the particle at the given times, in ICRS coordinates,
+                as seen from that specific observer and correcting for light travel
+                time.
+        """
         if isinstance(observer, str):
             observer_positions = get_observer_positions(times, observer)
         else:
@@ -319,6 +438,20 @@ class Particle:
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
     def max_likelihood(self, fit_seed=None, verbose=False):
+        """Find the maximum likelihood orbit for the particle.
+
+        Args:
+            fit_seed (CartesianState | KeplerianState | None):
+                A seed for fitting the orbit of the particle. If None, a seed will be
+                generated from the observations if they exist. Otherwise, a circular
+                orbit with semi-major axis 2.5 AU will be used.
+            verbose (bool):
+                Whether to print the optimization progress. Defaults to False.
+
+        Returns:
+            Particle:
+                A new Particle object whose state matches the maximum likelihood orbit.
+        """
         if self.loglike is None:
             raise ValueError("No observations provided, cannot fit an orbit")
 
@@ -496,8 +629,8 @@ class Particle:
 
     #     return x
 
-    def fit(self):
-        pass
+    # def fit(self):
+    #     pass
 
 
 ###########################

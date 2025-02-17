@@ -1,3 +1,5 @@
+"""Experimental DoubleDouble precision arithmetic in JAX."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -7,6 +9,19 @@ import jax.numpy as jnp
 
 @jax.tree_util.register_pytree_node_class
 class DoubleDouble:
+    """An experimental class for 'DoubleDouble' precision arthmetic.
+
+    This creates a Jax pytree object that stores two jnp.ndarrays, hi and lo, which are
+    the high and low parts of a double-double precision array. Basic arithmetic
+    operations are overloaded to use functions that respect the double-double precision
+    rules. This is not compensated summation, but summation at "DoubleDouble" precision.
+
+    Attributes:
+        hi (jnp.ndarray):
+            High part.
+        lo: (jnp.ndarray):
+            Low part.
+    """
 
     def __init__(self, hi, lo=None):
         """Initialize a DoubleDouble number.
@@ -23,6 +38,7 @@ class DoubleDouble:
 
     @staticmethod
     def _split(a: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Split a 64-bit floating point number into high and low components."""
         t = (2**27 + 1) * a
         a_hi = t - (t - a)
         a_lo = a - a_hi
@@ -30,6 +46,7 @@ class DoubleDouble:
 
     @staticmethod
     def _two_sum(a: jnp.ndarray, b: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Basic two-sum algorithm."""
         s = a + b
         v = s - a
         e = (a - (s - v)) + (b - v)
@@ -37,6 +54,7 @@ class DoubleDouble:
 
     @staticmethod
     def _mul12(x: jnp.ndarray, y: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """The mul12 algorithm from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_."""
         # mul12 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         constant = 2**27 + 1
         p = x * constant
@@ -56,6 +74,16 @@ class DoubleDouble:
 
     @classmethod
     def from_string(cls, s: str) -> "DoubleDouble":
+        """Create a DoubleDouble number from a string, similar to mpmath.mpf.
+
+        Args:
+            s (str):
+                String representation of a number.
+
+        Returns:
+            DoubleDouble:
+                The DoubleDouble representation.
+        """
         assert isinstance(s, str)
         from decimal import Decimal, getcontext
 
@@ -70,20 +98,28 @@ class DoubleDouble:
         return cls(jnp.array(hi), jnp.array(lo))
 
     def __str__(self) -> str:
+        """String representation of the DoubleDouble array."""
         return f"{self.hi} + {self.lo}"
 
     def __repr__(self):
+        """Representation of the DoubleDouble array."""
         return f"DoubleDouble({self.hi}, {self.lo})"
 
     def __getitem__(self, index):
+        """Get an item from the DoubleDouble array."""
         return DoubleDouble(self.hi[index], self.lo[index])
 
     def __setitem__(self, index, value):
+        """Set an item in the DoubleDouble array (note: mutable, unlike jnp.ndarray)."""
         self.hi = self.hi.at[index].set(value.hi)
         self.lo = self.lo.at[index].set(value.lo)
 
     # @jax.jit
     def __add__(self, other):
+        """Add two DoubleDouble numbers.
+
+        Implementation of add2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
+        """
         # add2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi + other.hi
         s = jnp.where(
@@ -97,10 +133,15 @@ class DoubleDouble:
 
     # @jax.jit
     def __neg__(self):
+        """Negate a DoubleDouble number."""
         return DoubleDouble(-self.hi, -self.lo)
 
     # @jax.jit
     def __sub__(self, other):
+        """Subtract two DoubleDouble numbers.
+
+        Implementation of sub2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
+        """
         # sub2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         r = self.hi - other.hi
         s = jnp.where(
@@ -114,6 +155,10 @@ class DoubleDouble:
 
     # @jax.jit
     def __mul__(self, other):
+        """Multiply two DoubleDouble numbers.
+
+        Implementation of mul2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
+        """
         # mul2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = DoubleDouble._mul12(self.hi, other.hi)
         cc = self.hi * other.lo + self.lo * other.hi + c.lo
@@ -125,6 +170,10 @@ class DoubleDouble:
 
     # @jax.jit
     def __truediv__(self, other):
+        """Divide two DoubleDouble numbers.
+
+        Implementation of div2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
+        """
         # div2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
         c = self.hi / other.hi
         u = DoubleDouble._mul12(c, other.hi)
@@ -135,24 +184,30 @@ class DoubleDouble:
 
     # @jax.jit
     def __abs__(self):
+        """Absolute value of a DoubleDouble number."""
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
         return DoubleDouble(new_hi, new_lo)
 
     def __lt__(self, other):
+        """Less than comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo < other.lo))
 
     def __le__(self, other):
+        """Less than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo <= other.lo))
 
     def __gt__(self, other):
+        """Greater than comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo > other.lo))
 
     def __ge__(self, other):
+        """Greater than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo >= other.lo))
 
     @property
     def shape(self):
+        """Shape of the DoubleDouble array."""
         return self.hi.shape
 
     def tree_flatten(self):
@@ -169,6 +224,15 @@ class DoubleDouble:
 
 # @jax.jit
 def dd_max(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
+    """Sort-of implements jnp.max on a DoubleDouble array.
+
+    Args:
+        x: DoubleDouble array
+        axis: Axis to reduce over
+
+    Returns:
+        DoubleDouble: The maximum value
+    """
     hi_max = jnp.max(x.hi, axis=axis)
     max_mask = x.hi == hi_max
     lo_max = jnp.max(jnp.where(max_mask, x.lo, -jnp.inf), axis=axis)
@@ -176,7 +240,18 @@ def dd_max(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
 
 
 # @partial(jax.jit, static_argnames=("axis",))
-def dd_sum(x, axis=None):
+def dd_sum(x: DoubleDouble, axis: int | None = None):
+    """Sort-of implements jnp.sum on a DoubleDouble array.
+
+    Args:
+        x (DoubleDouble):
+            The DoubleDouble array to sum.
+        axis (int | None):
+            The axis to sum over. If None, the array is flattened.
+
+    Returns:
+        DoubleDouble: The sum of the array along the given axis.
+    """
     # needed to respect DoubleDouble addition rules when doing sums
     # again- this is *not* compensated summation, but summation at "DoubleDouble" precision
     if axis is None:
@@ -195,7 +270,19 @@ def dd_sum(x, axis=None):
 
 
 # @jax.jit
-def dd_sqrt(x):
+def dd_sqrt(x: DoubleDouble) -> DoubleDouble:
+    """Sort-of implements jnp.sqrt on a DoubleDouble array.
+
+    Uses sqrt2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
+
+    Args:
+        x (DoubleDouble):
+            The DoubleDouble array to take the square root of.
+
+    Returns:
+        DoubleDouble:
+            The square root of the array.
+    """
     # sqrt2 from https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf
     c = jnp.sqrt(x.hi)
     u = DoubleDouble._mul12(c, c)
@@ -206,7 +293,21 @@ def dd_sqrt(x):
 
 
 # @partial(jax.jit, static_argnames=("axis",))
-def dd_norm(x, axis=None):
+def dd_norm(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
+    """Sort-of implements jnp.linalg.norm on a DoubleDouble array.
+
+    Uses dd_sum and dd_sqrt.
+
+    Args:
+        x (DoubleDouble):
+            The DoubleDouble array to take the norm of.
+        axis (int | None):
+            The axis to take the norm over. If None, the array is flattened.
+
+    Returns:
+        DoubleDouble:
+            The norm of the array.
+    """
     if axis is None:
         x = DoubleDouble(x.hi.flatten(), x.lo.flatten())
         axis = 0

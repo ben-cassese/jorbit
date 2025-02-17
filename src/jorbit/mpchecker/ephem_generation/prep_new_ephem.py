@@ -49,7 +49,7 @@ np.save("forward_pos.npy", forward_pos)
 np.save("reverse_pos.npy", reverse_pos)
 
 ##########
-# get the currect mpcorb.dat file
+# get the current mpcorb.dat file
 ##########
 
 response = requests.get(

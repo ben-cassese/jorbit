@@ -1,3 +1,10 @@
+"""Utilities for extracting data from a JPL DE ephemeris file.
+
+The processing of the .bsp file partially relies on, then is heavily influenced by,
+the implementation in the `jplephem package <https://github.com/brandon-rhodes/python-jplephem/blob/master/jplephem/spk.py>`_.
+
+"""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -10,8 +17,7 @@ from jplephem.spk import SPK
 def extract_data(
     center: str, target: str, ephem_file: str, earliest_time: Time, latest_time: Time
 ) -> tuple:
-    """
-    Extracts the Chebyshev coefficients for a given target and center from an SPK file.
+    """Extracts the Chebyshev coefficients for a given target and center from an SPK file.
 
     Args:
         center (str):
@@ -56,8 +62,7 @@ def extract_data(
 def merge_data(
     inits: list, intlens: list, coeffs: list, earliest_time: Time, latest_time: Time
 ) -> tuple:
-    """
-    Merges data for multiple targets into a single set of coefficients.
+    """Merges data for multiple targets into a single set of coefficients.
 
     This takes all of the data extracted from individual target/center segments and
     merges them into larger jnp.ndarrays. All objects will now use the same number of

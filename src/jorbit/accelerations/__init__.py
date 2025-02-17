@@ -1,3 +1,5 @@
+"""Handles accelerations that can be used in the integrator."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -12,8 +14,7 @@ from jorbit.utils.states import SystemState
 def create_newtonian_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
 ) -> jax.tree_util.Partial:
-    """
-    Create and return a function that adds newtonian gravity from fixed perturbers.
+    """Create and return a function that adds newtonian gravity from fixed perturbers.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
@@ -52,8 +53,7 @@ def create_newtonian_ephemeris_acceleration_func(
 def create_gr_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
 ) -> jax.tree_util.Partial:
-    """
-    Create and return a function that adds gr gravity from fixed perturbers.
+    """Create and return a function that adds gr gravity from fixed perturbers.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
@@ -92,8 +92,7 @@ def create_gr_ephemeris_acceleration_func(
 def create_default_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
 ) -> jax.tree_util.Partial:
-    """
-    Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
+    """Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
 
     This adds GR corrections for the 10 planets and newtonian corrections for the 16
     asteroids.

@@ -3,9 +3,6 @@
 Ephemeris
 =========
 
-tmp
-
-
 .. automodule:: jorbit.ephemeris.ephemeris
     :members:
     :member-order: groupwise

@@ -1,3 +1,16 @@
+"""A JAX implementation of the IAS15 integrator.
+
+This is a pythonized/jaxified version of the IAS15 integrator from Rein & Spiegel (2015)
+(DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND. It follows the
+implementation found in the REBOUND source as closely as possible: for a slightly more
+JAX-friendly version, see the `iasnn_dd_prec.py` module for a full rewrite.
+
+The original code is available on `github <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_.
+Accessed Summer 2023, re-visited Fall 2024.
+
+Many thanks to the REBOUND developers for their work on this integrator, and for making it open source!
+"""
+
 # This is a pythonized/jaxified version of the IAS15 integrator from
 # Rein & Spiegel (2015) (DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND.
 # The original code is available at https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
@@ -28,9 +41,7 @@ from jorbit.utils.states import IAS15IntegratorState, SystemState
 
 @chex.dataclass
 class IAS15Helper:
-    """
-    A chex.dataclass that acts like the reb_dp7 struct in rebound.
-    """
+    """A chex.dataclass that acts like the reb_dp7 struct in rebound."""
 
     # the equivalent of the reb_dp7 struct in rebound, but obviously without pointers
     p0: jnp.ndarray
@@ -43,8 +54,7 @@ class IAS15Helper:
 
 
 def initialize_ias15_helper(n_particles):
-    """
-    Initializes the IAS15Helper dataclass with zeros.
+    """Initializes the IAS15Helper dataclass with zeros.
 
     Args:
         n_particles (int):
@@ -66,8 +76,7 @@ def initialize_ias15_helper(n_particles):
 
 
 def initialize_ias15_integrator_state(a0):
-    """
-    Initializes the IAS15IntegratorState dataclass with zeros.
+    """Initializes the IAS15IntegratorState dataclass with zeros.
 
     Args:
         a0 (jnp.ndarray):
@@ -94,8 +103,7 @@ def initialize_ias15_integrator_state(a0):
 
 @jax.jit
 def add_cs(p, csp, inp):
-    """
-    Compensated summation
+    """Compensated summation.
 
     Args:
         p (jnp.ndarray):
@@ -118,8 +126,7 @@ def add_cs(p, csp, inp):
 
 @jax.jit
 def predict_next_step(ratio, _e, _b):
-    """
-    Predicts the next b coefficients for the IAS15 integrator.
+    """Predicts the next b coefficients for the IAS15 integrator.
 
     Args:
         ratio (float):
@@ -239,8 +246,7 @@ def ias15_step(
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     initial_integrator_state: IAS15IntegratorState,
 ) -> SystemState:
-    """
-    Take a single step using the IAS15 integrator.
+    """Take a single step using the IAS15 integrator.
 
     Contains all of the predictor/corrector logic and step validity checks.
 
@@ -256,7 +262,6 @@ def ias15_step(
         SystemState:
             The new system state.
     """
-
     # for convenience, rename initial state
     t_beginning = initial_system_state.time
     M = initial_system_state.massive_positions.shape[0]
@@ -1248,8 +1253,7 @@ def ias15_evolve(
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    """
-    Evolve a system to multiple different timesteps using the IAS15 integrator.
+    """Evolve a system to multiple different timesteps using the IAS15 integrator.
 
     Chains multiple ias15_step calls together until each timestep is reached. Keeps
     track of the second to last step before each arrival time to avoid setting dt to
