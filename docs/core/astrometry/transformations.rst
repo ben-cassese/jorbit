@@ -3,8 +3,6 @@
 Transformations
 ===============
 
-tmp
-
 .. automodule:: jorbit.astrometry.transformations
     :members:
     :member-order: groupwise

@@ -3,8 +3,6 @@
 Ephemeris Processors
 ====================
 
-tmp
-
 .. automodule:: jorbit.ephemeris.ephemeris_processors
     :members:
     :member-order: groupwise

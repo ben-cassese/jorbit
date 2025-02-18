@@ -17,17 +17,7 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 
 @chex.dataclass
 class SystemState:
-    """Contains the state of a system of particles.
-
-    Attributes:
-        tracer_positions (jnp.ndarray): Positions of the tracers.
-        tracer_velocities (jnp.ndarray): Velocities of the tracers.
-        massive_positions (jnp.ndarray): Positions of the massive particles.
-        massive_velocities (jnp.ndarray): Velocities of the massive particles.
-        log_gms (jnp.ndarray): Logarithm of the gravitational masses.
-        time (float): Time of the system state in JD TDB.
-        acceleration_func_kwargs (dict): Additional arguments for acceleration functions.
-    """
+    """Contains the state of a system of particles."""
 
     tracer_positions: jnp.ndarray
     tracer_velocities: jnp.ndarray
@@ -42,14 +32,7 @@ class SystemState:
 class KeplerianState:
     """Contains the state of a particle in Keplerian elements.
 
-    Attributes:
-        semi (float): Semi-major axis.
-        ecc (float): Eccentricity.
-        inc (float): Inclination.
-        Omega (float): Longitude of the ascending node.
-        omega (float): Argument of periapsis.
-        nu (float): True anomaly.
-        time (float): Time of the particle state.
+    Angles are in degrees.
     """
 
     semi: float
@@ -102,13 +85,7 @@ class KeplerianState:
 
 @chex.dataclass
 class CartesianState:
-    """Contains the state of a particle in Cartesian coordinates.
-
-    Attributes:
-        x (jnp.ndarray): Position of the particle.
-        v (jnp.ndarray): Velocity of the particle.
-        time (float): Time of the particle state in JD TDB.
-    """
+    """Contains the state of a particle in Cartesian coordinates."""
 
     x: jnp.ndarray
     v: jnp.ndarray

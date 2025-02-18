@@ -3,8 +3,6 @@
 IASNN DD-Prec
 =============
 
-tmp
-
 .. automodule:: jorbit.integrators.iasnn_dd_prec
     :members:
     :member-order: groupwise

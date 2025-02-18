@@ -3,8 +3,6 @@
 Reparameterizations
 ===================
 
-tmp
-
 .. automodule:: jorbit.utils.reparameterizations
     :members:
     :member-order: groupwise

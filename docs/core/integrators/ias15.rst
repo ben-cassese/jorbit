@@ -3,8 +3,6 @@
 IAS15
 =====
 
-tmp
-
 .. automodule:: jorbit.integrators.ias15
     :members:
     :member-order: groupwise

@@ -3,10 +3,8 @@
 States
 ======
 
-tmp
-
-.. .. automodule:: jorbit.utils.states
-..     :members:
-..     :member-order: groupwise
-..     :undoc-members:
-..     :show-inheritance:
+.. automodule:: jorbit.utils.states
+    :members:
+    :member-order: groupwise
+    :undoc-members:
+    :show-inheritance:

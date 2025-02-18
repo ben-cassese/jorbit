@@ -3,8 +3,6 @@
 Orbit Fit Seeds
 ===============
 
-tmp
-
 .. automodule:: jorbit.astrometry.orbit_fit_seeds
     :members:
     :member-order: groupwise

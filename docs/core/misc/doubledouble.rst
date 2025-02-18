@@ -3,8 +3,6 @@
 DoubleDouble
 ============
 
-tmp
-
 .. automodule:: jorbit.utils.doubledouble
     :members:
     :member-order: groupwise

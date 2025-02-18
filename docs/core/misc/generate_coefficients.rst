@@ -3,8 +3,6 @@
 Generate Coefficients
 =====================
 
-tmp
-
 .. automodule:: jorbit.utils.generate_coefficients
     :members:
     :member-order: groupwise

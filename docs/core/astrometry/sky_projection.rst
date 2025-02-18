@@ -3,9 +3,6 @@
 Sky Projection
 ==============
 
-tmp
-
-
 .. automodule:: jorbit.astrometry.sky_projection
     :members:
     :member-order: groupwise

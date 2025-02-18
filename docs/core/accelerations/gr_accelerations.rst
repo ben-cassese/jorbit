@@ -3,8 +3,6 @@
 GR Accelerations
 ================
 
-tmp
-
 .. automodule:: jorbit.accelerations.gr
     :members:
     :member-order: groupwise

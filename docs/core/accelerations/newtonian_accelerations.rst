@@ -3,9 +3,6 @@
 Newtonian Accelerations
 =======================
 
-tmp
-
-
 .. automodule:: jorbit.accelerations.newtonian
     :members:
     :member-order: groupwise

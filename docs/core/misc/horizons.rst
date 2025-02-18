@@ -3,8 +3,6 @@
 Horizons
 ========
 
-tmp
-
 .. automodule:: jorbit.utils.horizons
     :members:
     :member-order: groupwise

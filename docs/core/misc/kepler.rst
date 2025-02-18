@@ -3,8 +3,6 @@
 Kepler
 ======
 
-tmp
-
 .. automodule:: jorbit.utils.kepler
     :members:
     :member-order: groupwise
