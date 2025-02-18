@@ -34,7 +34,7 @@ from jorbit.mpchecker.parse_jorbit_ephem import (
 def mpchecker(
     coordinate: SkyCoord,
     time: Time,
-    radius: u.Unit = 20 * u.arcmin,
+    radius: u.Quantity = 20 * u.arcmin,
     extra_precision: bool = False,
     observer: str = "geocentric",
     chunk_coefficients: jnp.ndarray | None = None,
@@ -57,7 +57,7 @@ def mpchecker(
             The coordinate to search around.
         time (Time):
             The time to search at.
-        radius (u.Unit):
+        radius (u.Quantity):
             The radius to search within. Note that for the coarse search, speed
             shouldn't depend too strongly on radius, but the speed of the extra
             precision search will depend on the number of particles that need to be
@@ -157,7 +157,7 @@ def nearest_asteroid(
     coordinate: SkyCoord,
     times: Time,
     precomputed: tuple | None = None,
-    radius: u.Unit = 2 * u.arcmin,
+    radius: u.Quantity = 2 * u.arcmin,
     compute_contamination: bool = False,
     observer: str = "geocentric",
 ) -> tuple:
@@ -183,7 +183,7 @@ def nearest_asteroid(
         precomputed (tuple | None):
             Optionally pass the relevant chunk coefficients to avoid I/O operations if
             running this repeatedly.
-        radius (u.Unit):
+        radius (u.Quantity):
             The radius to search within when computing total magntiude/flagging
             individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
         compute_contamination (bool):
@@ -313,7 +313,7 @@ def animate_region(
     coordinate: SkyCoord,
     times: Time,
     coord_table: Table,
-    radius: u.Unit,
+    radius: u.Quantity,
     frame_interval: int = 50,
 ) -> FuncAnimation:
     """Animate the results of nearest_asteroid.
@@ -326,7 +326,7 @@ def animate_region(
         coord_table (Table):
             The table of minor planets that fell within the search radius at any time.
             Computed via nearest_asteroid.
-        radius (u.Unit):
+        radius (u.Quantity):
             The radius to search within when computing total magntiude/flagging
             individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
         frame_interval (int):

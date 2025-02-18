@@ -153,7 +153,7 @@ def multiple_states(
     )
 
 
-def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Unit) -> tuple:
+def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Quantity) -> tuple:
     """Check that inputs are valid for the ephemeris, convert to standard forms.
 
     Args:
@@ -161,7 +161,7 @@ def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Unit) -> tuple:
             The coordinate of the target.
         time (Time):
             The time of the observation.
-        radius (u.Unit):
+        radius (u.Quantity):
             The radius of the field of view. Must be a unit of angle.
 
     Returns:
@@ -417,7 +417,7 @@ def apparent_mag(
 def extra_precision_calcs(
     asteroid_flags: jnp.ndarray,
     times: Time,
-    radius: u.Unit,
+    radius: u.Quantity,
     observer: str,
     coordinate: SkyCoord,
     relevant_mpcorb: pl.DataFrame,
@@ -429,7 +429,7 @@ def extra_precision_calcs(
             A boolean array indicating which asteroids to include.
         times (Time):
             The times of the observation.
-        radius (u.Unit):
+        radius (u.Quantity):
             The radius of the field of view. Must be a unit of angle.
         observer (str):
             The observer to use. Must be a valid Horizons observer code.

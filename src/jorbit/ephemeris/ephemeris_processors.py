@@ -22,7 +22,7 @@ class EphemerisProcessor:
         self,
         init: jnp.ndarray,
         intlen: jnp.ndarray,
-        coeffs: jnp.ndarrays,
+        coeffs: jnp.ndarray,
         log_gms: jnp.ndarray,
     ) -> None:
         """Initializes the EphemerisProcessor with Chebyshev polynomial data.
