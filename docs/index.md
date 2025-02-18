@@ -27,7 +27,7 @@ user_guide/changelog
 :caption: Tutorials/Demos
 
 tutorials/local_mpchecker.ipynb
-tutorials/exoplanet_contamination.ipynb
+tutorials/lightcurve_contamination.ipynb
 tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
 tutorials/compare_w_horizons.ipynb

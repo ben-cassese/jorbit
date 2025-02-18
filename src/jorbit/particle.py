@@ -22,7 +22,7 @@ from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circula
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
-from jorbit.utils.horizons import get_observer_positions
+from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
 from jorbit.utils.states import (
     CartesianState,
     IAS15IntegratorState,
@@ -372,6 +372,75 @@ class Particle:
     ################
     # PUBLIC METHODS
     ################
+
+    @classmethod
+    def from_horizons(
+        cls,
+        name: str,
+        time: Time,
+        observations: Observations | None = None,
+        gravity: str | Callable = "default solar system",
+        integrator: str = "ias15",
+        earliest_time: Time = Time("1980-01-01"),
+        latest_time: Time = Time("2050-01-01"),
+        fit_seed: KeplerianState | CartesianState | None = None,
+    ) -> "Particle":
+        """Query JPL Horizons for an SSOs state at a given time and create a Particle object.
+
+        Args:
+            name (str):
+                The name of the SSO to query. Can be a string or an integer.
+            time (Time):
+                The time to query the SSO at.
+            observations (Observations | None):
+                Optional Observations associated with the particle. Necessary if fitting
+                or evaluating likelihoods.
+            gravity (str | Callable):
+                The gravitational acceleration function to use when integrating the
+                particle's orbit. Defaults to "default solar system", which corresponds
+                to parameterized post-Newtonian interactions with the 10 bodies in the
+                JPL DE440 ephemeris, plus Newtonian interactions with the 16 largest
+                asteroids in the asteroids_de441/sb441-n16.bsp ephemeris. Can also be
+                a jax.tree_util.Partial object that follows the same signature as the
+                acceleration functions in jorbit.accelerations.
+            integrator (str):
+                The integrator to use for the particle. Defaults to "ias15", which is a
+                15th order adaptive step-size integrator. Currently IAS15 is the only
+                option- this is a vestige of previous experiments with Gauss-Jackson
+                integrators that we might return to someday.
+            earliest_time (Time):
+                The earliest time we expect to integrate the particle to. Defaults to
+                Time("1980-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+            latest_time (Time):
+                The latest time we expect to integrate the particle to. Defaults to
+                Time("2050-01-01"). Larger time windows will result in larger in-memory
+                ephemeris objects.
+            fit_seed (KeplerianState | CartesianState | None):
+                A seed for fitting the orbit of the particle. If None, a seed will be
+                generated from the observations if they exist. Otherwise, a circular
+                orbit with semi-major axis 2.5 AU will be used.
+
+        Returns:
+            Particle:
+                A Particle object representing the SSO at the given time.
+        """
+        data = horizons_bulk_vector_query(target=name, center="500@0", times=time)
+        x0 = jnp.array([data["x"][0], data["y"][0], data["z"][0]])
+        v0 = jnp.array([data["vx"][0], data["vy"][0], data["vz"][0]])
+
+        return cls(
+            x=x0,
+            v=v0,
+            time=time,
+            observations=observations,
+            name=name,
+            gravity=gravity,
+            integrator=integrator,
+            earliest_time=earliest_time,
+            latest_time=latest_time,
+            fit_seed=fit_seed,
+        )
 
     def integrate(
         self, times: Time, state: CartesianState | KeplerianState | None = None
