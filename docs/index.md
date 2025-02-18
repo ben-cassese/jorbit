@@ -26,9 +26,10 @@ user_guide/changelog
 :hidden:
 :caption: Tutorials/Demos
 
+tutorials/local_mpchecker.ipynb
 tutorials/exoplanet_contamination.ipynb
+tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
-tutorials/manipulate_de_ephemeris.ipynb
 tutorials/compare_w_horizons.ipynb
 tutorials/simulate_large_system.ipynb
 tutorials/fit_an_orbit.ipynb

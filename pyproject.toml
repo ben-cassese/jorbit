@@ -67,4 +67,4 @@ exclude = [
 pydocstyle.convention = "google"
 
 [tool.codespell]
-skip = "./docs/_build/*, ./scratch.ipynb, ./src/jorbit/data/observatory_codes.py"
+skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"

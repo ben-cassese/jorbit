@@ -300,13 +300,13 @@ def nearest_asteroid(
     relevant_mpcorb = Table.from_pandas(relevant_mpcorb.to_pandas())
 
     if not compute_contamination:
-        return separations, relevant_mpcorb
+        return separations * u.arcsec, relevant_mpcorb
 
     coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
         asteroid_flags, times, radius, observer, coordinate, relevant_mpcorb
     )
 
-    return separations, relevant_mpcorb, coord_table, mag_table, total_mags
+    return separations * u.arcsec, relevant_mpcorb, coord_table, mag_table, total_mags
 
 
 def animate_region(
@@ -389,8 +389,8 @@ def animate_region(
     ax.set(
         xlim=(-radius * 4, radius * 4),
         ylim=(-radius * 4, radius * 4),
-        xlabel="delta RA [arcsec]",
-        ylabel="delta Dec [arcsec]",
+        xlabel=r"$\Delta$ RA [arcsec]",
+        ylabel=r"$\Delta$ Dec [arcsec]",
         aspect="equal",
     )
     ax.grid(True)
