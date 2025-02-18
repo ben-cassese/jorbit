@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 
 project = "jorbit"
 author = "Ben Cassese"
-release = "0.1.0"
+release = "0.1.2"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -49,7 +49,7 @@ html_copy_source = True
 html_show_sourcelink = True
 html_sourcelink_suffix = ""
 html_title = "jorbit"
-html_favicon = "_static/jupiter.png"
+html_favicon = "_static/saturn.png"
 html_static_path = ["_static"]
 
 html_theme_options = {
@@ -60,9 +60,9 @@ html_theme_options = {
     "use_download_button": False,
     "show_prev_next": False,
     "logo": {
-        "text": "jorbit",
-        "image_light": "_static/jupiter.png",
-        "image_dark": "_static/jupiter.png",
+        "text": "",
+        "image_light": "_static/jorbit_logo_bright.png",
+        "image_dark": "_static/jorbit_logo_dark.png",
     },
 }
 
