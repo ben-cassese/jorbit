@@ -7,4 +7,3 @@ Constants
    :members:
    :undoc-members:
    :show-inheritance:
-

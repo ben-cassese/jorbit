@@ -23,7 +23,7 @@ class DoubleDouble:
             Low part.
     """
 
-    def __init__(self, hi, lo=None):
+    def __init__(self, hi: jnp.ndarray, lo: jnp.ndarray | None = None) -> None:
         """Initialize a DoubleDouble number.
 
         Args:
@@ -101,21 +101,21 @@ class DoubleDouble:
         """String representation of the DoubleDouble array."""
         return f"{self.hi} + {self.lo}"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Representation of the DoubleDouble array."""
         return f"DoubleDouble({self.hi}, {self.lo})"
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> "DoubleDouble":
         """Get an item from the DoubleDouble array."""
         return DoubleDouble(self.hi[index], self.lo[index])
 
-    def __setitem__(self, index, value):
+    def __setitem__(self, index: int, value: "DoubleDouble") -> None:
         """Set an item in the DoubleDouble array (note: mutable, unlike jnp.ndarray)."""
         self.hi = self.hi.at[index].set(value.hi)
         self.lo = self.lo.at[index].set(value.lo)
 
     # @jax.jit
-    def __add__(self, other):
+    def __add__(self, other: "DoubleDouble") -> "DoubleDouble":
         """Add two DoubleDouble numbers.
 
         Implementation of add2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -132,12 +132,12 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __neg__(self):
+    def __neg__(self) -> "DoubleDouble":
         """Negate a DoubleDouble number."""
         return DoubleDouble(-self.hi, -self.lo)
 
     # @jax.jit
-    def __sub__(self, other):
+    def __sub__(self, other: "DoubleDouble") -> "DoubleDouble":
         """Subtract two DoubleDouble numbers.
 
         Implementation of sub2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -154,7 +154,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __mul__(self, other):
+    def __mul__(self, other: "DoubleDouble") -> "DoubleDouble":
         """Multiply two DoubleDouble numbers.
 
         Implementation of mul2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -169,7 +169,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __truediv__(self, other):
+    def __truediv__(self, other: "DoubleDouble") -> "DoubleDouble":
         """Divide two DoubleDouble numbers.
 
         Implementation of div2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -183,41 +183,41 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __abs__(self):
+    def __abs__(self) -> "DoubleDouble":
         """Absolute value of a DoubleDouble number."""
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
         return DoubleDouble(new_hi, new_lo)
 
-    def __lt__(self, other):
+    def __lt__(self, other: "DoubleDouble") -> bool:
         """Less than comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo < other.lo))
 
-    def __le__(self, other):
+    def __le__(self, other: "DoubleDouble") -> bool:
         """Less than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo <= other.lo))
 
-    def __gt__(self, other):
+    def __gt__(self, other: "DoubleDouble") -> bool:
         """Greater than comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo > other.lo))
 
-    def __ge__(self, other):
+    def __ge__(self, other: "DoubleDouble") -> bool:
         """Greater than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo >= other.lo))
 
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, ...]:
         """Shape of the DoubleDouble array."""
         return self.hi.shape
 
-    def tree_flatten(self):
+    def tree_flatten(self) -> tuple:
         """Implementation for JAX pytree."""
         children = (self.hi, self.lo)
         aux_data = None
         return (children, aux_data)
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(cls, aux_data: None, children: tuple) -> "DoubleDouble":
         """Implementation for JAX pytree."""
         return cls(*children)
 
@@ -240,7 +240,7 @@ def dd_max(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
 
 
 # @partial(jax.jit, static_argnames=("axis",))
-def dd_sum(x: DoubleDouble, axis: int | None = None):
+def dd_sum(x: DoubleDouble, axis: int | None = None) -> DoubleDouble:
     """Sort-of implements jnp.sum on a DoubleDouble array.
 
     Args:
@@ -261,7 +261,7 @@ def dd_sum(x: DoubleDouble, axis: int | None = None):
     # Move the axis to be summed to the front
     transposed = DoubleDouble(jnp.swapaxes(x.hi, 0, axis), jnp.swapaxes(x.lo, 0, axis))
 
-    def scan_fn(carry, x):
+    def scan_fn(carry: DoubleDouble, x: DoubleDouble) -> tuple[DoubleDouble, None]:
         return carry + x, None
 
     result, _ = jax.lax.scan(scan_fn, transposed[0], transposed[1:])

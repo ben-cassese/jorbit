@@ -13,7 +13,7 @@ from jax.interpreters import ad
 
 
 @jax.jit
-def kepler(M, ecc):
+def kepler(M: float, ecc: float) -> float:
     """Solve Kepler's equation to compute the true anomaly.
 
     This implementation is based on that within `jaxoplanet <https://github.com/exoplanet-dev/jaxoplanet/>`_, many thanks to the authors.
@@ -33,7 +33,7 @@ def kepler(M, ecc):
 
 
 @jax.custom_jvp
-def _kepler(M, ecc):
+def _kepler(M: float, ecc: float) -> tuple[float, float]:
     # Wrap into the right range
     M = M % (2 * jnp.pi)
 
@@ -64,7 +64,7 @@ def _kepler(M, ecc):
 
 
 @_kepler.defjvp
-def _(primals, tangents):
+def _(primals: tuple, tangents: tuple) -> tuple[tuple, tuple]:
     M, e = primals
     M_dot, e_dot = tangents
     sinf, cosf = _kepler(M, e)
@@ -73,7 +73,7 @@ def _(primals, tangents):
     ecosf = e * cosf
     ome2 = 1 - e**2
 
-    def make_zero(tan):
+    def make_zero(tan: float) -> float:
         if type(tan) is ad.Zero:
             return ad.zeros_like_aval(tan.aval)
         else:
@@ -86,7 +86,7 @@ def _(primals, tangents):
     return (sinf, cosf), (cosf * f_dot, -sinf * f_dot)
 
 
-def _starter(M, ecc, ome):
+def _starter(M: float, ecc: float, ome: float) -> float:
     M2 = jnp.square(M)
     alpha = 3 * jnp.pi / (jnp.pi - 6 / jnp.pi)
     alpha += 1.6 / (jnp.pi - 6 / jnp.pi) * (jnp.pi - M) / (1 + ecc)
@@ -99,7 +99,7 @@ def _starter(M, ecc, ome):
     return (2 * r * w / (jnp.square(w) + w * q + q2) + M) / d
 
 
-def _refine(M, ecc, ome, E):
+def _refine(M: float, ecc: float, ome: float, E: float) -> float:
     sE = E - jnp.sin(E)
     cE = 1 - jnp.cos(E)
 

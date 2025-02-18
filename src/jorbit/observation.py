@@ -34,7 +34,7 @@ class Observations:
         observatories: str | list[str] | None = None,
         astrometric_uncertainties: u.Quantity | None = None,
         mpc_file: str | None = None,
-    ):
+    ) -> None:
         """Initialize the Observations class.
 
         Args:
@@ -74,15 +74,15 @@ class Observations:
 
         self._final_init_checks()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the Observations class."""
         return f"Observations with {len(self._ra)} set(s) of observations"
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the number of observations."""
         return len(self._ra)
 
-    def __add__(self, newobs):
+    def __add__(self, newobs: "Observations") -> "Observations":
         """Add two Observations objects together."""
         t = jnp.concatenate([self._times, newobs.times])
         ra = jnp.concatenate([self._ra, newobs.ra])
@@ -103,7 +103,7 @@ class Observations:
             mpc_file=None,
         )
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> "Observations":
         """Return a new Observations object from a slice of the current one."""
         return Observations(
             observed_coordinates=SkyCoord(
@@ -116,53 +116,53 @@ class Observations:
         )
 
     @property
-    def ra(self):
+    def ra(self) -> jnp.ndarray:
         """Right ascension of the observations in radians, ICRS."""
         return self._ra
 
     @property
-    def dec(self):
+    def dec(self) -> jnp.ndarray:
         """Declination of the observations in radians, ICRS."""
         return self._dec
 
     @property
-    def times(self):
+    def times(self) -> jnp.ndarray:
         """Times of the observations in JD TDB."""
         return self._times
 
     @property
-    def observatories(self):
+    def observatories(self) -> list[str] | str:
         """Names of the observatories."""
         return self._observatories
 
     @property
-    def astrometric_uncertainties(self):
+    def astrometric_uncertainties(self) -> jnp.ndarray:
         """Astrometric uncertainties of the observations in arcseconds."""
         return self._astrometric_uncertainties
 
     @property
-    def observer_positions(self):
+    def observer_positions(self) -> jnp.ndarray:
         """Barycentric cartesian positions of the observers in AU."""
         return self._observer_positions
 
     @property
-    def cov_matrices(self):
+    def cov_matrices(self) -> jnp.ndarray:
         """Covariance matrices of the observations in arcsec^2."""
         return self._cov_matrices
 
     @property
-    def inv_cov_matrices(self):
+    def inv_cov_matrices(self) -> jnp.ndarray:
         """Inverse covariance matrices of the observations in arcsec^-2."""
         return self._inv_cov_matrices
 
     @property
-    def cov_log_dets(self):
+    def cov_log_dets(self) -> jnp.ndarray:
         """Log determinants of the covariance matrices."""
         return self._cov_log_dets
 
     ####################################################################################
     # Initialization helpers
-    def _input_checks(self):
+    def _input_checks(self) -> None:
         if self._mpc_file is None:
             assert (
                 (self._observed_coordinates is not None)
@@ -208,7 +208,7 @@ class Observations:
                 " observatories, and astrometric_uncertainties must be None."
             )
 
-    def _parse_astrometry(self):
+    def _parse_astrometry(self) -> tuple:
 
         if self._mpc_file is None:
             (
@@ -313,7 +313,7 @@ class Observations:
             cov_log_dets,
         )
 
-    def _final_init_checks(self):
+    def _final_init_checks(self) -> None:
         assert (
             len(self._ra)
             == len(self._dec)

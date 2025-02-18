@@ -23,7 +23,12 @@ from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions
-from jorbit.utils.states import CartesianState, KeplerianState
+from jorbit.utils.states import (
+    CartesianState,
+    IAS15IntegratorState,
+    KeplerianState,
+    SystemState,
+)
 
 
 class Particle:
@@ -68,7 +73,7 @@ class Particle:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
-    ):
+    ) -> None:
         """Initialize a Particle object.
 
         Args:
@@ -143,17 +148,17 @@ class Particle:
             self.scipy_objective_grad,
         ) = self._setup_likelihood()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the Particle object."""
         return f"Particle: {self._name}"
 
     @property
-    def cartesian_state(self):
+    def cartesian_state(self) -> CartesianState:
         """Return the Cartesian state of the particle."""
         return self._cartesian_state
 
     @property
-    def keplerian_state(self):
+    def keplerian_state(self) -> KeplerianState:
         """Return the Keplerian state of the particle."""
         return self._keplerian_state
 
@@ -161,7 +166,14 @@ class Particle:
     # SETUP METHODS
     ###############
 
-    def _setup_state(self, x, v, state, time, name):
+    def _setup_state(
+        self,
+        x: jnp.ndarray | None,
+        v: jnp.ndarray | None,
+        state: CartesianState | KeplerianState | None,
+        time: Time,
+        name: str,
+    ) -> tuple:
 
         if state is not None:
             assert time is None, "Cannot provide both state and time"
@@ -205,7 +217,7 @@ class Particle:
 
         return x, v, time, cartesian_state, keplerian_state, name
 
-    def _setup_acceleration_func(self, gravity):
+    def _setup_acceleration_func(self, gravity: str) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
             return gravity
@@ -248,14 +260,16 @@ class Particle:
 
         return acc_func
 
-    def _setup_integrator(self):
+    def _setup_integrator(self) -> tuple:
         a0 = self.gravity(self._cartesian_state.to_system())
         integrator_state = initialize_ias15_integrator_state(a0)
         integrator = jax.tree_util.Partial(ias15_evolve)
 
         return integrator_state, integrator
 
-    def _setup_fit_seed(self, fit_seed):
+    def _setup_fit_seed(
+        self, fit_seed: KeplerianState | CartesianState | None
+    ) -> KeplerianState | CartesianState | None:
 
         if self._observations is None:
             return None
@@ -287,7 +301,7 @@ class Particle:
 
         return fit_seed
 
-    def _setup_likelihood(self):
+    def _setup_likelihood(self) -> tuple[Callable, Callable, Callable, Callable]:
         if self._observations is None:
             return None, None, None, None
 
@@ -321,15 +335,15 @@ class Particle:
         # actually just forward mode
 
         @jax.custom_vjp
-        def loglike(params):
+        def loglike(params: CartesianState | KeplerianState) -> float:
             return ll(params)
 
-        def loglike_fwd(params):
+        def loglike_fwd(params: CartesianState | KeplerianState) -> tuple:
             output = ll(params)
             jac = jax.jacfwd(ll)(params)
             return output, (jac,)
 
-        def loglike_bwd(res, g):
+        def loglike_bwd(res: tuple, g: float) -> float:
             jac = res
             val = jax.tree.map(lambda x: x * g, jac)
             return val
@@ -339,13 +353,13 @@ class Particle:
         residuals = jax.jit(residuals)
         loglike = jax.jit(loglike)
 
-        def scipy_objective(x):
+        def scipy_objective(x: jnp.ndarray) -> float:
             c = CartesianState(
                 x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
             )
             return -loglike(c)
 
-        def scipy_grad(x):
+        def scipy_grad(x: jnp.ndarray) -> jnp.ndarray:
             c = CartesianState(
                 x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
             )
@@ -359,7 +373,9 @@ class Particle:
     # PUBLIC METHODS
     ################
 
-    def integrate(self, times, state=None):
+    def integrate(
+        self, times: Time, state: CartesianState | KeplerianState | None = None
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the particle's orbit to a given time.
 
         Note that this method does not change the state of the particle. It returns the
@@ -392,7 +408,12 @@ class Particle:
         )
         return positions[:, 0, :], velocities[:, 0, :]
 
-    def ephemeris(self, times, observer, state=None):
+    def ephemeris(
+        self,
+        times: Time,
+        observer: str | jnp.ndarray,
+        state: CartesianState | KeplerianState | None = None,
+    ) -> SkyCoord:
         """Compute an ephemeris for the particle.
 
         Args:
@@ -437,7 +458,11 @@ class Particle:
         )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
-    def max_likelihood(self, fit_seed=None, verbose=False):
+    def max_likelihood(
+        self,
+        fit_seed: CartesianState | KeplerianState | None = None,
+        verbose: bool = False,
+    ) -> "Particle":
         """Find the maximum likelihood orbit for the particle.
 
         Args:
@@ -640,12 +665,12 @@ class Particle:
 
 @jax.jit
 def _integrate(
-    times,
-    particle_state,
-    acc_func,
-    integrator_func,
-    integrator_state,
-):
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_func: Callable,
+    integrator_state: IAS15IntegratorState,
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     state = particle_state.to_system()
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
         state, acc_func, times, integrator_state
@@ -656,13 +681,13 @@ def _integrate(
 
 @jax.jit
 def _ephem(
-    times,
-    particle_state,
-    acc_func,
-    integrator_func,
-    integrator_state,
-    observer_positions,
-):
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
         times, particle_state, acc_func, integrator_func, integrator_state
     )
@@ -672,7 +697,7 @@ def _ephem(
     #         positions[:,0,:], velocities[:,0,:], times, observer_positions, acc_func
     #     )
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
         position, velocity, time, observer_position = scan_over
         ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
         return None, (ra, dec)
@@ -688,15 +713,15 @@ def _ephem(
 
 @jax.jit
 def _residuals(
-    times,
-    gravity,
-    integrator,
-    integrator_state,
-    observer_positions,
-    ra,
-    dec,
-    particle_state,
-):
+    times: jnp.ndarray,
+    gravity: Callable,
+    integrator: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    ra: jnp.ndarray,
+    dec: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+) -> jnp.ndarray:
     ras, decs = _ephem(
         times,
         particle_state,
@@ -715,17 +740,17 @@ def _residuals(
 # break on reverse mode
 @jax.jit
 def _loglike(
-    times,
-    gravity,
-    integrator,
-    integrator_state,
-    observer_positions,
-    ra,
-    dec,
-    inv_cov_matrices,
-    cov_log_dets,
-    particle_state,
-):
+    times: jnp.ndarray,
+    gravity: Callable,
+    integrator: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    ra: jnp.ndarray,
+    dec: jnp.ndarray,
+    inv_cov_matrices: jnp.ndarray,
+    cov_log_dets: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+) -> float:
     xis_etas = _residuals(
         times,
         gravity,

@@ -1,5 +1,7 @@
 """The JAX-compatible functions for manipulating JPL DE ephemeris data."""
 
+from collections.abc import Callable
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -16,7 +18,13 @@ class EphemerisProcessor:
     parallelization.
     """
 
-    def __init__(self, init, intlen, coeffs, log_gms):
+    def __init__(
+        self,
+        init: jnp.ndarray,
+        intlen: jnp.ndarray,
+        coeffs: jnp.ndarrays,
+        log_gms: jnp.ndarray,
+    ) -> None:
         """Initializes the EphemerisProcessor with Chebyshev polynomial data.
 
         Args:
@@ -36,7 +44,7 @@ class EphemerisProcessor:
         self.coeffs = coeffs
         self.log_gms = log_gms
 
-    def tree_flatten(self):
+    def tree_flatten(self: "EphemerisProcessor") -> tuple:
         """Flattens the class instance for JAX pytree compatibility.
 
         Returns:
@@ -48,7 +56,7 @@ class EphemerisProcessor:
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(cls, aux_data: None, children: tuple) -> "EphemerisProcessor":
         """Reconstructs a class instance from flattened data.
 
         Args:
@@ -61,7 +69,7 @@ class EphemerisProcessor:
         return cls(*children)
 
     @jax.jit
-    def eval_cheby(self, coefficients, x):
+    def eval_cheby(self, coefficients: jnp.ndarray, x: float) -> tuple:
         """Evaluates a Chebyshev polynomial using Clenshaw's algorithm.
 
         Implements Clenshaw's recurrence formula for evaluating Chebyshev polynomials
@@ -79,7 +87,7 @@ class EphemerisProcessor:
         b_ii = jnp.zeros(3)
         b_i = jnp.zeros(3)
 
-        def scan_func(X, a):
+        def scan_func(X: tuple, a: jnp.ndarray) -> tuple:
             b_i, b_ii = X
             tmp = b_i
             b_i = a + 2 * x * b_i - b_ii
@@ -90,7 +98,9 @@ class EphemerisProcessor:
         return coefficients[-1] + x * b_i - b_ii, s
 
     @jax.jit
-    def _individual_state(self, init, intlen, coeffs, tdb):
+    def _individual_state(
+        self, init: jnp.ndarray, intlen: jnp.ndarray, coeffs: jnp.ndarray, tdb: float
+    ) -> tuple:
         """Computes position and velocity for a single body in the ephemeris at a given time.
 
         Args:
@@ -143,7 +153,7 @@ class EphemerisProcessor:
         )
 
     @jax.jit
-    def state(self, tdb):
+    def state(self, tdb: float) -> tuple:
         """Computes positions and velocities for all bodies in the ephemeris at a given time.
 
         Args:
@@ -172,7 +182,7 @@ class EphemerisPostProcessor:
             ephemeris processors.
     """
 
-    def __init__(self, ephs, postprocessing_func):
+    def __init__(self, ephs: list, postprocessing_func: Callable) -> None:
         """Initializes the EphemerisPostProcessor with multiple ephemeris processors.
 
         Args:
@@ -188,7 +198,7 @@ class EphemerisPostProcessor:
             log_gms = jnp.concatenate([log_gms, eph.log_gms])
         self.log_gms = log_gms
 
-    def tree_flatten(self):
+    def tree_flatten(self: "EphemerisPostProcessor") -> tuple:
         """Flattens the class instance for JAX pytree compatibility.
 
         Returns:
@@ -201,7 +211,9 @@ class EphemerisPostProcessor:
         return children, aux_data
 
     @classmethod
-    def tree_unflatten(cls, aux_data, children):
+    def tree_unflatten(
+        cls, aux_data: None, children: tuple
+    ) -> "EphemerisPostProcessor":
         """Reconstructs a class instance from flattened data.
 
         Args:
@@ -215,7 +227,7 @@ class EphemerisPostProcessor:
         return cls(*children)
 
     @jax.jit
-    def state(self, tdb):
+    def state(self, tdb: float) -> tuple:
         """Computes combined and post-processed state vectors for all bodies.
 
         This method:

@@ -1,3 +1,5 @@
+"""Test that the packed to unpacked designation translator is consistent."""
+
 from jorbit.mpchecker import load_mpcorb
 from jorbit.mpchecker.parse_jorbit_ephem import (
     packed_to_unpacked_designation,
@@ -5,7 +7,8 @@ from jorbit.mpchecker.parse_jorbit_ephem import (
 )
 
 
-def test_designation_translators():
+def test_designation_translators() -> None:
+    """Test that the designation translators are consistent."""
     mpcorb = load_mpcorb()
     for n in mpcorb["Packed designation"]:
         q = packed_to_unpacked_designation(n)

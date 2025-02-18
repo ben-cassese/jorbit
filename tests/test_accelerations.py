@@ -1,3 +1,5 @@
+"""Tests that the acceleration functions agree with external codes."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -11,7 +13,8 @@ from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.utils.states import SystemState
 
 
-def _gr_agreement_w_reboundx(n_tracer, n_massive, seed):
+def _gr_agreement_w_reboundx(n_tracer: int, n_massive: int, seed: int) -> None:
+    """Test that the jorbit GR acceleration is consistent with reboundx."""
     np.random.seed(seed)
     massive_x = []
     massive_v = []
@@ -61,7 +64,8 @@ def _gr_agreement_w_reboundx(n_tracer, n_massive, seed):
     assert jnp.allclose(jorb_res, reb_res, atol=1e-14, rtol=1e-14)
 
 
-def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
+def _newton_agreement_w_rebound(n_tracer: int, n_massive: int, seed: int) -> None:
+    """Test that the jorbit Newtonian acceleration is consistent with rebound."""
     np.random.seed(seed)
     massive_x = []
     massive_v = []
@@ -106,14 +110,16 @@ def _newton_agreement_w_rebound(n_tracer, n_massive, seed):
     assert jnp.allclose(jorb_res, reb_res, atol=1e-14, rtol=1e-14)
 
 
-def test_gr_agreement_w_reboundx():
+def test_gr_agreement_w_reboundx() -> None:
+    """Test that the GR acceleration agrees across several configurations."""
     _gr_agreement_w_reboundx(n_tracer=1, n_massive=1, seed=0)
     _gr_agreement_w_reboundx(n_tracer=100, n_massive=1, seed=1)
     _gr_agreement_w_reboundx(n_tracer=100, n_massive=10, seed=2)
     _gr_agreement_w_reboundx(n_tracer=100, n_massive=100, seed=3)
 
 
-def test_newton_agreement_w_rebound():
+def test_newton_agreement_w_rebound() -> None:
+    """Test that the Newtonian acceleration agrees across several configurations."""
     _newton_agreement_w_rebound(n_tracer=1, n_massive=1, seed=0)
     _newton_agreement_w_rebound(n_tracer=100, n_massive=1, seed=1)
     _newton_agreement_w_rebound(n_tracer=100, n_massive=10, seed=2)

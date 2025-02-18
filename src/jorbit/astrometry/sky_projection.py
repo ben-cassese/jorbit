@@ -141,7 +141,7 @@ def on_sky(
     a0 = acc_func(state)
     initial_integrator_state = initialize_ias15_integrator_state(a0)
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: tuple, scan_over: None) -> tuple[tuple, None]:
         xz = carry
         earth_distance = jnp.linalg.norm(xz - observer_position)
         light_travel_time = earth_distance * INV_SPEED_OF_LIGHT

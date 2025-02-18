@@ -1,3 +1,5 @@
+"""Test that the processing/manipulation of the DE440 ephmeris agrees with Horizons."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -9,7 +11,8 @@ from astroquery.jplhorizons import Horizons
 from jorbit.ephemeris import Ephemeris
 
 
-def test_planets_ephemeris():
+def test_planets_ephemeris() -> None:
+    """Test that the planets agree with Horizons to w/in 1 m, 1 m/day."""
     t0 = Time("2024-12-01 00:00")
 
     eph = Ephemeris(ssos="default planets")
@@ -54,7 +57,8 @@ def test_planets_ephemeris():
         assert (jnp.linalg.norm(v_err) * u.au / u.day) < (1 * u.m / u.day)
 
 
-def test_asteroids_ephemeris():
+def test_asteroids_ephemeris() -> None:
+    """Test that the asteroids agree with Horizons to w/in 200 km, 2 km/day."""
     t0 = Time("2024-12-01 00:00")
 
     eph = Ephemeris(ssos="default solar system")

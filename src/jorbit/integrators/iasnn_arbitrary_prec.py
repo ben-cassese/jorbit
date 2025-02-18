@@ -210,7 +210,7 @@ def step(
     precomputed_setup: tuple,
     verbose: bool = False,
     convergence_threshold: mpm.mpf = mpf("1e-40"),
-):
+) -> tuple:
     """Same as the step in the DoubleDouble integrator, but using mpmath."""
     b_x_denoms, b_v_denoms, h, r, c, d = precomputed_setup
     n_internal_points = len(b)
@@ -219,7 +219,9 @@ def step(
     # initialize the gs from the bs
     g = d * b
 
-    def predictor_corrector_iteration(b, g, predictor_corrector_error):
+    def predictor_corrector_iteration(
+        b: mpm.matrix, g: mpm.matrix, predictor_corrector_error: mpm.mpf
+    ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
 

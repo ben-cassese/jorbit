@@ -87,7 +87,7 @@ def eval_cheby(
     b_ii = jnp.zeros(2)
     b_i = jnp.zeros(2)
 
-    def scan_func(X, a):
+    def scan_func(X: tuple, a: jnp.ndarray) -> tuple:
         b_i, b_ii = X
         tmp = b_i
         b_i = a + 2 * x * b_i - b_ii
@@ -153,7 +153,7 @@ def multiple_states(
     )
 
 
-def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Unit):
+def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Unit) -> tuple:
     """Check that inputs are valid for the ephemeris, convert to standard forms.
 
     Args:
@@ -285,7 +285,7 @@ def unpacked_to_packed_designation(number_str: str) -> str:
         return f"{prefix}{remaining:04d}"
 
     # High numbers (620000+) - convert to tilde + base62
-    def decimal_to_base62(n):
+    def decimal_to_base62(n: int) -> str:
         """Convert decimal number to base62 string."""
         chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
         if n == 0:
@@ -330,7 +330,7 @@ def packed_to_unpacked_designation(code: str) -> str:
         return code
 
     # medium-numbered objects are a letter followed by 4 digits
-    def letter_to_number(char):
+    def letter_to_number(char: str) -> int:
         if char.isupper():
             return ord(char) - ord("A") + 10
         else:
@@ -342,7 +342,7 @@ def packed_to_unpacked_designation(code: str) -> str:
         return str(num)
 
     # high-numbered objects are a tilde followed by a base-62 number
-    def base62_to_decimal(char):
+    def base62_to_decimal(char: str) -> int:
         if char.isdigit():
             return int(char)
         elif char.isupper():

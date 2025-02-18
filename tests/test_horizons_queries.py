@@ -1,3 +1,5 @@
+"""Test that our Horizons query APIs agree with astroquery Horizons."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -14,7 +16,11 @@ from jorbit.utils.horizons import (
 )
 
 
-def test_horizons_vector_single():
+def test_horizons_vector_single() -> None:
+    """Test that the single vector query agrees with Horizons.
+
+    It really should, since for small queries we use astroquery anyways.
+    """
     t0 = Time("2024-12-24T00:00:00", scale="utc")
 
     jorb_table = horizons_bulk_vector_query("274301", "500@0", t0)
@@ -33,7 +39,8 @@ def test_horizons_vector_single():
     )
 
 
-def test_horizons_vector_bulk():
+def test_horizons_vector_bulk() -> None:
+    """Test that a larger vector query agrees with Horizons."""
     t0 = Time("2024-12-24T00:00:00", scale="utc")
     large_times = Time(
         jnp.linspace(t0.tdb.jd, t0.tdb.jd + 365, 1000), format="jd", scale="tdb"
@@ -58,7 +65,11 @@ def test_horizons_vector_bulk():
     )
 
 
-def test_horizons_astrometry_single():
+def test_horizons_astrometry_single() -> None:
+    """Test that the single astrometry query agrees with Horizons.
+
+    It really should, since for small queries we use astroquery anyways.
+    """
     t0 = Time("2024-12-24T00:00:00", scale="utc")
 
     horizons_obj = Horizons(id="274301", location="@0", epochs=[t0.jd])
@@ -79,7 +90,8 @@ def test_horizons_astrometry_single():
     )
 
 
-def test_horizons_astrometry_bulk():
+def test_horizons_astrometry_bulk() -> None:
+    """Test that a larger astrometry query agrees with Horizons."""
     t0 = Time("2024-12-24T00:00:00", scale="utc")
 
     large_times = Time(t0.jd + jnp.linspace(0, 365, 1000), format="jd", scale="utc")

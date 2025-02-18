@@ -64,7 +64,7 @@ class KeplerianState:
     # to produce correct accelerations later
     time: float = 2458849.5
 
-    def to_cartesian(self):
+    def to_cartesian(self) -> "CartesianState":
         """Converts the Keplerian state to Cartesian coordinates."""
         x, v = elements_to_cartesian(
             self.semi,
@@ -78,7 +78,7 @@ class KeplerianState:
         v = horizons_ecliptic_to_icrs(v)
         return CartesianState(x=x, v=v, time=self.time)
 
-    def to_keplerian(self):
+    def to_keplerian(self) -> "KeplerianState":
         """Convert to a Keplerian state.
 
         Does nothing- this is already a Keplerian state. Included so that both
@@ -86,7 +86,7 @@ class KeplerianState:
         """
         return self
 
-    def to_system(self):
+    def to_system(self) -> SystemState:
         """Converts the Keplerian state to a system state."""
         c = self.to_cartesian()
         return SystemState(
@@ -115,7 +115,7 @@ class CartesianState:
     # same warning as above
     time: float = 2458849.5
 
-    def to_keplerian(self):
+    def to_keplerian(self) -> KeplerianState:
         """Converts the Cartesian state to Keplerian elements."""
         x = icrs_to_horizons_ecliptic(self.x)
         v = icrs_to_horizons_ecliptic(self.v)
@@ -124,7 +124,7 @@ class CartesianState:
             semi=a, ecc=ecc, inc=inc, Omega=Omega, omega=omega, nu=nu, time=self.time
         )
 
-    def to_cartesian(self):
+    def to_cartesian(self) -> "CartesianState":
         """Convert to a Cartesian state.
 
         Does nothing- this is already a Cartesian state. Included so that both
@@ -132,7 +132,7 @@ class CartesianState:
         """
         return self
 
-    def to_system(self):
+    def to_system(self) -> SystemState:
         """Converts the Cartesian state to a system state."""
         return SystemState(
             tracer_positions=self.x,

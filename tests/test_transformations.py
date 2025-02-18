@@ -1,3 +1,5 @@
+"""Test that transformations between Cartesian and Keplerian are consistent and agree w/ Horizons."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -14,7 +16,8 @@ from jorbit.astrometry.transformations import (
 )
 
 
-def test_elements_to_cartesian():
+def test_elements_to_cartesian() -> None:
+    """Test that, given matching elements, we get the same cartesian as Horizons."""
     t0 = Time("2024-12-01 00:00")
 
     obj = Horizons(
@@ -49,7 +52,8 @@ def test_elements_to_cartesian():
     assert jnp.allclose(xs, true_xs, atol=1e-11)  # 1m
 
 
-def test_cartesian_to_elements():
+def test_cartesian_to_elements() -> None:
+    """Test that, given matching cartesian, we get the same elements as Horizons."""
     t0 = Time("2024-12-01 00:00")
 
     obj = Horizons(
@@ -84,7 +88,8 @@ def test_cartesian_to_elements():
     assert jnp.allclose(omega, omega_horizons, atol=1e-6 * u.deg.to(u.rad))
 
 
-def test_inverses():
+def test_inverses() -> None:
+    """Test that elements_to_cartesian and cartesian_to_elements are inverses."""
     t0 = Time("2024-12-01 00:00")
 
     obj = Horizons(

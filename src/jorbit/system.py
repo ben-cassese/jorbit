@@ -19,7 +19,7 @@ from jorbit.astrometry.sky_projection import on_sky
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions
-from jorbit.utils.states import SystemState
+from jorbit.utils.states import IAS15IntegratorState, SystemState
 
 
 class System:
@@ -37,7 +37,7 @@ class System:
         integrator: str = "ias15",
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
-    ):
+    ) -> None:
         """Initialize a System.
 
         Args:
@@ -94,11 +94,11 @@ class System:
 
         self._integrator_state, self._integrator = self._setup_integrator()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Return a string representation of the System."""
         return f"*************\njorbit System\n time: {Time(self._state.time, format='jd', scale='tdb').utc.iso}\n*************"
 
-    def _setup_acceleration_func(self, gravity):
+    def _setup_acceleration_func(self, gravity: str | Callable) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
             return gravity
@@ -141,7 +141,7 @@ class System:
 
         return acc_func
 
-    def _setup_integrator(self):
+    def _setup_integrator(self) -> tuple[IAS15IntegratorState, Callable]:
         a0 = self.gravity(self._state)
         integrator_state = initialize_ias15_integrator_state(a0)
         integrator = jax.tree_util.Partial(ias15_evolve)
@@ -152,7 +152,7 @@ class System:
     # PUBLIC METHODS
     ################
 
-    def integrate(self, times: Time):
+    def integrate(self, times: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the System to a given time.
 
         Note: This method does not change the state of the system. It returns the
@@ -179,7 +179,9 @@ class System:
         )
         return positions, velocities
 
-    def ephemeris(self, times: Time | jnp.ndarray, observer: str | jnp.ndarray):
+    def ephemeris(
+        self, times: Time | jnp.ndarray, observer: str | jnp.ndarray
+    ) -> SkyCoord:
         """Compute an ephemeris for the system.
 
         Args:
@@ -221,12 +223,12 @@ class System:
 
 @jax.jit
 def _integrate(
-    times,
-    state,
-    acc_func,
-    integrator_func,
-    integrator_state,
-):
+    times: jnp.ndarray,
+    state: SystemState,
+    acc_func: Callable,
+    integrator_func: Callable,
+    integrator_state: IAS15IntegratorState,
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
         state, acc_func, times, integrator_state
     )
@@ -236,19 +238,21 @@ def _integrate(
 
 @jax.jit
 def _ephem(
-    times,
-    particle_state,
-    acc_func,
-    integrator_func,
-    integrator_state,
-    observer_positions,
-):
+    times: jnp.ndarray,
+    state: SystemState,
+    acc_func: Callable,
+    integrator_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
-        times, particle_state, acc_func, integrator_func, integrator_state
+        times, state, acc_func, integrator_func, integrator_state
     )
 
-    def interior(px, pv):
-        def scan_func(carry, scan_over):
+    def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        def scan_func(
+            carry: None, scan_over: tuple[jnp.ndarray, jnp.ndarray]
+        ) -> tuple[None, tuple[jnp.ndarray, jnp.ndarray]]:
             position, velocity, time, observer_position = scan_over
             ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
             return None, (ra, dec)

@@ -59,9 +59,8 @@ ignore = [
     "B006", # unsure of this one- right now using {} as default for acceleration_func_kwargs
     "RUF012", # annoying when using NamedTuples
 ]
-extend-select = ["W", "I", "B", "D", "UP", "SIM", "RUF"]
+extend-select = ["W", "I", "B", "D", "UP", "SIM", "RUF", "ANN"]
 exclude = [
-    "tests/*",
     "docs/*",
     "src/jorbit/mpchecker/ephem_generation/*",
 ]

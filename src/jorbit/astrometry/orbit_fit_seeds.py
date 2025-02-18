@@ -22,7 +22,7 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     """
     assert len(obs) == 3, "Gauss's method requires 3 (and only 3) observations"
 
-    def radec_to_unit(ra, dec):
+    def radec_to_unit(ra: float, dec: float) -> jnp.ndarray:
         cos_dec = jnp.cos(dec)
         return jnp.array([cos_dec * jnp.cos(ra), cos_dec * jnp.sin(ra), jnp.sin(dec)])
 
@@ -64,10 +64,10 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     c = -((TOTAL_SOLAR_SYSTEM_GM * B) ** 2)
 
     # Step 8: Solve for r2 (scalar distance) using Newton-Raphson method
-    def polynomial(r):
+    def polynomial(r: float) -> float:
         return r**8 + a * r**6 + b * r**3 + c
 
-    def polynomial_derivative(r):
+    def polynomial_derivative(r: float) -> float:
         return 8 * r**7 + 6 * a * r**5 + 3 * b * r**2
 
     # Initial guess

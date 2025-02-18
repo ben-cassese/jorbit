@@ -34,7 +34,7 @@ def create_gauss_radau_spacings(internal_points: int) -> list[mpmath.mpf]:
 
     n = internal_points + 1  # include the endpoint
 
-    def f(x):
+    def f(x: mpmath.mpf) -> mpmath.mpf:
         return (mpmath.legendre(n - 1, x) + mpmath.legendre(n, x)) / (x + 1)
 
     slices = mpmath.linspace(-1, 1, 1000)

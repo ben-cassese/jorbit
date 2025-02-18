@@ -55,11 +55,11 @@ def read_mpc_file(
 
     data = pd.read_fwf(mpc_file, colspecs=cols, names=names)
 
-    def parse_time(mpc_time):
+    def parse_time(mpc_time: str) -> Time:
         t = mpc_time.replace(" ", "-").split(".")
         return Time(t[0], format="iso", scale="utc") + float(f"0.{t[1]}") * u.day
 
-    def parse_uncertainty(dec_coord):
+    def parse_uncertainty(dec_coord: str) -> u.Quantity:
         if len(dec_coord.split(".")) == 1:
             return 1 * u.arcsec
         return 10 ** (-len(dec_coord.split(".")[1])) * u.arcsec

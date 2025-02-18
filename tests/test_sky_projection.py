@@ -1,3 +1,5 @@
+"""Test the sky_projection module."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -14,7 +16,8 @@ from jorbit.ephemeris import Ephemeris
 from jorbit.utils.horizons import get_observer_positions
 
 
-def setup():
+def setup() -> tuple[np.ndarray, np.ndarray]:
+    """Gather data from Horizons and compare to Jorbit's on_sky function."""
     # gather positions and observed coordinates for Kitt Peak
 
     t0_kp = Time("2024-12-01 00:00")
@@ -100,12 +103,18 @@ def setup():
     return seps_astropy, seps_jorbit
 
 
-def test_sky_sep():
+def test_sky_sep() -> None:
+    """Test that the sky_sep function agrees w/ Astropy's SkyCoord.separation method."""
     seps_astropy, seps_jorbit = setup()
 
     np.testing.assert_allclose(seps_astropy.value, seps_jorbit, atol=1e-6)
 
 
-def test_on_sky():
+def test_on_sky() -> None:
+    """Test the on_sky function.
+
+    Given the same Cartesian position/velocity of an object and the same position of an
+    observer, should agree with the Horizons astrometry to within 0.1 mas.
+    """
     seps_astropy, seps_jorbit = setup()
     np.testing.assert_allclose(seps_jorbit, 0.0, atol=1e-4)  # 0.1 mas

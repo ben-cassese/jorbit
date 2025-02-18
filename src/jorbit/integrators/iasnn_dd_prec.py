@@ -205,7 +205,7 @@ def refine_intermediate_g(
     # substep_num starts at 1, 1->h1, etc
     substep_num -= 1
 
-    def scan_body(carry, idx):
+    def scan_body(carry: tuple, idx: int) -> tuple:
         result, start_pos = carry
         result = (result - g[idx]) * r[start_pos + idx + 1]
         return (result, start_pos), result
@@ -261,7 +261,7 @@ def _refine_b_and_g(
     c_vals = DoubleDouble(jnp.ones(substep_num, dtype=jnp.float64))
     c_vals[: substep_num - 1] = c[c_start : c_start + substep_num - 1]
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: tuple, scan_over: int) -> tuple:
         b_array = carry
         idx = scan_over
         b_array[idx, :] = b_array[idx] + (g_diff * c_vals[idx])
@@ -333,11 +333,15 @@ def step(
     a0 = acceleration_func(x0)
 
     # set up the predictor-corrector loop
-    def do_nothing(b, g, predictor_corrector_error):
+    def do_nothing(
+        b: DoubleDouble, g: DoubleDouble, predictor_corrector_error: DoubleDouble
+    ) -> tuple:
         # jax.debug.print("just chillin")
         return b, g, predictor_corrector_error, predictor_corrector_error
 
-    def predictor_corrector_iteration(b, g, predictor_corrector_error):
+    def predictor_corrector_iteration(
+        b: DoubleDouble, g: DoubleDouble, predictor_corrector_error: DoubleDouble
+    ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
 
@@ -368,7 +372,7 @@ def step(
 
         return b, g, predictor_corrector_error, predictor_corrector_error_last
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: tuple, scan_over: int) -> tuple:
         b, g, predictor_corrector_error, predictor_corrector_error_last = carry
 
         condition = (predictor_corrector_error < convergence_threshold) | (

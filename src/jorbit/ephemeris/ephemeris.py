@@ -50,7 +50,7 @@ class Ephemeris:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         postprocessing_func: Callable | None = None,
-    ):
+    ) -> None:
         """Initialize the Ephemeris object.
 
         Args:
@@ -103,9 +103,8 @@ class Ephemeris:
                 },
             ]
 
-            def postprocessing_func(
-                x, v
-            ):  # , a): # the asteroids are all relative to the sun, not the barycenter
+            def postprocessing_func(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
+                # , a): # the asteroids are all relative to the sun, not the barycenter
                 x = x.at[-16:].set(x[-16:] + x[0])
                 v = v.at[-16:].set(v[-16:] + v[0])
                 # a = a.at[-16:].set(0.0)
@@ -149,7 +148,7 @@ class Ephemeris:
         else:
             self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
-    def state(self, time: Time):
+    def state(self, time: Time) -> dict:
         """Calculate the state vectors for solar system objects at the given time(s).
 
         This method computes position and velocity vectors for all tracked solar system

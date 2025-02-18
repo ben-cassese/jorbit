@@ -124,7 +124,7 @@ def elements_to_cartesian(
 
 
 @jax.jit
-def cartesian_to_elements(x, v):
+def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
     """Convert cartesian coordinates to orbital elements.
 
     Relies on the total mass of the solar system, which is assumed to be the sum of all

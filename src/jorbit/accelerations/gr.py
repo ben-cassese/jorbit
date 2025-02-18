@@ -120,7 +120,7 @@ def ppn_gravity(
 
     a_const = jnp.sum(part1 + part2, axis=1, where=mask[:, :, None])
 
-    def iteration_step(a_curr):
+    def iteration_step(a_curr: jnp.ndarray) -> jnp.ndarray:
         rdota = jnp.sum(dx * a_curr[None, :, :], axis=-1)  # (N, N)
         non_const = jnp.sum(
             (gms[None, :, None] / (2.0 * c2))
@@ -134,10 +134,10 @@ def ppn_gravity(
 
         return non_const
 
-    def do_nothing(carry):
+    def do_nothing(carry: tuple) -> tuple:
         return carry
 
-    def do_iteration(carry):
+    def do_iteration(carry: tuple) -> tuple:
         a_prev, a_curr, _ = carry
         non_const = iteration_step(a_curr)
         a_next = a_const + non_const
@@ -146,7 +146,7 @@ def ppn_gravity(
 
         return (a_curr, a_next, ratio)
 
-    def body_fn(carry, _):
+    def body_fn(carry: tuple, _: None) -> tuple:
         a_prev, a_curr, ratio = carry
         should_continue = ratio > jnp.finfo(jnp.float64).eps
         new_carry = jax.lax.cond(should_continue, do_iteration, do_nothing, carry)

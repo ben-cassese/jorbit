@@ -277,7 +277,7 @@ def nearest_asteroid(
         mask = seps < 108000.0  # 30 degrees
         smol_coefficients = chunk_coefficients[mask]
 
-        def scan_func(carry, scan_over):
+        def scan_func(carry: tuple, scan_over: float) -> tuple:
             coeffs, flags = carry
             offset = scan_over
             ras, decs = multiple_states(coeffs, offset, t0, chunk_size)
@@ -397,7 +397,7 @@ def animate_region(
     ax.autoscale(False)
     plt.tight_layout()
 
-    def update(frame):
+    def update(frame: int) -> tuple:
         scatter.set_offsets(np.c_[xs[frame], ys[frame]])
         title.set_text(times[frame].iso)
         for i, text in enumerate(texts):

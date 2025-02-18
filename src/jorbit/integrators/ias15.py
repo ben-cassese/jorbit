@@ -53,7 +53,7 @@ class IAS15Helper:
     p6: jnp.ndarray
 
 
-def initialize_ias15_helper(n_particles):
+def initialize_ias15_helper(n_particles: int) -> IAS15Helper:
     """Initializes the IAS15Helper dataclass with zeros.
 
     Args:
@@ -75,7 +75,7 @@ def initialize_ias15_helper(n_particles):
     )
 
 
-def initialize_ias15_integrator_state(a0):
+def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
     """Initializes the IAS15IntegratorState dataclass with zeros.
 
     Args:
@@ -102,7 +102,7 @@ def initialize_ias15_integrator_state(a0):
 
 
 @jax.jit
-def add_cs(p, csp, inp):
+def add_cs(p: jnp.ndarray, csp: jnp.ndarray, inp: jnp.ndarray) -> tuple:
     """Compensated summation.
 
     Args:
@@ -125,7 +125,7 @@ def add_cs(p, csp, inp):
 
 
 @jax.jit
-def predict_next_step(ratio, _e, _b):
+def predict_next_step(ratio: jnp.ndarray, _e: IAS15Helper, _b: IAS15Helper) -> tuple:
     """Predicts the next b coefficients for the IAS15 integrator.
 
     Args:
@@ -159,10 +159,10 @@ def predict_next_step(ratio, _e, _b):
         p6=jnp.zeros_like(_b.p6, dtype=jnp.float64),
     )
 
-    def large_ratio(ratio, er, br):
+    def large_ratio(ratio: jnp.ndarray, er: IAS15Helper, br: IAS15Helper) -> tuple:
         return e, b
 
-    def reasonable_ratio(ratio, er, br):
+    def reasonable_ratio(ratio: jnp.ndarray, er: IAS15Helper, br: IAS15Helper) -> tuple:
         q1 = ratio
         q2 = q1 * q1
         q3 = q1 * q2
@@ -327,11 +327,21 @@ def ias15_step(
     g.p6 = b.p6
 
     # set up the predictor-corrector loop
-    def do_nothing(b, csb, g, predictor_corrector_error):
+    def do_nothing(
+        b: IAS15Helper,
+        csb: IAS15Helper,
+        g: IAS15Helper,
+        predictor_corrector_error: jnp.ndarray,
+    ) -> tuple:
         # print("just chillin")
         return b, csb, g, predictor_corrector_error, predictor_corrector_error
 
-    def predictor_corrector_iteration(b, csb, g, predictor_corrector_error):
+    def predictor_corrector_iteration(
+        b: IAS15Helper,
+        csb: IAS15Helper,
+        g: IAS15Helper,
+        predictor_corrector_error: jnp.ndarray,
+    ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
 
@@ -567,7 +577,7 @@ def ias15_step(
 
     # return predictor_corrector_iteration(b, csb, g, 1e300)
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: tuple, scan_over: int) -> tuple:
         b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
 
         condition = (predictor_corrector_error < EPSILON) | (
@@ -625,11 +635,15 @@ def ias15_step(
     # not checking for a min dt, since rebound default is 0.0 anyway
     # and we're willing to let it get tiny
 
-    def step_too_ambitious(x0, v0, csx, csv):
+    def step_too_ambitious(
+        x0: jnp.ndarray, v0: jnp.ndarray, csx: jnp.ndarray, csv: jnp.ndarray
+    ) -> tuple:
         dt_done = 0.0
         return x0, v0, dt_done, dt_new
 
-    def step_was_good(x0, v0, csx, csv):
+    def step_was_good(
+        x0: jnp.ndarray, v0: jnp.ndarray, csx: jnp.ndarray, csv: jnp.ndarray
+    ) -> tuple:
         dt_neww = jnp.where(
             dt_new / dt_done > 1 / IAS15_SAFETY_FACTOR,
             dt_done / IAS15_SAFETY_FACTOR,
@@ -1278,9 +1292,12 @@ def ias15_evolve(
     """
 
     def evolve(
-        initial_system_state, acceleration_func, final_time, initial_integrator_state
-    ):
-        def step_needed(args):
+        initial_system_state: IAS15IntegratorState,
+        acceleration_func: Callable,
+        final_time: float,
+        initial_integrator_state: IAS15IntegratorState,
+    ) -> tuple[SystemState, IAS15IntegratorState]:
+        def step_needed(args: tuple) -> tuple:
             system_state, integrator_state, last_meaningful_dt, iter_num = args
 
             t = system_state.time
@@ -1301,7 +1318,7 @@ def ias15_evolve(
             )
             return system_state, integrator_state, last_meaningful_dt, iter_num + 1
 
-        def cond_func(args):
+        def cond_func(args: tuple) -> bool:
             system_state, integrator_state, last_meaningful_dt, iter_num = args
             t = system_state.time
 
@@ -1328,7 +1345,7 @@ def ias15_evolve(
 
         return (final_system_state, final_integrator_state)
 
-    def scan_func(carry, scan_over):
+    def scan_func(carry: tuple, scan_over: float) -> tuple:
         system_state, integrator_state = carry
         final_time = scan_over
         system_state, integrator_state = evolve(
