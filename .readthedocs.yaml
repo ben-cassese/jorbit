@@ -9,14 +9,19 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.13"
+  jobs:
+    pre_build:
+      # Install the jorbit kernel
+      - python -m pip install ipykernel
+      - python -m ipykernel install --user --name jorbit --display-name "jorbit"
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:
    configuration: docs/conf.py
 
 # Optionally, but recommended,
-# declare the Python requirements required to build your documentation
-# See https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
 python:
-   install:
-   - requirements: docs/requirements.txt
+  install:
+    - requirements: docs/requirements.txt
+    - method: pip
+      path: . # install jorbit
