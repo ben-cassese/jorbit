@@ -4,4 +4,4 @@
 ![PyPI - Version](https://img.shields.io/pypi/v/jorbit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-![logo](./docs/_static/jorbit_logo_dark.png)
+![logo](./docs/_static/jorbit_logo_gh.png)
