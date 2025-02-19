@@ -506,18 +506,6 @@ wheels = [
 ]
 
 [[package]]
-name = "corner"
-version = "2.2.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "matplotlib" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/61/2d728798e9ae3bf899d962f77486cb29888d57f6fbf9561bc1435a6b1a74/corner-2.2.3.tar.gz", hash = "sha256:471b7b63395d8f1dee176bb779348ade38d56abd23404a48802a593607745e1c", size = 5932840 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/4a/5bd0a8b981c5a93153d9eb7c63143b407cc7f8dfc9f91eedc9b6f5289eca/corner-2.2.3-py3-none-any.whl", hash = "sha256:39674b223482456c3a78234dc7bdefd21188a2d47bb8cd468104a0501f6659ec", size = 15946 },
-]
-
-[[package]]
 name = "coverage"
 version = "7.6.10"
 source = { registry = "https://pypi.org/simple" }
@@ -1007,6 +995,7 @@ dependencies = [
     { name = "astroquery" },
     { name = "chex" },
     { name = "emcee" },
+    { name = "ipykernel" },
     { name = "jax" },
     { name = "jplephem" },
     { name = "matplotlib" },
@@ -1022,9 +1011,6 @@ dependencies = [
 dev = [
     { name = "black", extra = ["jupyter"] },
     { name = "codespell" },
-    { name = "corner" },
-    { name = "ipykernel" },
-    { name = "matplotlib" },
     { name = "myst-parser" },
     { name = "nbsphinx" },
     { name = "pre-commit" },
@@ -1050,6 +1036,7 @@ requires-dist = [
     { name = "astroquery", specifier = ">=0.4.7" },
     { name = "chex", specifier = ">=0.1.88" },
     { name = "emcee", specifier = ">=3.1.6" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "jax", specifier = ">=0.4.35" },
     { name = "jplephem", specifier = ">=2.22" },
     { name = "matplotlib", specifier = ">=3.9.2" },
@@ -1065,9 +1052,6 @@ requires-dist = [
 dev = [
     { name = "black", extras = ["jupyter"], specifier = ">=24.10.0" },
     { name = "codespell", specifier = ">=2.4.1" },
-    { name = "corner", specifier = ">=2.2.3" },
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "matplotlib", specifier = ">=3.9.2" },
     { name = "myst-parser", specifier = ">=4.0.0" },
     { name = "nbsphinx", specifier = ">=0.9.5" },
     { name = "pre-commit", specifier = ">=4.0.1" },
