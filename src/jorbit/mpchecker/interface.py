@@ -213,8 +213,10 @@ def nearest_asteroid(
         coordinate, _, t0, tf, chunk_size, names = setup_checks(
             coordinate, times, radius=0 * u.arcsec
         )
+        observer_positions = None
     else:
         coordinate, _, t0, tf, chunk_size, names = precomputed[0]
+        observer_positions = precomputed[2]
 
     indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, None, None, None))(
         times.tdb.jd, t0, tf, chunk_size
@@ -303,7 +305,13 @@ def nearest_asteroid(
         return separations * u.arcsec, relevant_mpcorb
 
     coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
-        asteroid_flags, times, radius, observer, coordinate, relevant_mpcorb
+        asteroid_flags,
+        times,
+        radius,
+        observer,
+        coordinate,
+        relevant_mpcorb,
+        observer_positions,
     )
 
     return separations * u.arcsec, relevant_mpcorb, coord_table, mag_table, total_mags

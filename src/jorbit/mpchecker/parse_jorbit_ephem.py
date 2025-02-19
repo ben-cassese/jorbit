@@ -195,7 +195,9 @@ def load_mpcorb() -> pl.DataFrame:
     return df
 
 
-def nearest_asteroid_helper(coordinate: SkyCoord, times: Time) -> tuple:
+def nearest_asteroid_helper(
+    coordinate: SkyCoord, times: Time, observer: str | None = None
+) -> tuple:
     """Pre-compute and load material for the nearest_asteroid function.
 
     Args:
@@ -203,11 +205,14 @@ def nearest_asteroid_helper(coordinate: SkyCoord, times: Time) -> tuple:
             The coordinate of the target.
         times (Time):
             The times of the observation.
+        observer (str):
+            The observatory observing the target. Optional, defaults to None.
 
     Returns:
-        tuple[tuple, jnp.ndarray]:
+        tuple[tuple, jnp.ndarray, jnp.ndarray|None]:
             The coordinate, radius, start time, end time, chunk size, and names, then
-            a merged array of all the relevant Chebyshev coefficients.
+            a merged array of all the relevant Chebyshev coefficients, then the observer
+            positions.
     """
     coordinate, _, t0, tf, chunk_size, names = setup_checks(
         coordinate, times, radius=0 * u.arcsec
@@ -236,7 +241,15 @@ def nearest_asteroid_helper(coordinate: SkyCoord, times: Time) -> tuple:
         coeffs.append(chunk)
 
     coeffs = jnp.array(coeffs)
-    return (coordinate, _, t0, tf, chunk_size, names), coeffs
+
+    if observer is not None:
+        if observer == "geocentric":
+            observer = "500@399"
+        observer_positions = get_observer_positions(times, observer)
+    else:
+        observer_positions = None
+
+    return (coordinate, _, t0, tf, chunk_size, names), coeffs, observer_positions
 
 
 def unpacked_to_packed_designation(number_str: str) -> str:
@@ -421,6 +434,7 @@ def extra_precision_calcs(
     observer: str,
     coordinate: SkyCoord,
     relevant_mpcorb: pl.DataFrame,
+    observer_positions: jnp.ndarray | None = None,
 ) -> tuple:
     """Helper function for running N-body ephemeris calculations.
 
@@ -437,6 +451,8 @@ def extra_precision_calcs(
             The coordinate of the target.
         relevant_mpcorb (pl.DataFrame):
             The mpcorb file used to generate the latest Jorbit ephemeris.
+        observer_positions (jnp.ndarray):
+            The observer positions. If None, they will be retrieved from Horizons.
 
     Returns:
         tuple:
@@ -447,9 +463,6 @@ def extra_precision_calcs(
     x0 = x0[asteroid_flags]
     v0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "v0.npy", cache=True))
     v0 = v0[asteroid_flags]
-
-    if observer == "geocentric":
-        observer = "500@399"
 
     state = SystemState(
         tracer_positions=x0,
@@ -469,7 +482,10 @@ def extra_precision_calcs(
     )
 
     # might as well only query once, will need both for the ephemeris and phase function
-    observer_positions = get_observer_positions(times, observer)
+    if observer_positions is None:
+        if observer == "geocentric":
+            observer = "500@399"
+        observer_positions = get_observer_positions(times, observer)
     coords = sy.ephemeris(times=times, observer=observer_positions)
     coord_table = Table(
         [[str(i) for i in list(relevant_mpcorb["Unpacked Name"])], coords],
