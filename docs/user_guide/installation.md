@@ -9,7 +9,7 @@ This is the most straightforward situation to be in when installing. All of the 
 <span style="font-size:larger;">Option 1: pip install:</span>
 
 ```bash
-python -m pip install jorbit
+python -m pip install -U jorbit
 ```
 
 <span style="font-size:larger;">Option 2: install from source:</span>
@@ -22,7 +22,7 @@ python -m pip install git+https://github.com/ben-cassese/jorbit
 
 ```bash
 git clone https://github.com/ben-cassese/jorbit
-cd squishyplanet
+cd jorbit
 python -m pip install -e .
 ```
 
