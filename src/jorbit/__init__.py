@@ -24,29 +24,40 @@ from jorbit.system import System
 __all__ = ["Ephemeris", "Observations", "Particle", "System"]
 
 
-if (not is_url_in_cache(DEFAULT_PLANET_EPHEMERIS_URL)) or (
-    not is_url_in_cache(DEFAULT_ASTEROID_EPHEMERIS_URL)
-):
-    print("JPL DE440 ephemeris files not found in astropy cache, downloading now...")
-    print(
-        "Files are approx. 765 MB, may take several minutes but will not be repeated."
-    )
-    download_files_in_parallel(
-        [DEFAULT_PLANET_EPHEMERIS_URL, DEFAULT_ASTEROID_EPHEMERIS_URL],
-        cache=True,
-        show_progress=True,
-    )
+def initialize_jorbit() -> None:
+    """Download and cache the JPL DE440 and jorbit ephemeris files."""
+    if (not is_url_in_cache(DEFAULT_PLANET_EPHEMERIS_URL)) or (
+        not is_url_in_cache(DEFAULT_ASTEROID_EPHEMERIS_URL)
+    ):
+        print(
+            "JPL DE440 ephemeris files not found in astropy cache, downloading now..."
+        )
+        print(
+            "Files are approx. 765 MB, may take several minutes but will not be repeated."
+        )
+        download_files_in_parallel(
+            [DEFAULT_PLANET_EPHEMERIS_URL, DEFAULT_ASTEROID_EPHEMERIS_URL],
+            cache=True,
+            show_progress=True,
+        )
 
-if not is_url_in_cache(JORBIT_EPHEM_URL_BASE + "names.npy"):
-    print("Basic jorbit ephemeris files not found in astropy cache, downloading now...")
-    print("Files are approx 660 MB, may take several minutes but will not be repeated.")
-    download_files_in_parallel(
-        [
-            JORBIT_EPHEM_URL_BASE + "names.npy",
-            JORBIT_EPHEM_URL_BASE + "x0.npy",
-            JORBIT_EPHEM_URL_BASE + "v0.npy",
-            JORBIT_EPHEM_URL_BASE + "mpcorb.arrow",
-        ],
-        cache=True,
-        show_progress=True,
-    )
+    if not is_url_in_cache(JORBIT_EPHEM_URL_BASE + "names.npy"):
+        print(
+            "Basic jorbit ephemeris files not found in astropy cache, downloading now..."
+        )
+        print(
+            "Files are approx 660 MB, may take several minutes but will not be repeated."
+        )
+        download_files_in_parallel(
+            [
+                JORBIT_EPHEM_URL_BASE + "names.npy",
+                JORBIT_EPHEM_URL_BASE + "x0.npy",
+                JORBIT_EPHEM_URL_BASE + "v0.npy",
+                JORBIT_EPHEM_URL_BASE + "mpcorb.arrow",
+            ],
+            cache=True,
+            show_progress=True,
+        )
+
+
+initialize_jorbit()

@@ -66,7 +66,7 @@ html_theme_options = {
     },
 }
 
-html_context = {"default_mode": "light"}
+html_context = {"default_mode": "dark"}
 
 html_sidebars = {
     "**": ["navbar-logo.html", "search-field.html", "sbt-sidebar-nav.html"]

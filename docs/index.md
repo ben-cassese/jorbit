@@ -1,13 +1,11 @@
-jorbit
-=============
-<!--
-<div align="center"> <img src="./_static/media/videos/_static/480p15/Banner_ManimCE_v0.17.3.gif" width="100%"> </div> -->
+# Jorbit Documentation
+<!-- <div align="center"> <img src="./_static/jorbit_logo_dark.svg" width="80%"> </div> -->
 
+Welcome to the documentation for `jorbit`! This package offers a framework for high-precision, JAX-based orbit determination and propagation within the solar system. It consists of several "front-end" classes and functions that are designed to spin up simulations with minimal effort, as well as a flexible "back-end" that allows for customization and extension. Much of the code is written in JAX, which allows for automatic differentiation and GPU acceleration.
 
-<br>Welcome to the documentation for `jorbit`!
+Although `jorbit` does not rely on any other dynamics packages, its under-the-hood design is based heavily on both the IAS15 integrator in REBOUND ([Rein and Spiegel 2015](https://ui.adsabs.harvard.edu/abs/2015MNRAS.446.1424R/abstract), [Rein and Liu 2012](https://ui.adsabs.harvard.edu/abs/2012A%26A...537A.128R/abstract)), and on the `gr_full` effect in REBOUNDx ([Tamayo, Rein, Shi and Hernandez, 2019](https://ui.adsabs.harvard.edu/abs/2020MNRAS.491.2885T/abstract)). We thank these authors for making their work open-source and available to the community.
 
-TODO: landing page
-
+Check out the tutorials/demos for an idea of what `jorbit` can do, and the user guide for installation and contributing instructions. The API documentation is also available for a more detailed look at the code. Open source contributions and issues are welcome!
 
 ## Attribution
 
@@ -33,8 +31,8 @@ tutorials/lightcurve_contamination.ipynb
 tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
 tutorials/compare_w_horizons.ipynb
-tutorials/simulate_large_system.ipynb
 tutorials/fit_an_orbit.ipynb
+tutorials/deep_dive.ipynb
 
 
 ```
