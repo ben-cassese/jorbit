@@ -547,7 +547,10 @@ def get_relevant_mpcorb(asteroid_flags: jnp.ndarray) -> pl.DataFrame:
     names = [unpacked_to_packed_designation(i) for i in names]
     names = [str(n) for n in names]
     relevant_mpcorb = load_mpcorb()
-    relevant_mpcorb = relevant_mpcorb.filter(pl.col("Packed designation").is_in(names))
+    names_df = pl.DataFrame({"Packed designation": names})
+    relevant_mpcorb = names_df.join(
+        relevant_mpcorb, on="Packed designation", how="left"
+    )
     relevant_mpcorb = relevant_mpcorb.select(
         [pl.col("Unpacked Name"), pl.exclude("Unpacked Name")]
     )

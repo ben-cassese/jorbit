@@ -302,7 +302,7 @@ def nearest_asteroid(
     relevant_mpcorb = Table.from_pandas(relevant_mpcorb.to_pandas())
 
     if not compute_contamination:
-        return separations * u.arcsec, relevant_mpcorb
+        return separations * u.arcsec, relevant_mpcorb, asteroid_flags
 
     coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
         asteroid_flags,
