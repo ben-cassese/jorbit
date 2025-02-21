@@ -22,24 +22,37 @@ def generate_ephem(particle_name, chunk_size, degree):
     print(f"beginning for {particle_name}")
     for _i in range(20):
         try:
-            obj = Horizons(
-                id=particle_name,
-                location="500@0",
-                epochs=t0.tdb.jd,
-                id_type="smallbody",
+            vecs = horizons_bulk_vector_query(
+                target=particle_name,
+                center="500@0",
+                times=t0,
+                disable_astroquery=True,
             )
-            vecs = obj.vectors(refplane="earth")
             break
-        except ValueError as e:
-            if ("Unknown target" in str(e)) or (
-                "Horizons Error: No ephemeris for target" in str(e)
-            ):
-                print(f"target {particle_name} is not in Horizons")
-                file_name = TEMP_DB.replace(".db", "_not_in_horizons.txt")
-                with open(file_name, "a") as f:
-                    f.write(f"{particle_name}\n")
-            raise
+
         except Exception as e:
+            if _i == 0:
+                print(
+                    f"error getting vectors for {particle_name}, going to use astroquery"
+                )
+                try:
+                    obj = Horizons(
+                        id=particle_name,
+                        location="500@0",
+                        epochs=t0.tdb.jd,
+                        id_type="smallbody",
+                    )
+                    vecs = obj.vectors(refplane="earth")
+                except ValueError as e:
+                    if ("Unknown target" in str(e)) or (
+                        "Horizons Error: No ephemeris for target" in str(e)
+                    ):
+                        print(f"target {particle_name} is not in Horizons")
+                        file_name = TEMP_DB.replace(".db", "_not_in_horizons.txt")
+                        with open(file_name, "a") as f:
+                            f.write(f"{particle_name}\n")
+                    raise
+
             print(f"error getting vectors for {particle_name}, retrying")
             if _i == 19:
                 print(f"failed to get vectors for {particle_name}\n*****\n\n")
@@ -206,7 +219,7 @@ def contribute_to_ephem(line_start, line_stop, target_file="MPCORB.DAT"):
         lines = f.readlines()[line_start : line_stop + 1]
 
     targets = [line.split()[0] for line in lines]
-    targets = [mpc_code_to_number(target) for target in targets]
+    unpacked_targets = [mpc_code_to_number(target) for target in targets]
 
     # the asteroids that we use as perturbers are included in MPCORB.DAT
     # if we try to integrate them the accelerations will be huge, and the step sizes
@@ -230,7 +243,11 @@ def contribute_to_ephem(line_start, line_stop, target_file="MPCORB.DAT"):
         "00704",
         "134340",  # Pluto- forgot he's also an id_type=smallbody in Horizons
     ]
-    targets = [target for target in targets if target not in forbidden_targets]
+    final_targets = []
+    for i, target in enumerate(targets):
+        if unpacked_targets[i] not in forbidden_targets:
+            final_targets.append(target)
+    targets = final_targets
 
     print(
         f"Processing {len(targets)} targets between line_start={line_start} and line_stop={line_stop}"
