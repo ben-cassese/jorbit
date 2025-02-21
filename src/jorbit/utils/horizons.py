@@ -15,6 +15,7 @@ from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit.data.observatory_codes import OBSERVATORY_CODES
+from jorbit.utils.mpc import packed_to_unpacked_designation
 
 
 class HorizonsQueryConfig(NamedTuple):
@@ -79,7 +80,20 @@ def horizons_query_string(
         str:
             The constructed query string.
     """
-    assert len(times) > HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS
+    # now giving option to disable astroquery for small searches
+    # assert len(times) > HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS
+
+    # this is deeply, fundamentally upsetting
+    # if you pass a designation to Horizons without calling it "DES", it sometimes gives
+    # you the wrong object. But, you can't call "DES" on numbered objects, even in
+    # packed form?? This is an attempted workaround that I worry will come back to bite
+    # me eventually.
+    # if it's 7 characters, assume its a packed form of a provisional designation
+    if len(target) == 7:
+        target = packed_to_unpacked_designation(target)
+        c = f'COMMAND= "DES={target};"'
+    else:
+        c = f'COMMAND= "{target};"'
 
     if len(times) > HorizonsQueryConfig.MAX_TIMESTEPS:
         raise ValueError(
@@ -88,7 +102,7 @@ def horizons_query_string(
 
     lines = [
         "!$$SOF",
-        f'COMMAND= "{target}"',
+        c,
         "OBJ_DATA='NO'",
         "MAKE_EPHEM='YES'",
         f"CENTER='{center}'",
@@ -209,6 +223,7 @@ def horizons_bulk_vector_query(
     target: str,
     center: str,
     times: Time,
+    disable_astroquery: bool = False,
 ) -> pd.DataFrame:
     """The main query function for our retrieval of vectors from the Horizons API.
 
@@ -228,6 +243,8 @@ def horizons_bulk_vector_query(
         times (Time):
             The times for the query. Note it just needs to be an Astropy Time object-
             we'll handle the different tdb/utc conversions internally.
+        disable_astroquery (bool):
+            Whether to disable the astroquery default for small searches.
 
     Returns:
         pd.DataFrame:
@@ -235,7 +252,9 @@ def horizons_bulk_vector_query(
     """
     if isinstance(times.jd, float):
         times = [times]
-    if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
+    if (len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS) and (
+        not disable_astroquery
+    ):
         # note that astrometry queries use utc, vector use tdb...
         horizons_obj = Horizons(
             id=target, location=center, epochs=[t.tdb.jd for t in times]
@@ -282,7 +301,11 @@ def horizons_bulk_vector_query(
 
 
 def horizons_bulk_astrometry_query(
-    target: str, center: str, times: Time, skip_daylight: bool = False
+    target: str,
+    center: str,
+    times: Time,
+    skip_daylight: bool = False,
+    disable_astroquery: bool = False,
 ) -> pd.DataFrame:
     """The main query function for our retrieval of astrometry from the Horizons API.
 
@@ -304,6 +327,8 @@ def horizons_bulk_astrometry_query(
             we'll handle the different tdb/utc conversions internally.
         skip_daylight (bool):
             Whether to skip daylight in the query.
+        disable_astroquery (bool):
+            Whether to disable the astroquery default for small searches.
 
     Returns:
         pd.DataFrame:
@@ -311,7 +336,9 @@ def horizons_bulk_astrometry_query(
     """
     if isinstance(times.jd, float):
         times = [times]
-    if len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS:
+    if (len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS) and (
+        not disable_astroquery
+    ):
         # note that astrometry queries use utc, vector use tdb...
         horizons_obj = Horizons(
             id=target, location=center, epochs=[t.utc.jd for t in times]
