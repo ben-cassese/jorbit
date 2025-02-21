@@ -1,7 +1,7 @@
 """Test that the packed to unpacked designation translator is consistent."""
 
 from jorbit.mpchecker import load_mpcorb
-from jorbit.mpchecker.parse_jorbit_ephem import (
+from jorbit.utils.mpc import (
     packed_to_unpacked_designation,
     unpacked_to_packed_designation,
 )

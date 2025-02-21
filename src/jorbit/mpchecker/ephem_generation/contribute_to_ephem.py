@@ -15,6 +15,7 @@ from numpy.polynomial import chebyshev
 from tqdm import tqdm
 
 from jorbit import Particle
+from jorbit.utils.mpc import packed_to_unpacked_designation
 
 
 def generate_ephem(particle_name, chunk_size, degree):
@@ -36,8 +37,9 @@ def generate_ephem(particle_name, chunk_size, degree):
                     f"error getting vectors for {particle_name}, going to use astroquery"
                 )
                 try:
+                    p = packed_to_unpacked_designation(particle_name)
                     obj = Horizons(
-                        id=particle_name,
+                        id=p,
                         location="500@0",
                         epochs=t0.tdb.jd,
                         id_type="smallbody",
@@ -111,51 +113,6 @@ def generate_ephem(particle_name, chunk_size, degree):
     return (init, intlen, coeffs), x0, v0
 
 
-def mpc_code_to_number(code):
-
-    # if it's a provisional designation, just return it
-    if len(code) == 7:
-        return code
-
-    # if it's a numbered object, it could be written 3 forms:
-
-    # low numbered objects are just numbers
-    if code.isdigit():
-        return code
-
-    # medium-numbered objects are a letter followed by 4 digits
-    def letter_to_number(char):
-        if char.isupper():
-            return ord(char) - ord("A") + 10
-        else:
-            return ord(char) - ord("a") + 36
-
-    if code[0].isalpha() and code[1:].isdigit():
-        prefix_value = letter_to_number(code[0])
-        num = (prefix_value * 10000) + int(code[1:])
-        return str(num)
-
-    # high-numbered objects are a tilde followed by a base-62 number
-    def base62_to_decimal(char):
-        if char.isdigit():
-            return int(char)
-        elif char.isupper():
-            return ord(char) - ord("A") + 10
-        else:
-            return ord(char) - ord("a") + 36
-
-    if code.startswith("~"):
-        # Convert each character to its decimal value and calculate total
-        total = 0
-        for position, char in enumerate(reversed(code[1:])):
-            decimal_value = base62_to_decimal(char)
-            total += decimal_value * (62**position)
-        num = total + 620000
-        return str(num)
-
-    raise ValueError(f"Invalid MPC code format: {code}")
-
-
 def adapt_array(arr):
     """Convert numpy array to binary for SQLite storage"""
     return arr.tobytes()
@@ -192,14 +149,6 @@ def write_result(target_name, chebyshev_coefficients, x0, v0):
         )
 
 
-def result_exists(target_name):
-    with sqlite3.connect(TEMP_DB) as conn:
-        cursor = conn.execute(
-            "SELECT 1 FROM results WHERE target_name = ?", (target_name,)
-        )
-        return cursor.fetchone() is not None
-
-
 def setup_db():
     with sqlite3.connect(TEMP_DB, timeout=30.0) as conn:
         # Create the table if it doesn't exist
@@ -214,49 +163,11 @@ def setup_db():
         )
 
 
-def contribute_to_ephem(line_start, line_stop, target_file="MPCORB.DAT"):
-    with open(target_file) as f:
-        lines = f.readlines()[line_start : line_stop + 1]
+def contribute_to_ephem(targets):
 
-    targets = [line.split()[0] for line in lines]
-    unpacked_targets = [mpc_code_to_number(target) for target in targets]
-
-    # the asteroids that we use as perturbers are included in MPCORB.DAT
-    # if we try to integrate them the accelerations will be huge, and the step sizes
-    # will be so small they'll never finish
-    forbidden_targets = [
-        "00001",
-        "00002",
-        "00003",
-        "00004",
-        "00007",
-        "00010",
-        "00015",
-        "00016",
-        "00031",
-        "00052",
-        "00065",
-        "00087",
-        "00088",
-        "00107",
-        "00511",
-        "00704",
-        "134340",  # Pluto- forgot he's also an id_type=smallbody in Horizons
-    ]
-    final_targets = []
-    for i, target in enumerate(targets):
-        if unpacked_targets[i] not in forbidden_targets:
-            final_targets.append(target)
-    targets = final_targets
-
-    print(
-        f"Processing {len(targets)} targets between line_start={line_start} and line_stop={line_stop}"
-    )
+    print(f"Processing {len(targets)}")
 
     for target in tqdm(targets):
-        if result_exists(target):
-            print(f"Skipping target {target} because it already exists in the database")
-            continue
         try:
             (_, _, coeffs), x0, v0 = generate_ephem(
                 particle_name=target, chunk_size=30, degree=10
@@ -270,7 +181,7 @@ def contribute_to_ephem(line_start, line_stop, target_file="MPCORB.DAT"):
     return targets
 
 
-line_start, line_stop = int(sys.argv[1]), int(sys.argv[2])
+targets = sys.argv[1:]
 
 print("setting up database")
 arr_id = os.environ.get("SLURM_ARRAY_TASK_ID", "ARRAY_ID_NOT_FOUND")
@@ -289,4 +200,4 @@ forward_times = t0 + jnp.arange(0, 20.001, 10 * u.hour.to(u.year)) * u.year
 forward_pos = jnp.load("forward_pos.npy")
 
 print("beginning integrations")
-contribute_to_ephem(line_start, line_stop, target_file="missed_targets.DAT")
+contribute_to_ephem(targets=targets)

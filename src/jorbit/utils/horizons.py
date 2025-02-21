@@ -93,6 +93,7 @@ def horizons_query_string(
         target = packed_to_unpacked_designation(target)
         c = f'COMMAND= "DES={target};"'
     else:
+        target = packed_to_unpacked_designation(target)
         c = f'COMMAND= "{target};"'
 
     if len(times) > HorizonsQueryConfig.MAX_TIMESTEPS:

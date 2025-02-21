@@ -16,6 +16,8 @@ from jorbit import Ephemeris
 from jorbit.accelerations import create_newtonian_ephemeris_acceleration_func
 from jorbit.astrometry.sky_projection import on_sky
 from jorbit.utils.horizons import get_observer_positions
+from jorbit.utils.states import SystemState
+from jorbit.accelerations.newtonian import newtonian_gravity
 
 ##########
 # get the positions of the geocenter from 20 years ago to 20 years in the future
@@ -82,19 +84,41 @@ t = forward_times.tdb.jd
 forward_pos = jnp.load("forward_pos.npy")
 
 
-on_sky_eph = Ephemeris(
-    ssos="default planets",
-    earliest_time=Time("2019-01-01"),
-    latest_time=Time("2041-01-01"),
-)
-acc_func = create_newtonian_ephemeris_acceleration_func(on_sky_eph.processor)
-
-
 perturber_eph = Ephemeris(
     ssos="default solar system",
     earliest_time=Time("2019-01-01"),
     latest_time=Time("2041-01-01"),
 )
+
+ephem_processor = perturber_eph.processor
+
+
+def func(inputs: SystemState) -> jnp.ndarray:
+    perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
+    perturber_log_gms = ephem_processor.log_gms
+
+    # chop off pluto and the asteroids
+    perturber_xs = perturber_xs[:9]
+    perturber_vs = perturber_vs[:9]
+    perturber_log_gms = perturber_log_gms[:9]
+
+    new_state = SystemState(
+        massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
+        massive_velocities=jnp.concatenate([perturber_vs, inputs.massive_velocities]),
+        tracer_positions=inputs.tracer_positions,
+        tracer_velocities=inputs.tracer_velocities,
+        log_gms=jnp.concatenate([perturber_log_gms, inputs.log_gms]),
+        time=inputs.time,
+        acceleration_func_kwargs=inputs.acceleration_func_kwargs,
+    )
+
+    accs = newtonian_gravity(new_state)
+
+    num_perturbers = perturber_xs.shape[0]
+    return accs[num_perturbers:]
+
+
+acc_func = jax.tree_util.Partial(func)
 
 perturbers = {
     "ceres": "00001",
@@ -113,6 +137,7 @@ perturbers = {
     "camilla": "00107",
     "davida": "00511",
     "interamnia": "00704",
+    "pluto": "D4340",
 }
 
 
