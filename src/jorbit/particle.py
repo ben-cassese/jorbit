@@ -1,5 +1,7 @@
 """The Particle class and its supporting functions."""
 
+from __future__ import annotations
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -384,7 +386,7 @@ class Particle:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
-    ) -> "Particle":
+    ) -> Particle:
         """Query JPL Horizons for an SSOs state at a given time and create a Particle object.
 
         Args:
@@ -531,7 +533,7 @@ class Particle:
         self,
         fit_seed: CartesianState | KeplerianState | None = None,
         verbose: bool = False,
-    ) -> "Particle":
+    ) -> Particle:
         """Find the maximum likelihood orbit for the particle.
 
         Args:

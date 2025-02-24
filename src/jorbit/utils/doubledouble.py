@@ -1,5 +1,7 @@
 """Experimental DoubleDouble precision arithmetic in JAX."""
 
+from __future__ import annotations
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -30,7 +32,7 @@ class DoubleDouble:
             hi: High part (jnp.ndarray)
             lo: Low part (jnp.ndarray, optional). If None, lo is set to 0
         """
-        if isinstance(hi, (int | float)) & (lo is None):
+        if isinstance(hi, (int, float)) and (lo is None):
             self.hi, self.lo = DoubleDouble._split(jnp.array(hi))
         else:
             self.hi = jnp.array(hi)
@@ -73,7 +75,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     @classmethod
-    def from_string(cls, s: str) -> "DoubleDouble":
+    def from_string(cls, s: str) -> DoubleDouble:
         """Create a DoubleDouble number from a string, similar to mpmath.mpf.
 
         Args:
@@ -105,17 +107,17 @@ class DoubleDouble:
         """Representation of the DoubleDouble array."""
         return f"DoubleDouble({self.hi}, {self.lo})"
 
-    def __getitem__(self, index: int) -> "DoubleDouble":
+    def __getitem__(self, index: int) -> DoubleDouble:
         """Get an item from the DoubleDouble array."""
         return DoubleDouble(self.hi[index], self.lo[index])
 
-    def __setitem__(self, index: int, value: "DoubleDouble") -> None:
+    def __setitem__(self, index: int, value: DoubleDouble) -> None:
         """Set an item in the DoubleDouble array (note: mutable, unlike jnp.ndarray)."""
         self.hi = self.hi.at[index].set(value.hi)
         self.lo = self.lo.at[index].set(value.lo)
 
     # @jax.jit
-    def __add__(self, other: "DoubleDouble") -> "DoubleDouble":
+    def __add__(self, other: DoubleDouble) -> DoubleDouble:
         """Add two DoubleDouble numbers.
 
         Implementation of add2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -132,12 +134,12 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __neg__(self) -> "DoubleDouble":
+    def __neg__(self) -> DoubleDouble:
         """Negate a DoubleDouble number."""
         return DoubleDouble(-self.hi, -self.lo)
 
     # @jax.jit
-    def __sub__(self, other: "DoubleDouble") -> "DoubleDouble":
+    def __sub__(self, other: DoubleDouble) -> DoubleDouble:
         """Subtract two DoubleDouble numbers.
 
         Implementation of sub2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -154,7 +156,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __mul__(self, other: "DoubleDouble") -> "DoubleDouble":
+    def __mul__(self, other: DoubleDouble) -> DoubleDouble:
         """Multiply two DoubleDouble numbers.
 
         Implementation of mul2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -169,7 +171,7 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __truediv__(self, other: "DoubleDouble") -> "DoubleDouble":
+    def __truediv__(self, other: DoubleDouble) -> DoubleDouble:
         """Divide two DoubleDouble numbers.
 
         Implementation of div2 from `Dekker 1971 <https://csclub.uwaterloo.ca/~pbarfuss/dekker1971.pdf>`_.
@@ -183,25 +185,25 @@ class DoubleDouble:
         return DoubleDouble(z, zz)
 
     # @jax.jit
-    def __abs__(self) -> "DoubleDouble":
+    def __abs__(self) -> DoubleDouble:
         """Absolute value of a DoubleDouble number."""
         new_hi = jnp.where(self.hi < 0, -self.hi, self.hi)
         new_lo = jnp.where(self.hi < 0, -self.lo, self.lo)
         return DoubleDouble(new_hi, new_lo)
 
-    def __lt__(self, other: "DoubleDouble") -> bool:
+    def __lt__(self, other: DoubleDouble) -> bool:
         """Less than comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo < other.lo))
 
-    def __le__(self, other: "DoubleDouble") -> bool:
+    def __le__(self, other: DoubleDouble) -> bool:
         """Less than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi < other.hi) | ((self.hi == other.hi) & (self.lo <= other.lo))
 
-    def __gt__(self, other: "DoubleDouble") -> bool:
+    def __gt__(self, other: DoubleDouble) -> bool:
         """Greater than comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo > other.lo))
 
-    def __ge__(self, other: "DoubleDouble") -> bool:
+    def __ge__(self, other: DoubleDouble) -> bool:
         """Greater than or equal to comparison of two DoubleDouble numbers."""
         return (self.hi > other.hi) | ((self.hi == other.hi) & (self.lo >= other.lo))
 
@@ -217,7 +219,7 @@ class DoubleDouble:
         return (children, aux_data)
 
     @classmethod
-    def tree_unflatten(cls, aux_data: None, children: tuple) -> "DoubleDouble":
+    def tree_unflatten(cls, aux_data: None, children: tuple) -> DoubleDouble:
         """Implementation for JAX pytree."""
         return cls(*children)
 

@@ -1,5 +1,7 @@
 """The helper functions for the mpchecker."""
 
+from __future__ import annotations
+
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
