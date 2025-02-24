@@ -6,6 +6,7 @@
 :caption: Misc
 :titlesonly:
 
+cache
 doubledouble
 generate_coefficients
 horizons

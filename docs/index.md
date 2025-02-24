@@ -19,6 +19,7 @@ Hopefully PSJ
 user_guide/installation
 user_guide/contributing
 user_guide/changelog
+user_guide/cache
 ```
 
 ```{toctree}

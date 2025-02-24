@@ -10,9 +10,6 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
@@ -20,43 +17,13 @@ import polars as pl
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
-from astropy.utils.data import download_file, is_url_in_cache
 
 from jorbit.astrometry.sky_projection import sky_sep
-from jorbit.data.constants import JORBIT_EPHEM_CACHE_TIMEOUT, JORBIT_EPHEM_URL_BASE
+from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 from jorbit.system import System
+from jorbit.utils.cache import download_file_wrapper
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.states import SystemState
-
-
-def download_file_wrapper(url: str) -> str:
-    """Check if a file is in the cache and not expired: if not, download it.
-
-    Args:
-        url (str):
-            The URL of the file to download.
-
-    Returns:
-        str:
-            The path to the downloaded file.
-    """
-    present = is_url_in_cache(url)
-    if not present:
-        request_file = Path(download_file(url, cache=True))
-        current_time = datetime.now(timezone.utc)
-        cache_time = datetime.fromtimestamp(request_file.stat().st_mtime, timezone.utc)
-        expired = current_time - cache_time > timedelta(
-            seconds=JORBIT_EPHEM_CACHE_TIMEOUT
-        )
-        if expired:
-            request_file = download_file(url, cache="update")
-            warnings.warn(
-                f"File {url} was present in the cache but has expired and will be re-downloaded.",
-                stacklevel=2,
-            )
-        return download_file(url)
-    else:
-        return download_file(url, cache=True)
 
 
 @jax.jit

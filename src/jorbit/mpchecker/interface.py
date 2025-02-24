@@ -25,13 +25,13 @@ from matplotlib.patches import Circle
 from jorbit.astrometry.sky_projection import sky_sep, tangent_plane_projection
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 from jorbit.mpchecker.parse_jorbit_ephem import (
-    download_file_wrapper,
     extra_precision_calcs,
     get_chunk_index,
     get_relevant_mpcorb,
     multiple_states,
     setup_checks,
 )
+from jorbit.utils.cache import download_file_wrapper
 
 
 def mpchecker(
