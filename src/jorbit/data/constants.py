@@ -47,6 +47,8 @@ JORBIT_EPHEM_URL_BASE = (
     "https://huggingface.co/datasets/jorbit/jorbit_mpchecker/resolve/main/"
 )
 """The URL root where are the jorbit ephemeris files are stored."""
+JORBIT_EPHEM_CACHE_TIMEOUT = 6 * 31 * 24 * 60 * 60  # 6 months
+"""The timeout for the jorbit ephemeris cache."""
 
 ################################################################################
 # Ephemeris constants

@@ -4,7 +4,13 @@
 
 Separately, if you're more of a .venv person and are open to using [uv](https://docs.astral.sh/uv/), you can recreate the exact development environment by cloning the `uv.lock` file and running `uv sync`. This will create virtual environment in the current directory that can be activated with `source .venv/bin/activate` (or the equivalent on your system).
 
-### CPU Users
+```{warning}
+The first time you import ``jorbit``, it will automatically download and cache several necessary files, including the JPL DE 440 ephemeris that are used to factor in planetary perturbations. This is a one-time download of ~a GB and can take a few minutes depending on your internet connection. These files will be stored in the astropy cache directory, which can be found by running `` astropy.config.paths.get_cache_dir()`` and cleared by running ``astropy.utils.data.clear_download_cache()``.
+
+When using the `mpchecker` functions, other files will similarly be automatically downloaded and cached. A warning will be issued each time a new file is downloaded, but if running on a shared system or if you have disk space concerns, be sure to keep track of your cache size.
+```
+
+## CPU Users
 
 This is the most straightforward situation to be in when installing. All of the usual methods should work fine:
 
@@ -37,7 +43,7 @@ cd jorbit
 uv sync
 ```
 
-### GPU Users
+## GPU Users
 
 Since ``jorbit`` relies heavily on ``JAX``, large portions can technically run on a GPU (or a TPU) as well as a CPU with no changes to the code. However, anyone attempting to do this should not expect automatic speedups. ``jorbit`` is not optimized for GPU use, since many of the operations are run sequentially and it was entirely developed on a CPU. There are some areas where a GPU could be beneficial (e.g. >1e6 massless particles interacting with a smaller number of massive particles), but in general try to manage expectations.
 

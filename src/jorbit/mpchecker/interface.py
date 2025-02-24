@@ -15,7 +15,7 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.table import Table, hstack
 from astropy.time import Time
-from astropy.utils.data import download_file, is_url_in_cache
+from astropy.utils.data import is_url_in_cache
 from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle
@@ -23,6 +23,7 @@ from matplotlib.patches import Circle
 from jorbit.astrometry.sky_projection import sky_sep, tangent_plane_projection
 from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
 from jorbit.mpchecker.parse_jorbit_ephem import (
+    download_file_wrapper,
     extra_precision_calcs,
     get_chunk_index,
     get_relevant_mpcorb,
@@ -97,7 +98,7 @@ def mpchecker(
                 "system memory constraints if checking many well-separated times.",
                 stacklevel=2,
             )
-        file_name = download_file(file_name, cache=True)
+        file_name = download_file_wrapper(file_name)
         coefficients = jnp.load(file_name)
 
     # get the ra and dec of every minor planet (!)
@@ -241,10 +242,9 @@ def nearest_asteroid(
     else:
         # load the first chunk to get the number of asteroids
         tmp = jnp.load(
-            download_file(
+            download_file_wrapper(
                 JORBIT_EPHEM_URL_BASE
                 + f"chebyshev_coeffs_fwd_{unique_indices[0]:03d}.npy",
-                cache=True,
             )
         )
         asteroid_flags = np.zeros(len(tmp), dtype=bool)
@@ -261,9 +261,8 @@ def nearest_asteroid(
                     stacklevel=2,
                 )
             chunk_coefficients = jnp.load(
-                download_file(
+                download_file_wrapper(
                     file_name,
-                    cache=True,
                 )
             )
         else:

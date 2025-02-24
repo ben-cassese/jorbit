@@ -8,6 +8,9 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
@@ -15,14 +18,43 @@ import polars as pl
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
-from astropy.utils.data import download_file
+from astropy.utils.data import download_file, is_url_in_cache
 
 from jorbit.astrometry.sky_projection import sky_sep
-from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
+from jorbit.data.constants import JORBIT_EPHEM_CACHE_TIMEOUT, JORBIT_EPHEM_URL_BASE
 from jorbit.system import System
 from jorbit.utils.horizons import get_observer_positions
-from jorbit.utils.mpc import unpacked_to_packed_designation
 from jorbit.utils.states import SystemState
+
+
+def download_file_wrapper(url: str) -> str:
+    """Check if a file is in the cache and not expired: if not, download it.
+
+    Args:
+        url (str):
+            The URL of the file to download.
+
+    Returns:
+        str:
+            The path to the downloaded file.
+    """
+    present = is_url_in_cache(url)
+    if not present:
+        request_file = Path(download_file(url, cache=True))
+        current_time = datetime.now(timezone.utc)
+        cache_time = datetime.fromtimestamp(request_file.stat().st_mtime, timezone.utc)
+        expired = current_time - cache_time > timedelta(
+            seconds=JORBIT_EPHEM_CACHE_TIMEOUT
+        )
+        if expired:
+            request_file = download_file(url, cache="update")
+            warnings.warn(
+                f"File {url} was present in the cache but has expired and will be re-downloaded.",
+                stacklevel=2,
+            )
+        return download_file(url)
+    else:
+        return download_file(url, cache=True)
 
 
 @jax.jit
@@ -180,7 +212,7 @@ def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Quantity) -> tuple:
     chunk_size = 30
 
     # get the names of all particles- this file is < 40 MB
-    names = np.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy", cache=True))
+    names = np.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
 
     return coordinate, radius, t0, tf, chunk_size, names
 
@@ -192,7 +224,7 @@ def load_mpcorb() -> pl.DataFrame:
         pl.DataFrame:
             The mpcorb file.
     """
-    df = pl.read_ipc(download_file(JORBIT_EPHEM_URL_BASE + "mpcorb.arrow", cache=True))
+    df = pl.read_ipc(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "mpcorb.arrow"))
     return df
 
 
@@ -234,9 +266,8 @@ def nearest_asteroid_helper(
     coeffs = []
     for ind in unique_indices:
         chunk = jnp.load(
-            download_file(
-                JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy",
-                cache=True,
+            download_file_wrapper(
+                JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
             )
         )
         coeffs.append(chunk)
@@ -337,9 +368,9 @@ def extra_precision_calcs(
             The ephemeris, separations, coordinate table, magnitudes, magnitude table,
             and total magnitudes.
     """
-    x0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "x0.npy", cache=True))
+    x0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "x0.npy"))
     x0 = x0[asteroid_flags]
-    v0 = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "v0.npy", cache=True))
+    v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))
     v0 = v0[asteroid_flags]
 
     state = SystemState(
@@ -420,9 +451,8 @@ def get_relevant_mpcorb(asteroid_flags: jnp.ndarray) -> pl.DataFrame:
         pl.DataFrame:
             The filtered MPCORB file.
     """
-    all_names = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "names.npy", cache=True))
+    all_names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
     names = all_names[asteroid_flags]
-    names = [unpacked_to_packed_designation(i) for i in names]
     names = [str(n) for n in names]
     relevant_mpcorb = load_mpcorb()
     names_df = pl.DataFrame({"Packed designation": names})
