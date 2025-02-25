@@ -81,17 +81,28 @@ class Ephemeris:
                     "ephem_file": DEFAULT_PLANET_EPHEMERIS_URL,
                     "names": ALL_PLANET_NAMES,
                     "targets": [ALL_PLANET_IDS[name] for name in ALL_PLANET_NAMES],
-                    "centers": [0] * len(ALL_PLANET_IDS),
+                    "centers": [0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0],
                     "log_gms": ALL_PLANET_LOG_GMS,
                 }
             ]
+
+            def postprocessing_func(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
+                # the earth and moon are relative to the earth barycenter, not the sun
+                x = x.at[4:6].set(x[4:6] + x[3])
+                v = v.at[4:6].set(v[4:6] + v[3])
+                x = jnp.delete(x, 3, axis=0)
+                v = jnp.delete(v, 3, axis=0)
+                return x, v
+
+            postprocessing_func = jax.tree_util.Partial(postprocessing_func)
+
         elif ssos == "default solar system":
             ssos = [
                 {
                     "ephem_file": DEFAULT_PLANET_EPHEMERIS_URL,
                     "names": ALL_PLANET_NAMES,
                     "targets": [ALL_PLANET_IDS[name] for name in ALL_PLANET_NAMES],
-                    "centers": [0] * len(ALL_PLANET_IDS),
+                    "centers": [0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0],
                     "log_gms": ALL_PLANET_LOG_GMS,
                 },
                 {
@@ -106,11 +117,16 @@ class Ephemeris:
             ]
 
             def postprocessing_func(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
-                # , a): # the asteroids are all relative to the sun, not the barycenter
+                # the earth and moon are relative to the earth barycenter, not the sun
+                x = x.at[4:6].set(x[4:6] + x[3])
+                v = v.at[4:6].set(v[4:6] + v[3])
+                x = jnp.delete(x, 3, axis=0)
+                v = jnp.delete(v, 3, axis=0)
+
+                # the asteroids are all relative to the sun, not the barycenter
                 x = x.at[-16:].set(x[-16:] + x[0])
                 v = v.at[-16:].set(v[-16:] + v[0])
-                # a = a.at[-16:].set(0.0)
-                return x, v  # , a
+                return x, v
 
             postprocessing_func = jax.tree_util.Partial(postprocessing_func)
 
@@ -120,6 +136,10 @@ class Ephemeris:
             combined_names += sso_group["names"]
             for n in sso_group["names"]:
                 combined_log_gms.append(sso_group["log_gms"][n])
+        if "earth_bary" in combined_names:
+            ind = combined_names.index("earth_bary")
+            _ = combined_names.pop(ind)
+            _ = combined_log_gms.pop(ind)
         self._combined_names = combined_names
         self._combined_log_gms = combined_log_gms
 
@@ -139,14 +159,17 @@ class Ephemeris:
             gms = []
             for n in sso_group["names"]:
                 gms.append(sso_group["log_gms"][n])
+            if "earth_bary" in sso_group["names"]:
+                ind = sso_group["names"].index("earth_bary")
+                _ = gms.pop(ind)
             gms = jnp.array(gms)
             ephs.append(EphemerisProcessor(init, intlen, coeff, gms))
         self.ephs = tuple(ephs)
 
-        if len(self.ephs) == 1:
-            self.processor = self.ephs[0]
-        else:
-            self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
+        # if len(self.ephs) == 1:
+        #     self.processor = self.ephs[0]
+        # else:
+        self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
     def state(self, time: Time) -> dict:
         """Calculate the state vectors for solar system objects at the given time(s).

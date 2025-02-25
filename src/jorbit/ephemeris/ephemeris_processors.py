@@ -248,10 +248,8 @@ class EphemerisPostProcessor:
         """
         x = jnp.empty((0, 3))
         v = jnp.empty((0, 3))
-        # a = jnp.empty((0, 3))
         for eph in self.ephs:
             _x, _v = eph.state(tdb)
             x = jnp.vstack([x, _x])
             v = jnp.vstack([v, _v])
-            # a = jnp.vstack([a, _a])
-        return self.postprocessing_func(x, v)  # , a)
+        return self.postprocessing_func(x, v)

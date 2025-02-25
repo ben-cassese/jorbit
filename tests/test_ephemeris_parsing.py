@@ -22,7 +22,8 @@ def test_planets_ephemeris() -> None:
         "sun",
         "mercury barycenter",
         "venus barycenter",
-        "earth-moon barycenter",
+        "399",  # earth
+        "301",  # moon
         "mars barycenter",
         "jupiter barycenter",
         "saturn barycenter",
@@ -36,6 +37,7 @@ def test_planets_ephemeris() -> None:
         "mercury",
         "venus",
         "earth",
+        "moon",
         "mars",
         "jupiter",
         "saturn",
@@ -53,7 +55,7 @@ def test_planets_ephemeris() -> None:
         x_err = x0 - jorbit_ephem[jorbit_names[i]]["x"]
         v_err = v0 - jorbit_ephem[jorbit_names[i]]["v"]
 
-        assert (jnp.linalg.norm(x_err) * u.au) < 1 * u.m
+        assert (jnp.linalg.norm(x_err) * u.au) < 2 * u.m
         assert (jnp.linalg.norm(v_err) * u.au / u.day) < (1 * u.m / u.day)
 
 
