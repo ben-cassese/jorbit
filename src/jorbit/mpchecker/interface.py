@@ -211,6 +211,16 @@ def nearest_asteroid(
             within the search radius at each time.
     """
     radius = radius.to(u.arcsec).value
+    if times.shape == ():
+        times = Time([times])
+
+    if (times[-1] - times[0]) > (30 * u.day):
+        warnings.warn(
+            "The requested time span is greater than 30 days. Long time spans can "
+            "result in missing rapid minor planets, since we only consider object that "
+            "fell within 30 degrees of the reference point at any the midpoint.",
+            stacklevel=2,
+        )
 
     if precomputed is None:
         coordinate, _, t0, tf, chunk_size, names = setup_checks(

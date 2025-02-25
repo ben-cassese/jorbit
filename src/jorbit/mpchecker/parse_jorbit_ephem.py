@@ -342,6 +342,8 @@ def extra_precision_calcs(
     v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))
     v0 = v0[asteroid_flags]
 
+    # tested breaking this into chunks and running in serial instead of all particles
+    # at once, no major speedup
     state = SystemState(
         tracer_positions=x0,
         tracer_velocities=v0,

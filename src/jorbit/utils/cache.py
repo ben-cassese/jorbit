@@ -1,4 +1,5 @@
 """Functions for downloading/clearing jorbit-related files from the Astropy cache."""
+
 import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ def view_jorbit_cache() -> list:
         jorb_fs.append(HUGE_ASTEROID_EPHEMERIS_URL)
     return jorb_fs
 
+
 def clear_jorbit_cache() -> None:
     """Clear the Astropy cache of jorbit-related files."""
     fs = get_cached_urls()
@@ -40,6 +42,7 @@ def clear_jorbit_cache() -> None:
     fs.append(HUGE_ASTEROID_EPHEMERIS_URL)
     for f in fs:
         clear_download_cache(f)
+
 
 def download_file_wrapper(url: str) -> str:
     """Check if a file is in the cache and not expired: if not, download it.

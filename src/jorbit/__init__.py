@@ -33,7 +33,7 @@ def initialize_jorbit() -> None:
             "JPL DE440 ephemeris files not found in astropy cache, downloading now..."
         )
         print(
-            "Files are approx. 765 MB, may take several minutes but will not be repeated."
+            "Files are approx. 800 MB, may take several minutes but will not be repeated."
         )
         download_files_in_parallel(
             [DEFAULT_PLANET_EPHEMERIS_URL, DEFAULT_ASTEROID_EPHEMERIS_URL],
