@@ -1,4 +1,5 @@
 """Test the Particle class."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -82,7 +83,11 @@ def test_max_likelihood() -> None:
     """Test that the max_likelihood method produces <10 mas residuals w/ Horizons."""
     np.random.seed(2)
     sso = str(np.random.randint(1_000, 500_000))
-    nights = [Time("2025-01-01 07:00"), Time("2025-01-02 07:00"), Time("2025-01-05 07:00")]
+    nights = [
+        Time("2025-01-01 07:00"),
+        Time("2025-01-02 07:00"),
+        Time("2025-01-05 07:00"),
+    ]
 
     times = []
     for n in nights:
@@ -121,4 +126,4 @@ def test_max_likelihood() -> None:
 
     res_mags = jnp.linalg.norm(res_best_fit, axis=1) * u.arcsec
 
-    assert np.all(res_mags < 10*u.mas)
+    assert np.all(res_mags < 10 * u.mas)

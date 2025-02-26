@@ -276,7 +276,7 @@ class Particle:
         if self._observations is None:
             return None
 
-        if isinstance(fit_seed, (CartesianState | KeplerianState)):
+        if isinstance(fit_seed, (CartesianState, KeplerianState)):
             return fit_seed
 
         if len(self._observations) >= 3:

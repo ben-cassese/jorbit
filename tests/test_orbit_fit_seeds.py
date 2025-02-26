@@ -1,4 +1,5 @@
 """Tests for the orbit_fit_seeds module."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -36,7 +37,7 @@ def test_gauss_method_orbit() -> None:
             observed_coordinates=coords,
             times=times,
             observatories="kitt peak",
-            astrometric_uncertainties=1*u.arcsec,
+            astrometric_uncertainties=1 * u.arcsec,
         )
         gauss_orbit = gauss_method_orbit(obs).to_keplerian()
 
@@ -44,7 +45,9 @@ def test_gauss_method_orbit() -> None:
         if np.mean(elements["a"]) < 3.0:
             assert np.abs(np.mean(elements["a"]) - gauss_orbit.semi[0]) < 1.0
         else:
-            assert (percentage_difference(np.mean(elements["a"]), gauss_orbit.semi[0])) < thresh
+            assert (
+                percentage_difference(np.mean(elements["a"]), gauss_orbit.semi[0])
+            ) < thresh
         assert np.abs(np.mean(elements["e"]) - gauss_orbit.ecc[0]) < 0.1
         assert np.abs(np.mean(elements["incl"]) - gauss_orbit.inc[0]) < 10.0
 
@@ -55,8 +58,8 @@ def test_simple_circular() -> None:
 
     for _i in range(100):
         k = simple_circular(
-            ra=np.random.uniform(0, 2*np.pi),
-            dec=np.random.uniform(-np.pi/2, np.pi/2),
+            ra=np.random.uniform(0, 2 * np.pi),
+            dec=np.random.uniform(-np.pi / 2, np.pi / 2),
             semi=np.random.uniform(1, 100),
             time=0.0,
         ).to_keplerian()
