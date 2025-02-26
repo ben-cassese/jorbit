@@ -57,6 +57,11 @@ def download_file_wrapper(url: str) -> str:
     """
     present = is_url_in_cache(url)
     if not present:
+        warnings.warn(
+            f"Requested jorbit-related file {url} was not present in the cache and "
+            "will be downloaded.",
+            stacklevel=2,
+        )
         request_file = Path(download_file(url, cache=True))
         current_time = datetime.now(timezone.utc)
         cache_time = datetime.fromtimestamp(request_file.stat().st_mtime, timezone.utc)

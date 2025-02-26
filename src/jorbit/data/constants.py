@@ -192,6 +192,27 @@ LARGE_ASTEROID_NAMES = [
 ]
 """The ordered names of the 16 asteroid perturbers."""
 
+PERTURBER_PACKED_DESIGNATIONS = [
+    "00001",
+    "00002",
+    "00003",
+    "00004",
+    "00007",
+    "00010",
+    "00015",
+    "00016",
+    "00031",
+    "00052",
+    "00065",
+    "00087",
+    "00088",
+    "00107",
+    "00511",
+    "00704",
+    "D4340",
+]
+"""The packed designations of the 16 asteroid perturbers + Pluto."""
+
 ################################################################################
 # Yoshida constants.
 

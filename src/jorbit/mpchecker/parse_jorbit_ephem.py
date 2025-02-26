@@ -19,7 +19,7 @@ from astropy.table import Table
 from astropy.time import Time
 
 from jorbit.astrometry.sky_projection import sky_sep
-from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
+from jorbit.data.constants import JORBIT_EPHEM_URL_BASE, PERTURBER_PACKED_DESIGNATIONS
 from jorbit.system import System
 from jorbit.utils.cache import download_file_wrapper
 from jorbit.utils.horizons import get_observer_positions
@@ -337,6 +337,18 @@ def extra_precision_calcs(
             The ephemeris, separations, coordinate table, magnitudes, magnitude table,
             and total magnitudes.
     """
+    names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
+    names = names[asteroid_flags]
+    if np.isin(names, PERTURBER_PACKED_DESIGNATIONS).sum() > 0:
+        relavant_perturbers = names[np.isin(names, PERTURBER_PACKED_DESIGNATIONS)]
+        warnings.warn(
+            f"Of the objects found nearby the target, {relavant_perturbers} are "
+            "massive perturbers that are included in jorbit ephemeris calculations by "
+            "default. Consequently, these will be dropped to avoid complications with "
+            "infinite accelerations. Use the `Ephemeris` class to query the positions "
+            "of these objects.",
+            stacklevel=2,
+        )
     x0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "x0.npy"))
     x0 = x0[asteroid_flags]
     v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))

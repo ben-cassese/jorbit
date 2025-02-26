@@ -108,7 +108,7 @@ def create_default_ephemeris_acceleration_func(
     """
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        num_gr_perturbers = 10  # the "planets"
+        num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
         num_newtonian_perturbers = 16  # the asteroids
 
         perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
