@@ -175,12 +175,12 @@ def simple_circular(ra: float, dec: float, semi: float, time: float) -> Cartesia
     omega = jnp.array([0.0])
 
     k = KeplerianState(
-        semi=jnp.array([a]),
-        ecc=jnp.array([ecc]),
-        nu=jnp.array([nu]),
-        inc=jnp.array([inc]),
-        Omega=jnp.array([Omega]),
-        omega=jnp.array([omega]),
+        semi=a,
+        ecc=ecc,
+        nu=nu,
+        inc=inc,
+        Omega=Omega,
+        omega=omega,
         time=time,
     )
     c = k.to_cartesian()

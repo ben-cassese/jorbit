@@ -11,7 +11,7 @@ from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit.accelerations import create_newtonian_ephemeris_acceleration_func
-from jorbit.astrometry.sky_projection import on_sky, sky_sep
+from jorbit.astrometry.sky_projection import on_sky, sky_sep, tangent_plane_projection
 from jorbit.ephemeris import Ephemeris
 from jorbit.utils.horizons import get_observer_positions
 
@@ -118,3 +118,25 @@ def test_on_sky() -> None:
     """
     seps_astropy, seps_jorbit = setup()
     np.testing.assert_allclose(seps_jorbit, 0.0, atol=1e-4)  # 0.1 mas
+
+
+def test_tangent_plane_projection() -> None:
+    """Test the tangent_plane_projection function."""
+    np.random.seed(0)
+    for _i in range(1_000):
+        c1 = SkyCoord(
+            ra=np.random.uniform(0, 2 * np.pi, 1) * u.rad,
+            dec=np.random.uniform(-np.pi / 2, np.pi / 2, 1) * u.rad,
+        )
+        ang = np.random.uniform(0, 2 * np.pi, 1) * u.rad
+        sep = np.random.uniform(0, 1, 1) * u.arcsec
+        c2 = c1.directional_offset_by(position_angle=ang, separation=sep)
+        sep = sep.to_value(u.arcsec)
+
+        ra_ref, dec_ref = c1.ra.rad, c1.dec.rad
+        ra, dec = c2.ra.rad, c2.dec.rad
+
+        xi_eta = tangent_plane_projection(ra, dec, ra_ref, dec_ref)
+        projected_sep = np.sqrt(xi_eta[0] ** 2 + xi_eta[1] ** 2)
+
+        np.testing.assert_allclose(projected_sep, sep, rtol=1e-4)  # 0.1 mas agreement
