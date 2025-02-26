@@ -419,6 +419,9 @@ def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.n
     # just to standardize:
     # the vector/astrometry queries automatically convert to utc/tdb as appropriate
     times = Time([t.utc.jd for t in times], format="jd", scale="utc")
+    sort_indices = jnp.argsort(times.jd)
+    times = times[sort_indices]
+    observatories = [observatories[i] for i in sort_indices]
 
     emb_from_ssb = horizons_bulk_vector_query("3", "500@0", times)
     emb_from_ssb = jnp.array(emb_from_ssb[["x", "y", "z"]].values)
@@ -447,5 +450,6 @@ def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.n
     _times = jnp.array([t.tdb.jd for t in _times])
     emb_from_observer = jnp.array(emb_from_observer_all)[jnp.argsort(_times)]
 
-    positions = emb_from_ssb - emb_from_observer
+    inverse_indices = jnp.argsort(sort_indices)
+    positions = emb_from_ssb[inverse_indices] - emb_from_observer[inverse_indices]
     return positions
