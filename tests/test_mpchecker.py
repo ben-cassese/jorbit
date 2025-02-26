@@ -6,6 +6,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from jorbit.mpchecker import (
+    animate_region,
     load_mpcorb,
     mpchecker,
     nearest_asteroid,
@@ -76,11 +77,17 @@ def test_nearest_asteroid_precompute() -> None:
         times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
         observer="kitt peak",
     )
-    _, _, _, _, _ = nearest_asteroid(
+    separations, asteroids, coord_table, mag_table, total_mags = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
         times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
         radius=2 * u.arcmin,
         compute_contamination=True,
         precomputed=precomputed,
         observer="kitt peak",
+    )
+    _ = animate_region(
+        coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
+        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        coord_table=coord_table,
+        radius=2 * u.arcmin,
     )

@@ -16,6 +16,7 @@ from jorbit.utils.horizons import (
     horizons_bulk_astrometry_query,
     horizons_bulk_vector_query,
 )
+from jorbit.utils.states import KeplerianState
 
 
 def test_integrate() -> None:
@@ -127,3 +128,81 @@ def test_max_likelihood() -> None:
     res_mags = jnp.linalg.norm(res_best_fit, axis=1) * u.arcsec
 
     assert np.all(res_mags < 10 * u.mas)
+
+
+def test_different_gravity() -> None:
+    """Test that the integrate method runs with different gravity settings."""
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="newtonian planets"
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="newtonian solar system"
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="gr planets"
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="gr solar system"
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="default solar system"
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+
+def test_different_inits() -> None:
+    """Test that the different ways to initialize a Particle object work."""
+    p = Particle.from_horizons(name="274301", time=Time("2025-01-01"))
+    _ = p.integrate(Time("2025-01-02"))
+
+    # directly supply state vectors in barycentric ICRS coordinates, units of AU and AU/day
+    p = Particle(
+        name="(274301) Wikipedia",
+        x=jnp.array([-2.003779703686627, 1.780533558134481, 0.5203350526739642]),
+        v=jnp.array(
+            [-0.006668390915419885, -0.006621147093559814, -0.002036640485149475]
+        ),
+        time=Time("2025-01-01"),
+    )
+    _ = p.integrate(Time("2025-01-02"))
+
+    # use ecliptic orbital elements
+    k = KeplerianState(
+        semi=jnp.array([2.3785863410573236]),
+        ecc=jnp.array([0.14924976664546713]),
+        inc=jnp.array([6.733641114294506]),
+        Omega=jnp.array([183.37291068678854]),
+        omega=jnp.array([140.26341029272996]),
+        nu=jnp.array([173.59627946476093]),
+        time=Time("2025-01-01").tdb.jd,
+    )
+    p = Particle(name="(274301) Wikipedia", state=k)
+    _ = p.integrate(Time("2025-01-02"))
+
+    c = k.to_cartesian()
+    p = Particle(name="(274301) Wikipedia", state=c)
+    _ = p.integrate(Time("2025-01-02"))
+
+
+def test_properties() -> None:
+    """Test that the properties of a Particle object work."""
+    p = Particle(
+        name="(274301) Wikipedia",
+        x=jnp.array([-2.003779703686627, 1.780533558134481, 0.5203350526739642]),
+        v=jnp.array(
+            [-0.006668390915419885, -0.006621147093559814, -0.002036640485149475]
+        ),
+        time=Time("2025-01-01"),
+    )
+
+    _ = repr(p)
+    _ = p.cartesian_state
+    _ = p.keplerian_state
