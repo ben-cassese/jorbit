@@ -170,14 +170,20 @@ def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Quantity) -> tuple:
         tuple[SkyCoord, u.Quantity, float, float, int, np.ndarray]:
             The coordinate, radius, start time, end time, chunk size, and names.
     """
-    assert np.all(time > Time("2020-01-01")), "All times must be after 2020-01-01"
+    assert np.all(
+        time > Time("2000-01-01 00:05")
+    ), "All times must be after 2000-01-01 00:05"
     assert np.all(time < Time("2040-01-01")), "All times must be before 2040-01-01"
     coordinate = coordinate.transform_to("icrs")
     radius = radius.to(u.arcsec).value
 
     # hard-coded:
-    t0 = Time("2020-01-01").tdb.jd
-    tf = Time("2040-01-01").tdb.jd
+    if time > Time("2020-01-01"):
+        t0 = Time("2020-01-01").tdb.jd
+        tf = Time("2040-01-01").tdb.jd
+    else:
+        t0 = Time("2000-01-01 00:00:05.000").tdb.jd
+        tf = Time("2020-01-01").tdb.jd
     chunk_size = 30
 
     # get the names of all particles- this file is < 40 MB
@@ -262,11 +268,11 @@ def apparent_mag(
     Implements the same formula as JPL Horizons,
 
     .. math::
-        APmag= H + 5*\\log_{10}(\\Delta) + 5*\\log_{10}(r) -2.5*\\log_{10}((1-G)*\\phi_1 + G*\\phi_2)
+        \text{Ap. mag} = H + 5*\log_{10}(\Delta) + 5*\log_{10}(r) -2.5*\log_{10}((1-G)*\phi_1 + G*\phi_2)
 
-    where :math:`\\Delta` is the distance from the observer to the target, :math:`r` is
-    the distance from the target to the Sun, and :math:`\\phi_1` and :math:`\\phi_2` are
-    phase functions that depend on the phase angle :math:`\\alpha`.
+    where :math:`\Delta` is the distance from the observer to the target, :math:`r` is
+    the distance from the target to the Sun, and :math:`\phi_1` and :math:`\phi_2` are
+    phase functions that depend on the phase angle :math:`\alpha`.
 
     Note a minor inconsistency here: the coordinates are defined in barycentric
     coordinates, but here we assume they're heliocentric just to avoid having to query

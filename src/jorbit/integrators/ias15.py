@@ -1271,9 +1271,15 @@ def ias15_evolve(
 
     Chains multiple ias15_step calls together until each timestep is reached. Keeps
     track of the second to last step before each arrival time to avoid setting dt to
-    small values representing the final jumps. Limits the number of step attempts
-    between each arrival time to 10,000, but does *not* error if a time is not reached.
-    Meant to be as jittable as possible.
+    small values representing the final jumps.
+
+    .. warning::
+       To avoid potential infinite hangs or osciallating behavior, this function caps
+       the maximum number of steps taken between requested times at 10,000. For a
+       particle on a radius=1 circular orbit around an m=1 central object, that
+       corresponds to about 280 orbits. It will *not* error if the final time isn't
+       reached due to the step limit interuption, so keep the jump between times to be
+       less than ~200 dynamical times.
 
     Args:
         initial_system_state (SystemState):
@@ -1325,7 +1331,7 @@ def ias15_evolve(
             step_length = jnp.sign(final_time - t) * jnp.min(
                 jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
             )
-            return (step_length != 0) | (iter_num > 10_000)
+            return (step_length != 0) & (iter_num < 10_000)
 
         final_system_state, final_integrator_state, last_meaningful_dt, iter_num = (
             jax.lax.while_loop(

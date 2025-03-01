@@ -7,6 +7,21 @@ authors = [
     { name = "Ben-Cassese", email = "b.c.cassese@columbia.edu" }
 ]
 requires-python = ">=3.9"
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
 dependencies = [
     "astropy>=6.0.1",
     "astroquery>=0.4.7",
@@ -49,6 +64,7 @@ dev = [
     "sphinx>=7.4.7",
     "sphinxcontrib-video>=0.4.1",
     "sphinx-autodoc-typehints>=2.3.0",
+    "lightkurve>=2.5.0",
 ]
 
 [tool.ruff.lint]

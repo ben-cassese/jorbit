@@ -1,10 +1,7 @@
 .. _MPChecker_helpers:
 
-MPChecker Helpers
-=================
-
-tmp
-
+Parse Jorbit Ephem
+==================
 
 .. automodule:: jorbit.mpchecker.parse_jorbit_ephem
     :members:

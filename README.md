@@ -2,6 +2,9 @@
 ![Build Status](https://github.com/ben-cassese/jorbit/actions/workflows/tests.yml/badge.svg)
 [![codecov](https://codecov.io/github/ben-cassese/jorbit/graph/badge.svg?token=7AUZRB9MFO)](https://codecov.io/github/ben-cassese/jorbit)
 ![PyPI - Version](https://img.shields.io/pypi/v/jorbit)
+![pypi-platforms](https://img.shields.io/pypi/pyversions/jorbit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Project Status: WIP – Initial development is in progress, but there has not yet been a stable, usable release suitable for the public.](https://www.repostatus.org/badges/latest/wip.svg)](https://www.repostatus.org/#wip)
+![ruff-badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)
 
 ![logo](./docs/_static/jorbit_logo_github.svg)
