@@ -178,12 +178,14 @@ def setup_checks(coordinate: SkyCoord, time: Time, radius: u.Quantity) -> tuple:
     radius = radius.to(u.arcsec).value
 
     # hard-coded:
-    if time > Time("2020-01-01"):
-        t0 = Time("2020-01-01").tdb.jd
-        tf = Time("2040-01-01").tdb.jd
-    else:
-        t0 = Time("2000-01-01 00:00:05.000").tdb.jd
-        tf = Time("2020-01-01").tdb.jd
+    t0 = np.where(
+        time > Time("2020-01-01"),
+        Time("2020-01-01").tdb.jd,
+        Time("2000-01-01 00:00:05.000").tdb.jd,
+    )
+    tf = np.where(
+        time > Time("2020-01-01"), Time("2040-01-01").tdb.jd, Time("2020-01-01").tdb.jd
+    )
     chunk_size = 30
 
     # get the names of all particles- this file is < 40 MB
