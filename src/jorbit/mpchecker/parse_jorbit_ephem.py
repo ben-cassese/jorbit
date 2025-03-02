@@ -63,6 +63,10 @@ def get_chunk_index(
     omegas = index == num_chunks
     index = jnp.where(omegas, index - 1, index)
     offset = jnp.where(omegas, offset + intlen, offset)
+
+    index = jnp.where(
+        t0 < 2451545, -index, index
+    )  # negative index for backwards ephemeris
     return index, offset
 
 
@@ -242,11 +246,18 @@ def nearest_asteroid_helper(
 
     coeffs = []
     for ind in unique_indices:
-        chunk = jnp.load(
-            download_file_wrapper(
-                JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
+        if jnp.sign(ind) == -1:
+            chunk = jnp.load(
+                download_file_wrapper(
+                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_rev_{-ind:03d}.npy"
+                )
             )
-        )
+        else:
+            chunk = jnp.load(
+                download_file_wrapper(
+                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
+                )
+            )
         coeffs.append(chunk)
 
     coeffs = jnp.array(coeffs)

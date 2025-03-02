@@ -17,7 +17,6 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astropy.table import Table, hstack
 from astropy.time import Time
-from astropy.utils.data import is_url_in_cache
 from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle
@@ -92,14 +91,17 @@ def mpchecker(
 
     # figure out what chunk you're in
     if chunk_coefficients is None:
-        file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
-        if not is_url_in_cache(file_name):
-            warnings.warn(
-                "The requested time falls in an ephemeris chunk that is not found in "
-                "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
-                "system memory constraints if checking many well-separated times.",
-                stacklevel=2,
-            )
+        if jnp.sign(index) == -1:
+            file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_rev_{-index:03d}.npy"
+        else:
+            file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
+        # if not is_url_in_cache(file_name):
+        #     warnings.warn(
+        #         "The requested time falls in an ephemeris chunk that is not found in "
+        #         "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
+        #         "system memory constraints if checking many well-separated times.",
+        #         stacklevel=2,
+        #     )
         file_name = download_file_wrapper(file_name)
         coefficients = jnp.load(file_name)
 
@@ -253,25 +255,40 @@ def nearest_asteroid(
         asteroid_flags = np.zeros(len(coefficients[0]), dtype=bool)
     else:
         # load the first chunk to get the number of asteroids
-        tmp = jnp.load(
-            download_file_wrapper(
-                JORBIT_EPHEM_URL_BASE
-                + f"chebyshev_coeffs_fwd_{unique_indices[0]:03d}.npy",
+        if jnp.sign(unique_indices[0]) == -1:
+            tmp = jnp.load(
+                download_file_wrapper(
+                    JORBIT_EPHEM_URL_BASE
+                    + f"chebyshev_coeffs_rev_{-unique_indices[0]:03d}.npy",
+                )
             )
-        )
+        else:
+            tmp = jnp.load(
+                download_file_wrapper(
+                    JORBIT_EPHEM_URL_BASE
+                    + f"chebyshev_coeffs_fwd_{unique_indices[0]:03d}.npy",
+                )
+            )
         asteroid_flags = np.zeros(len(tmp), dtype=bool)
         coefficients = None
     separations = np.zeros(len(times))
     for i, ind in enumerate(unique_indices):
         if coefficients is None:
-            file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
-            if not is_url_in_cache(file_name):
-                warnings.warn(
-                    "The requested time falls in an ephemeris chunk that is not found in "
-                    "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
-                    "system memory constraints if checking many well-separated times.",
-                    stacklevel=2,
+            if jnp.sign(ind) == -1:
+                file_name = (
+                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_rev_{-ind:03d}.npy"
                 )
+            else:
+                file_name = (
+                    JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
+                )
+            # if not is_url_in_cache(file_name):
+            #     warnings.warn(
+            #         "The requested time falls in an ephemeris chunk that is not found in "
+            #         "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
+            #         "system memory constraints if checking many well-separated times.",
+            #         stacklevel=2,
+            #     )
             chunk_coefficients = jnp.load(
                 download_file_wrapper(
                     file_name,

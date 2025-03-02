@@ -98,9 +98,9 @@ def func(inputs: SystemState) -> jnp.ndarray:
     perturber_log_gms = ephem_processor.log_gms
 
     # chop off pluto and the asteroids
-    perturber_xs = perturber_xs[:9]
-    perturber_vs = perturber_vs[:9]
-    perturber_log_gms = perturber_log_gms[:9]
+    perturber_xs = perturber_xs[:10]
+    perturber_vs = perturber_vs[:10]
+    perturber_log_gms = perturber_log_gms[:10]
 
     new_state = SystemState(
         massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
@@ -233,3 +233,165 @@ def get_coeffs_for_perturber(target, chunk_size, degree):
 for target in tqdm(perturbers):
     (_, _, coeffs), x0, v0 = get_coeffs_for_perturber(target, 30, 10)
     write_result(perturbers[target], coeffs, x0, v0)
+
+
+# # same bit for reverse, flipped signs
+
+# t0 = Time("2020-01-01")
+# reverse_times = t0 - jnp.arange(0, 20.001, 10 * u.hour.to(u.year)) * u.year
+
+# t = reverse_times.tdb.jd
+# reverse_pos = jnp.load(download_file(JORBIT_EPHEM_URL_BASE + "reverse_pos.npy", cache=True))
+
+
+# perturber_eph = Ephemeris(
+#     ssos="default solar system",
+#     earliest_time=Time("1999-01-01"),
+#     latest_time=Time("2021-01-01"),
+# )
+
+# ephem_processor = perturber_eph.processor
+
+
+# def func(inputs: SystemState) -> jnp.ndarray:
+#     perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
+#     perturber_log_gms = ephem_processor.log_gms
+
+#     # chop off pluto and the asteroids
+#     perturber_xs = perturber_xs[:10]
+#     perturber_vs = perturber_vs[:10]
+#     perturber_log_gms = perturber_log_gms[:10]
+
+#     new_state = SystemState(
+#         massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
+#         massive_velocities=jnp.concatenate([perturber_vs, inputs.massive_velocities]),
+#         tracer_positions=inputs.tracer_positions,
+#         tracer_velocities=inputs.tracer_velocities,
+#         log_gms=jnp.concatenate([perturber_log_gms, inputs.log_gms]),
+#         time=inputs.time,
+#         acceleration_func_kwargs=inputs.acceleration_func_kwargs,
+#     )
+
+#     accs = newtonian_gravity(new_state)
+
+#     num_perturbers = perturber_xs.shape[0]
+#     return accs[num_perturbers:]
+
+
+# acc_func = jax.tree_util.Partial(func)
+
+# perturbers = {
+#     "ceres": "00001",
+#     "pallas": "00002",
+#     "juno": "00003",
+#     "vesta": "00004",
+#     "iris": "00007",
+#     "hygiea": "00010",
+#     "eunomia": "00015",
+#     "psyche": "00016",
+#     "euphrosyne": "00031",
+#     "europa": "00052",
+#     "cybele": "00065",
+#     "sylvia": "00087",
+#     "thisbe": "00088",
+#     "camilla": "00107",
+#     "davida": "00511",
+#     "interamnia": "00704",
+#     "pluto": "D4340",
+# }
+
+
+# def write_result(target_name, chebyshev_coefficients, x0, v0):
+#     with sqlite3.connect("perturbers.db", timeout=30.0) as conn:
+#         # Create the table if it doesn't exist
+#         conn.execute(
+#             """
+#             CREATE TABLE IF NOT EXISTS results
+#             (target_name TEXT PRIMARY KEY,
+#              chebyshev_coefficients BLOB,
+#              x0 BLOB,
+#              v0 BLOB)
+#         """
+#         )
+
+#         # Convert arrays to binary
+#         cheby_binary = chebyshev_coefficients.tobytes()
+#         x0_binary = x0.tobytes()
+#         v0_binary = v0.tobytes()
+
+#         # Insert into temporary database
+#         conn.execute(
+#             "INSERT OR REPLACE INTO results VALUES (?, ?, ?, ?)",
+#             (target_name, cheby_binary, x0_binary, v0_binary),
+#         )
+
+
+# def get_coeffs_for_perturber(target, chunk_size, degree):
+#     # get the index of this specific target
+#     d = perturber_eph.state(reverse_times[0])
+#     d_fast = perturber_eph.processor.state(reverse_times[0].tdb.jd)[0]
+#     ind = int(jnp.argwhere(jnp.all((d[target]["x"].value - d_fast) == 0, axis=1))[0, 0])
+
+#     # get the x, v positions of the target
+#     def scan_func(carry, scan_over):
+#         time = scan_over
+#         state = perturber_eph.processor.state(time)
+#         x = state[0][ind]
+#         v = state[1][ind]
+#         return None, (x, v)
+
+#     _, (x, v) = jax.lax.scan(scan_func, None, reverse_times.tdb.jd)
+
+#     # convert those positions to on-sky coordinates
+#     def scan_func(carry, scan_over):
+#         position, velocity, time, observer_position = scan_over
+#         ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
+#         return None, (ra, dec)
+
+#     _, (ras, decs) = jax.lax.scan(
+#         scan_func,
+#         None,
+#         (x, v, reverse_times.tdb.jd, reverse_pos),
+#     )
+#     eph = SkyCoord(ra=ras, dec=decs, unit=u.rad)
+
+#     # from here on out it's the same as contribute_to_ephem- should probably break
+#     # this out/refactor
+#     r = jnp.unwrap(eph.ra.rad[::-1])
+#     d = eph.dec.rad
+#     d = d[::-1]
+#     t = reverse_times.tdb.jd[::-1]
+
+#     num_chunks = int(jnp.ceil((t[-1] - t[0]) / chunk_size))
+
+#     init = (t[0] - 2451545.0) * 86400.0
+#     intlen = chunk_size * 86400.0
+
+#     coeffs = jnp.zeros((degree + 1, 2, num_chunks))
+#     for i in range(num_chunks):
+#         inds = (t >= t[0] + i * chunk_size) & (t < t[0] + (i + 1) * chunk_size)
+#         t_chunk = t[inds]
+#         r_chunk = r[inds]
+#         d_chunk = d[inds]
+
+#         # Scale time to [-1, 1] domain
+#         t_min, t_max = t[0] + i * chunk_size, t[0] + (i + 1) * chunk_size
+#         t_scaled = 2 * (t_chunk - t_min) / (t_max - t_min) - 1
+
+#         # Fit Chebyshev polynomials
+#         coefficients = chebyshev.chebfit(t_scaled, r_chunk, degree)
+#         coefficients = coefficients[::-1]
+#         coeffs = coeffs.at[:, 0, i].set(coefficients)
+
+#         coefficients = chebyshev.chebfit(t_scaled, d_chunk, degree)
+#         coefficients = coefficients[::-1]
+#         coeffs = coeffs.at[:, 1, i].set(coefficients)
+
+#     x0 = x[0]
+#     v0 = v[0]
+#     return (init, intlen, coeffs), x0, v0
+
+
+# for target in tqdm(perturbers):
+#     (_, _, coeffs), x0, v0 = get_coeffs_for_perturber(target, 30, 10)
+#     write_result(perturbers[target], coeffs, x0, v0)
