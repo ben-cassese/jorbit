@@ -233,7 +233,7 @@ def nearest_asteroid(
         coordinate, _, t0, tf, chunk_size, names = precomputed[0]
         observer_positions = precomputed[2]
 
-    indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, None, None, None))(
+    indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, 0, 0, None))(
         times.tdb.jd, t0, tf, chunk_size
     )
     unique_indices = jnp.unique(indices)
@@ -282,18 +282,7 @@ def nearest_asteroid(
                 file_name = (
                     JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{ind:03d}.npy"
                 )
-            # if not is_url_in_cache(file_name):
-            #     warnings.warn(
-            #         "The requested time falls in an ephemeris chunk that is not found in "
-            #         "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
-            #         "system memory constraints if checking many well-separated times.",
-            #         stacklevel=2,
-            #     )
-            chunk_coefficients = jnp.load(
-                download_file_wrapper(
-                    file_name,
-                )
-            )
+            chunk_coefficients = jnp.load(download_file_wrapper(file_name))
         else:
             chunk_coefficients = coefficients[i]
 

@@ -54,7 +54,7 @@ def test_nearest_asteroid_low_res() -> None:
     """Check that the nearest_asteroid function runs ok- no comparison to anything yet."""
     _, _ = separations, asteroids = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
-        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         radius=2 * u.arcmin,
     )
 
@@ -63,7 +63,7 @@ def test_nearest_asteroid_high_res() -> None:
     """Check that the nearest_asteroid function runs ok- no comparison to anything yet."""
     _, _, _, _, _ = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
-        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         radius=2 * u.arcmin,
         compute_contamination=True,
         observer="kitt peak",
@@ -74,12 +74,12 @@ def test_nearest_asteroid_precompute() -> None:
     """Check that the nearest_asteroid_helper function runs ok- no comparison to anything yet."""
     precomputed = nearest_asteroid_helper(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
-        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         observer="kitt peak",
     )
     separations, asteroids, coord_table, mag_table, total_mags = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
-        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         radius=2 * u.arcmin,
         compute_contamination=True,
         precomputed=precomputed,
@@ -87,7 +87,7 @@ def test_nearest_asteroid_precompute() -> None:
     )
     _ = animate_region(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
-        times=Time("2025-01-01") + np.arange(0, 3, 1 / 24 / 2) * u.day,
+        times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         coord_table=coord_table,
         radius=2 * u.arcmin,
     )
