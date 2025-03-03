@@ -24,7 +24,7 @@ class Observations:
 
     This is a container for astrometric observations of a particle at different times.
     When a user supplies times, coordinates, and observatory names, this class will
-    under-the-hood pre-compute the required covariance matricies required for fitting,
+    under-the-hood pre-compute the required covariance matrices required for fitting,
     query Horizons to get the Barycentric positions of the observers, and store
     everything as ready-to-use-later JAX arrays.
     """

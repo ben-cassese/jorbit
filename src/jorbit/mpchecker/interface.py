@@ -377,7 +377,6 @@ def animate_region(
     xs = xs.T
     ys = ys.T
 
-    sizes = np.ones(xs.shape[1])
     particle_names = [str(i) for i in list(coord_table["name"])]
 
     fig, ax = plt.subplots(figsize=(6, 6))
@@ -390,9 +389,7 @@ def animate_region(
     title = ax.set_title("")
 
     # Initialize scatter plot
-    scatter = ax.scatter(
-        xs[0], ys[0], s=sizes * 100
-    )  # Multiply sizes by 100 for better visibility
+    scatter = ax.scatter(xs[0], ys[0], s=np.ones(xs.shape[1]) * 100)
 
     # Initialize text annotations if names are provided
     texts = []
@@ -426,7 +423,7 @@ def animate_region(
         scatter.set_offsets(np.c_[xs[frame], ys[frame]])
         title.set_text(times[frame].iso)
         for i, text in enumerate(texts):
-            text.set_position((xs[frame][i], ys[frame][i] + 0.05))
+            text.set_position((xs[frame][i], ys[frame][i] + radius * 0.15))
         return (scatter, *texts)
 
     n_frames = len(xs)

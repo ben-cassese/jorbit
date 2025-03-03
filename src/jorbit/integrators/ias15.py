@@ -1278,7 +1278,7 @@ def ias15_evolve(
        the maximum number of steps taken between requested times at 10,000. For a
        particle on a radius=1 circular orbit around an m=1 central object, that
        corresponds to about 280 orbits. It will *not* error if the final time isn't
-       reached due to the step limit interuption, so keep the jump between times to be
+       reached due to the step limit interruption, so keep the jump between times to be
        less than ~200 dynamical times.
 
     Args:
