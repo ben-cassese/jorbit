@@ -1,8 +1,9 @@
 import jax
+
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
 
 import mpmath as mpm
+
 from jorbit.utils.doubledouble import DoubleDouble
 
 
@@ -42,5 +43,3 @@ def test_doubledouble() -> None:
     assert b_j < a_j
     assert b_j <= a_j
     assert a_j == a_j
-
-
