@@ -3,7 +3,7 @@ ci:
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.9.4"
+    rev: "v0.9.9"
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -26,7 +26,7 @@ repos:
         exclude_types: [json, binary]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.2.4
+    rev: v2.4.1
     hooks:
     - id: codespell
       # having trouble getting it to read the skips from pyproject.toml...
