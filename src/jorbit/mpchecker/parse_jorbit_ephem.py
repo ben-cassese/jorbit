@@ -331,6 +331,7 @@ def extra_precision_calcs(
     observer: str,
     coordinate: SkyCoord,
     relevant_mpcorb: pl.DataFrame,
+    gravity: str = "newtonian solar system",
     observer_positions: jnp.ndarray | None = None,
 ) -> tuple:
     """Helper function for running N-body ephemeris calculations.
@@ -348,6 +349,9 @@ def extra_precision_calcs(
             The coordinate of the target.
         relevant_mpcorb (pl.DataFrame):
             The mpcorb file used to generate the latest Jorbit ephemeris.
+        gravity (str | callable):
+            The gravity model to use. Must be a valid gravity argument for System.
+            Default is "newtonian solar system".
         observer_positions (jnp.ndarray):
             The observer positions. If None, they will be retrieved from Horizons.
 
@@ -387,7 +391,7 @@ def extra_precision_calcs(
 
     sy = System(
         state=state,
-        gravity="default solar system",
+        gravity=gravity,
         earliest_time=Time("1999-12-30"),
         latest_time=Time("2040-01-02"),
     )

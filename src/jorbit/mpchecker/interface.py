@@ -39,6 +39,7 @@ def mpchecker(
     radius: u.Quantity = 20 * u.arcmin,
     extra_precision: bool = False,
     observer: str = "geocentric",
+    extra_precision_gravity: str | callable = "newtonian solar system",
     chunk_coefficients: jnp.ndarray | None = None,
 ) -> Table:
     """Find the minor planets within a given radius of a coordinate at a given time.
@@ -52,7 +53,8 @@ def mpchecker(
     ~an arcsec. However, if using "extra_precision", this will first run the
     quick/coarse search, figure out which minor planets fell within the radius, then
     actually run an N-body integration using Jorbit to get their positions as seen from
-    a specific observer. These positions should agree with Horizons to ~1 mas.
+    a specific observer. These positions should agree with Horizons to ~1 mas if using
+    extra_precision_gravity="default solar system".
 
     Args:
         coordinate (SkyCoord):
@@ -70,6 +72,9 @@ def mpchecker(
         observer (str):
             The observatory from which the observations are made. Can be a string name
             or Horizons-style @399 code.
+        extra_precision_gravity (str | callable):
+            The gravity model to use for the extra precision search. Must be a valid
+            argument for "gravity" in System. Default is "newtonian solar system".
         chunk_coefficients (jnp.ndarray | None):
             Optionally pass the relevant chunk coefficients to avoid I/O operations if
             running this repeatedly.
@@ -95,13 +100,6 @@ def mpchecker(
             file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_rev_{-index:03d}.npy"
         else:
             file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
-        # if not is_url_in_cache(file_name):
-        #     warnings.warn(
-        #         "The requested time falls in an ephemeris chunk that is not found in "
-        #         "astropy cache. Downloading now, file is approx. 250 MB. Be aware of "
-        #         "system memory constraints if checking many well-separated times.",
-        #         stacklevel=2,
-        #     )
         file_name = download_file_wrapper(file_name)
         coefficients = jnp.load(file_name)
 
@@ -129,6 +127,7 @@ def mpchecker(
             radius=radius,
             observer=observer,
             coordinate=coordinate,
+            gravity=extra_precision_gravity,
             relevant_mpcorb=relevant_mpcorb,
         )
         separations = seps[:, 0]
@@ -165,6 +164,7 @@ def nearest_asteroid(
     radius: u.Quantity = 2 * u.arcmin,
     compute_contamination: bool = False,
     observer: str = "geocentric",
+    extra_precision_gravity: str | callable = "newtonian solar system",
 ) -> tuple:
     """Identify minor planets passing through a region of the sky at a series of times.
 
@@ -199,6 +199,9 @@ def nearest_asteroid(
         observer (str):
             The observatory from which the observations are made. Can be a string name
             or Horizons-style @399 code.
+        extra_precision_gravity (str | callable):
+            The gravity model to use for the extra precision search. Must be a valid
+            argument for "gravity" in System. Default is "newtonian solar system".
 
     Returns:
         tuple:
@@ -322,13 +325,14 @@ def nearest_asteroid(
         return separations * u.arcsec, relevant_mpcorb
 
     coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
-        asteroid_flags,
-        times,
-        radius,
-        observer,
-        coordinate,
-        relevant_mpcorb,
-        observer_positions,
+        asteroid_flags=asteroid_flags,
+        times=times,
+        radius=radius,
+        observer=observer,
+        coordinate=coordinate,
+        relevant_mpcorb=relevant_mpcorb,
+        gravity=extra_precision_gravity,
+        observer_positions=observer_positions,
     )
 
     return separations * u.arcsec, relevant_mpcorb, coord_table, mag_table, total_mags
