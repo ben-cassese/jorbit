@@ -1,6 +1,6 @@
 [project]
 name = "jorbit"
-version = "0.1.5"
+version = "0.2.0"
 description = "Solar system orbit fitting and integration with JAX"
 readme = "README.md"
 authors = [

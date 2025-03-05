@@ -3,7 +3,7 @@
 __url__ = "https://github.com/ben-cassese/jorbit"
 __license__ = "MIT"
 __description__ = "Solar system orbit fitting and integration with JAX"
-__version__ = "0.1.5"
+__version__ = "0.2.0"
 
 import warnings
 
