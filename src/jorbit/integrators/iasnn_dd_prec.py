@@ -390,7 +390,6 @@ def step(
         )
 
         carry = predictor_corrector_iteration(b, g, predictor_corrector_error)
-        # jax.debug.print("{x}, {y}", x=carry[2].hi, y=carry[2].lo)
         return carry, None
 
     predictor_corrector_error = DoubleDouble(1e300)
@@ -402,7 +401,7 @@ def step(
         jnp.arange(100),
     )
 
-    # bits about timescales
+    # bits about timescales can go here if not doing fixed steps
 
     x, v = estimate_x_v_from_b(DoubleDouble(1.0), b)
 

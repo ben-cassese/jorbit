@@ -347,13 +347,14 @@ def horizons_bulk_astrometry_query(
             id=target, location=center, epochs=[t.utc.jd for t in times]
         )
         horizons_table = horizons_obj.ephemerides(
-            quantities="1,36,37", extra_precision=True
+            quantities="1,9,36,37", extra_precision=True
         )
         horizons_table = horizons_table[
             [
                 "datetime_jd",
                 "RA",
                 "DEC",
+                "V",
                 "RA_3sigma",
                 "DEC_3sigma",
                 "SMAA_3sigma",

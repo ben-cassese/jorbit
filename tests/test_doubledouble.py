@@ -1,14 +1,15 @@
+"""Tests for the DoubleDouble class."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
-
 import mpmath as mpm
 
 from jorbit.utils.doubledouble import DoubleDouble
 
 
 def test_doubledouble() -> None:
-    """Simple tests of DoubleDouble arthimetic."""
+    """Simple tests of DoubleDouble arithmetic."""
     a_j = DoubleDouble.from_string("9999999999999.123456")
     b_j = DoubleDouble.from_string("201.789")
     a_m = mpm.mpf("9999999999999.123456")
