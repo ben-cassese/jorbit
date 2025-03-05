@@ -206,6 +206,22 @@ def load_mpcorb() -> pl.DataFrame:
             The mpcorb file.
     """
     df = pl.read_ipc(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "mpcorb.arrow"))
+    # should have caught that all the columns in the .arrow file were strings, oops
+    for col in [
+        "H",
+        "G",
+        "M",
+        "Peri",
+        "Node",
+        "Incl.",
+        "e",
+        "n",
+        "a",
+        "#Obs",
+        "#Opp",
+        "rms",
+    ]:
+        df = df.with_columns(pl.col(col).cast(pl.Float64))
     return df
 
 
@@ -348,7 +364,8 @@ def extra_precision_calcs(
         coordinate (SkyCoord):
             The coordinate of the target.
         relevant_mpcorb (pl.DataFrame):
-            The mpcorb file used to generate the latest Jorbit ephemeris.
+            The mpcorb file used to generate the latest jorbit ephemeris, trimmed to
+            only include the relevant asteroids.
         gravity (str | callable):
             The gravity model to use. Must be a valid gravity argument for System.
             Default is "newtonian solar system".
@@ -360,18 +377,23 @@ def extra_precision_calcs(
             The ephemeris, separations, coordinate table, magnitudes, magnitude table,
             and total magnitudes.
     """
-    names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
-    names = names[asteroid_flags]
+    if observer == "geocentric":
+        observer = "500@399"
+
+    all_names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
+    names = all_names[asteroid_flags]
     if np.isin(names, PERTURBER_PACKED_DESIGNATIONS).sum() > 0:
         relavant_perturbers = names[np.isin(names, PERTURBER_PACKED_DESIGNATIONS)]
-        warnings.warn(
-            f"Of the objects found nearby the target, {relavant_perturbers} are "
-            "massive perturbers that are included in jorbit ephemeris calculations by "
-            "default. Consequently, these will be dropped to avoid complications with "
-            "infinite accelerations. Use the `Ephemeris` class to query the positions "
-            "of these objects.",
-            stacklevel=2,
+        raise ValueError(
+            "Of the objects found nearby the target, at these specific times, "
+            f"{relavant_perturbers} are massive perturbers that are included in jorbit "
+            "ephemeris calculations by default. Consequently, jorbit cannot actually "
+            "integrate this target itself since doing so would produce infinite "
+            "accelerations. Either modify your times, or use the Ephemeris module, or "
+            "an external service like JPL Horizons, to get the ephemeris of these "
+            "objects."
         )
+
     x0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "x0.npy"))
     x0 = x0[asteroid_flags]
     v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))
@@ -398,8 +420,6 @@ def extra_precision_calcs(
 
     # might as well only query once, will need both for the ephemeris and phase function
     if observer_positions is None:
-        if observer == "geocentric":
-            observer = "500@399"
         observer_positions = get_observer_positions(times, observer)
     coords = sy.ephemeris(times=times, observer=observer_positions)
     coord_table = Table(
