@@ -6,6 +6,7 @@ jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
@@ -109,3 +110,38 @@ def test_horizons_astrometry_bulk() -> None:
 
     seps = horizons_coord.separation(jorb_coord).to(u.arcsec).value
     np.testing.assert_allclose(seps, 0.0, atol=1e-5)
+
+
+def test_astroquery_toggling() -> None:
+    """Test that disabling astroquery gives the same results."""
+    a = horizons_bulk_astrometry_query(
+        target="00002",
+        center="@-95",
+        times=Time("2020-01-01"),
+        disable_astroquery=True,
+    )
+
+    b = horizons_bulk_astrometry_query(
+        target="00002",
+        center="@-95",
+        times=Time("2020-01-01"),
+        disable_astroquery=False,
+    )
+
+    pd.testing.assert_frame_equal(a, b)
+
+    a = horizons_bulk_astrometry_query(
+        target="K21A03O",
+        center="@-95",
+        times=Time("2020-01-01"),
+        disable_astroquery=True,
+    )
+
+    b = horizons_bulk_astrometry_query(
+        target="K21A03O",
+        center="@-95",
+        times=Time("2020-01-01"),
+        disable_astroquery=False,
+    )
+
+    pd.testing.assert_frame_equal(a, b)
