@@ -50,6 +50,8 @@ class HorizonsQueryConfig(NamedTuple):
         "moon_flag",
         "RA",
         "DEC",
+        "V",
+        "S-brt",
         "RA_3sigma",
         "DEC_3sigma",
         "SMAA_3sigma",
@@ -122,7 +124,7 @@ def horizons_query_string(
         lines.extend(
             [
                 "TABLE_TYPE='OBSERVER'",
-                "QUANTITIES='1,36,37'",
+                "QUANTITIES='1,9,36,37'",
                 "ANG_FORMAT='DEG'",
                 "EXTRA_PREC = 'YES'",
             ]
@@ -190,6 +192,8 @@ def parse_horizons_response(
             df = df.drop(columns="twilight_flag")
         if "moon_flag" in df.columns:
             df = df.drop(columns="moon_flag")
+        if "S-brt" in df.columns:
+            df = df.drop(columns="S-brt")
         return df
     except ValueError as e:
         raise ValueError("Failed to parse Horizons response: invalid format") from e
@@ -240,7 +244,8 @@ def horizons_bulk_vector_query(
 
     Args:
         target (str):
-            The target object identifier.
+            The target object identifier. Must be a packed MPC designation with length
+            5 for numbered objects or 7 for provisional designations.
         center (str):
             The center object identifier.
         times (Time):
@@ -258,9 +263,16 @@ def horizons_bulk_vector_query(
     if (len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS) and (
         not disable_astroquery
     ):
+
+        if len(target) == 7:
+            target = packed_to_unpacked_designation(target)
+            idtype = "designation"
+        else:
+            target = packed_to_unpacked_designation(target)
+            idtype = "smallbody"
         # note that astrometry queries use utc, vector use tdb...
         horizons_obj = Horizons(
-            id=target, location=center, epochs=[t.tdb.jd for t in times]
+            id=target, location=center, epochs=[t.tdb.jd for t in times], id_type=idtype
         )
         vec_table = horizons_obj.vectors(refplane="earth")
         vec_table = vec_table[
@@ -322,7 +334,8 @@ def horizons_bulk_astrometry_query(
 
     Args:
         target (str):
-            The target object identifier.
+            The target object identifier. Must be a packed MPC designation with length
+            5 for numbered objects or 7 for provisional designations.
         center (str):
             The center object identifier.
         times (Time):
@@ -342,9 +355,15 @@ def horizons_bulk_astrometry_query(
     if (len(times) < HorizonsQueryConfig.ASTROQUERY_MAX_TIMESTEPS) and (
         not disable_astroquery
     ):
+        if len(target) == 7:
+            target = packed_to_unpacked_designation(target)
+            idtype = "designation"
+        else:
+            target = packed_to_unpacked_designation(target)
+            idtype = "smallbody"
         # note that astrometry queries use utc, vector use tdb...
         horizons_obj = Horizons(
-            id=target, location=center, epochs=[t.utc.jd for t in times]
+            id=target, location=center, epochs=[t.utc.jd for t in times], id_type=idtype
         )
         horizons_table = horizons_obj.ephemerides(
             quantities="1,9,36,37", extra_precision=True
