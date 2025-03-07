@@ -67,6 +67,10 @@ dev = [
     "lightkurve>=2.5.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ben-cassese/jorbit"
+Documentation = "https://jorbit.readthedocs.io/en/latest/index.html"
+
 [tool.ruff.lint]
 ignore = [
     "E402", # want to enable jax64 before importing anything that might run jax code on import
