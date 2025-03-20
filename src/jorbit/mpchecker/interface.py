@@ -335,7 +335,7 @@ def nearest_asteroid(
         observer_positions=observer_positions,
     )
 
-    return separations * u.arcsec, relevant_mpcorb, coord_table, mag_table, total_mags
+    return seps * u.arcsec, relevant_mpcorb, coord_table, mag_table, total_mags
 
 
 def animate_region(
