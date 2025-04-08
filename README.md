@@ -65,6 +65,6 @@ mpchecker(
 If you have any trouble with the code, feel free to open an issue! We welcome open-source contributions, so if you have a feature request or bug fix, please open a pull request. For more information, see the [contributing guide](https://jorbit.readthedocs.io/en/latest/user_guide/contributing.html).
 
 ## Attribution
-jorbit is made freely available under the MIT License. If you use this code in your research, please cite the accompanying paper:
+jorbit is made freely available under the GPL License. If you use this code in your research, please cite the accompanying paper:
 
-(coming soon)
+(coming soon, under review)
