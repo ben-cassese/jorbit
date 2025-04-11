@@ -9,7 +9,7 @@ import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
 
-from astropy.utils.data import download_files_in_parallel, is_url_in_cache
+from astropy.utils.data import download_file, is_url_in_cache
 
 from jorbit.data.constants import (
     DEFAULT_ASTEROID_EPHEMERIS_URL,
@@ -35,11 +35,8 @@ def initialize_jorbit() -> None:
         print(
             "Files are approx. 800 MB, may take several minutes but will not be repeated."
         )
-        download_files_in_parallel(
-            [DEFAULT_PLANET_EPHEMERIS_URL, DEFAULT_ASTEROID_EPHEMERIS_URL],
-            cache=True,
-            show_progress=True,
-        )
+        download_file(DEFAULT_PLANET_EPHEMERIS_URL, cache=True, show_progress=True)
+        download_file(DEFAULT_ASTEROID_EPHEMERIS_URL, cache=True, show_progress=True)
 
     if not is_url_in_cache(JORBIT_EPHEM_URL_BASE + "names.npy"):
         print(
@@ -48,15 +45,13 @@ def initialize_jorbit() -> None:
         print(
             "Files are approx 660 MB, may take several minutes but will not be repeated."
         )
-        download_files_in_parallel(
-            [
-                JORBIT_EPHEM_URL_BASE + "names.npy",
-                JORBIT_EPHEM_URL_BASE + "x0.npy",
-                JORBIT_EPHEM_URL_BASE + "v0.npy",
-                JORBIT_EPHEM_URL_BASE + "mpcorb.arrow",
-            ],
-            cache=True,
-            show_progress=True,
+        download_file(
+            JORBIT_EPHEM_URL_BASE + "names.npy", cache=True, show_progress=True
+        )
+        download_file(JORBIT_EPHEM_URL_BASE + "x0.npy", cache=True, show_progress=True)
+        download_file(JORBIT_EPHEM_URL_BASE + "v0.npy", cache=True, show_progress=True)
+        download_file(
+            JORBIT_EPHEM_URL_BASE + "mpcorb.arrow", cache=True, show_progress=True
         )
 
 
