@@ -12,6 +12,8 @@ import astropy.units as u
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
+
+# from jaxlib.xla_extension import PjitFunction
 from scipy.optimize import minimize
 
 from jorbit import Observations
@@ -22,6 +24,7 @@ from jorbit.accelerations import (
 )
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
+from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
@@ -137,6 +140,7 @@ class Particle:
             self._cartesian_state,
             self._keplerian_state,
             self._name,
+            self._acc_func_kwargs,
         ) = self._setup_state(x, v, state, time, name)
 
         self.gravity = self._setup_acceleration_func(gravity)
@@ -207,9 +211,13 @@ class Particle:
             x = x.flatten()
             v = v.flatten()
             cartesian_state = CartesianState(
-                x=jnp.array([x]), v=jnp.array([v]), time=time
+                x=jnp.array([x]),
+                v=jnp.array([v]),
+                time=time,
+                acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
             )
             keplerian_state = cartesian_state.to_keplerian()
+
         else:
             raise ValueError(
                 "time must be either astropy.time.Time or float (interpreted as JD in"
@@ -219,7 +227,8 @@ class Particle:
         if name == "":
             name = "unnamed"
 
-        return x, v, time, cartesian_state, keplerian_state, name
+        acc_func_kwargs = cartesian_state.acceleration_func_kwargs
+        return x, v, time, cartesian_state, keplerian_state, name, acc_func_kwargs
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
 
@@ -359,13 +368,19 @@ class Particle:
 
         def scipy_objective(x: jnp.ndarray) -> float:
             c = CartesianState(
-                x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+                x=jnp.array([x[:3]]),
+                v=jnp.array([x[3:]]),
+                time=self._time,
+                acceleration_func_kwargs=self._acc_func_kwargs,
             )
             return -loglike(c)
 
         def scipy_grad(x: jnp.ndarray) -> jnp.ndarray:
             c = CartesianState(
-                x=jnp.array([x[:3]]), v=jnp.array([x[3:]]), time=self._time
+                x=jnp.array([x[:3]]),
+                v=jnp.array([x[3:]]),
+                time=self._time,
+                acceleration_func_kwargs=self._acc_func_kwargs,
             )
             c_grad = jax.grad(loglike)(c)
             g = jnp.concatenate([c_grad.x.flatten(), c_grad.v.flatten()])
