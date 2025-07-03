@@ -120,6 +120,41 @@ TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932
 """Just the sum of ALL_PLANET_LOG_GMS and LARGE_ASTEROID_LOG_GMS."""
 
 
+EARTH_J_HARMONICS = jnp.array(
+    [1.0826253900000000e-03, -2.5324100000000000e-06, -1.6198980000000001e-06]
+)
+"""The J2, J3, and J4 harmonics of the Earth. Taken from the JPL DE440/441 ephemeris."""
+
+SUN_J_HARMONICS = jnp.array([2.1961391516529825e-07])
+"""The J2 harmonic of the Sun. Taken from the JPL DE440/441 ephemeris."""
+
+# EARTH_RADIUS = 6.3781365999999998e+03 / 1.4959787069999999e+08
+# """The radius of the Earth in AU. Taken from the JPL DE440/441 ephemeris."""
+
+EARTH_RADIUS = 6378.137 / 149597870.700
+"""The radius of the Earth in AU. Taken from Horizons web interface."""
+
+# SUN_RADIUS = 6.9600000000000000e+05 / 1.4959787069999999e+08
+# """The radius of the Sun in AU. Taken from the JPL DE440/441 ephemeris."""
+
+SUN_RADIUS = 695700.0 / 149597870.700
+"""The radius of the Sun in AU. Taken from Horizons web interface."""
+
+EARTH_POLE_RA = 0.0
+"""The right ascension of the Earth's pole in radians at the J2000 epoch."""
+
+EARTH_POLE_DEC = 90.0 * jnp.pi / 180
+"""The declination of the Earth's pole in radians at the J2000 epoch."""
+
+SUN_POLE_RA = 286.13 * jnp.pi / 180
+"""The right ascension of the Sun's pole in radians at the J2000 epoch. Chosen to match
+the hard-coded value in ASSIST."""
+
+SUN_POLE_DEC = 63.87 * jnp.pi / 180
+"""The declination of the Sun's pole in radians at the J2000 epoch. Chosen to match
+the hard-coded value in ASSIST."""
+
+
 ALL_PLANET_IDS = {
     "mercury": 1,
     "venus": 2,
