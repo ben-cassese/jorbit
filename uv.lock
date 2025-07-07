@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1721,6 +1722,9 @@ dev = [
     { name = "sphinx-automodapi" },
     { name = "sphinx-book-theme" },
     { name = "sphinxcontrib-video" },
+    { name = "spiceypy", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "spiceypy", version = "6.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "tess-prf" },
     { name = "tox" },
     { name = "tox-gh-actions" },
     { name = "tox-uv" },
@@ -1763,6 +1767,8 @@ dev = [
     { name = "sphinx-automodapi", specifier = ">=0.18.0" },
     { name = "sphinx-book-theme", specifier = ">=1.1.4" },
     { name = "sphinxcontrib-video", specifier = ">=0.4.1" },
+    { name = "spiceypy", specifier = ">=6.0.0" },
+    { name = "tess-prf", specifier = ">=0.1.3" },
     { name = "tox", specifier = ">=4.23.2" },
     { name = "tox-gh-actions", specifier = ">=3.2.0" },
     { name = "tox-uv", specifier = ">=1.16.2" },
@@ -4060,6 +4066,47 @@ wheels = [
 ]
 
 [[package]]
+name = "spiceypy"
+version = "6.0.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.10'",
+]
+dependencies = [
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/21/fa389a42cf2ab1425ef91007e549b7a3e58fe49c6834e687743609fe1386/spiceypy-6.0.0.tar.gz", hash = "sha256:ac27096a12b795898c3a6d1fa1f12a7e4485f480acd2e59fbd3a986cb0ade2be", size = 291180 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/97/ccab62d2c0f37c422c75144323aa084f03261740387f48d116904fcbc06b/spiceypy-6.0.0-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:70cda5b057d1b83dd8a4ecd9d4d2823b2f9c263b85fcdcc0df0370ca5b94c74f", size = 1455891 },
+    { url = "https://files.pythonhosted.org/packages/b4/d6/22ccd3631f55e4b2ccc610e988a6ae5f46fa14d7c28eee02a22ef618c6a5/spiceypy-6.0.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:20d70ce09e6efa78e9e3f2400c6ee85bd7065f19edf2d4ebce257c79eb43e534", size = 1351710 },
+    { url = "https://files.pythonhosted.org/packages/56/68/e4b1c6c7c7f5483ef4667760afdcdf13e45bf10890074b704aa728c0474c/spiceypy-6.0.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:22b50777174c6ef61cdb57aac4f4003ab8de69a0c4b0b87f66881f0a9758e9a2", size = 1628204 },
+    { url = "https://files.pythonhosted.org/packages/ce/89/67f98fcfd5e8320a5e39b00d070e9f1ef32e4d9faa1c420b4c894d11b861/spiceypy-6.0.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a7da6cdb0eaa1e1a27a2198be58404262c0def0216ad62de7183223461e35aa0", size = 1665804 },
+    { url = "https://files.pythonhosted.org/packages/90/88/ad0e920604097ff649672d5b69737e69373e91a5ab302ce9cce4b961215d/spiceypy-6.0.0-py3-none-win_amd64.whl", hash = "sha256:5737a4e19fb8030916b60d6280358d672330243d5aab6299954346a22c92ce58", size = 1427494 },
+]
+
+[[package]]
+name = "spiceypy"
+version = "6.0.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version == '3.12.*'",
+    "python_full_version == '3.11.*'",
+    "python_full_version == '3.10.*'",
+]
+dependencies = [
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4d/db/76af5274bad2801c796c1e4166b7b5dcf3371e72ae35a57407f74ad36c13/spiceypy-6.0.1.tar.gz", hash = "sha256:3083f0f83d7b1d648dcb909624d46ad830b96f238208cb1ca05c1473198a7c23", size = 499799 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/71/3d26c89d05f11d4d95a9be9e216dd080a830490b2fb8c36c3d6be2736eec/spiceypy-6.0.1-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:5c56464b6bbd7af63a2243f66523504fcc49dc022348966b93924f784375b2be", size = 1455626 },
+    { url = "https://files.pythonhosted.org/packages/d1/ff/485d09fc282c8ac58ff92d1469eabef03cbd477cb68cee10cf21eefcad1d/spiceypy-6.0.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:37fb5bbd3c6ce33e9172e035864d3efa45c531669af1b498c36d32838bb0578f", size = 1335854 },
+    { url = "https://files.pythonhosted.org/packages/aa/e5/6582921a8ba0d268a9389c714ea7df38f0bc1c5c73566c01d483e03e3ea2/spiceypy-6.0.1-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1bc5a0c38b64bc9b34affb871dacc4fa58ae844513b66d88dc2c6220d9b0a04d", size = 1631296 },
+    { url = "https://files.pythonhosted.org/packages/b8/6d/aaa7f7ff07624fcd64b95e34eb030518a0ac62ea7a1559184b48b8f50952/spiceypy-6.0.1-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1f5fffc7bb438bbcd76fc92b1058e0859865de09fe558fbd1756b5602df1aad6", size = 1668891 },
+    { url = "https://files.pythonhosted.org/packages/5a/f3/6661d297ef464bcd4448104cc4be3766e62fbfeb2d40b029b9eb1a7ffad3/spiceypy-6.0.1-py3-none-win_amd64.whl", hash = "sha256:c16277c2ebdd89cad091ee8706e78e7683c051b50166951a31190abe869efded", size = 1436719 },
+]
+
+[[package]]
 name = "stack-data"
 version = "0.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4072,6 +4119,22 @@ sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521 },
 ]
+
+[[package]]
+name = "tess-prf"
+version = "0.1.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "astropy", version = "6.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "astropy", version = "6.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "beautifulsoup4" },
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "requests" },
+    { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "scipy", version = "1.14.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/eb/094cd4118fe01fcebc302c988e5b8eb425a457f6f27a67578c7918bcd476/TESS_PRF-0.1.3.tar.gz", hash = "sha256:faff47c903f62d7d6c61076654fcc8454673a0e4a698f59377e23fa33b98b3f8", size = 20681 }
 
 [[package]]
 name = "threadpoolctl"
