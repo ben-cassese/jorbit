@@ -38,9 +38,9 @@ def _gr_agreement_w_reboundx(n_tracer: int, n_massive: int, seed: int) -> None:
         sim.add(m=0.0, x=xs[0], y=xs[1], z=xs[2], vx=vs[0], vy=vs[1], vz=vs[2])
     rebx = reboundx.Extras(sim)
     gr = rebx.load_force("gr_full")
-    rebx.add_force(gr)
     gr.params["c"] = 10
     gr.params["max_iterations"] = 100
+    rebx.add_force(gr)
     sim.integrate(1e-300)
     reb_res = jnp.array([[p.ax, p.ay, p.az] for p in sim.particles])
 
