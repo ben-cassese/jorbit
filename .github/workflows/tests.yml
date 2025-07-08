@@ -30,9 +30,9 @@ jobs:
           cache-suffix: ${{ matrix.python-version }}
           python-version: ${{ matrix.python-version }}
 
+      # don't love this, but the reboundx-tests just broke at some point and this fixed it
       - name: Clean uv cache
         run: uv cache clean
-
       - name: Remove tox environments
         run: rm -rf .tox
 

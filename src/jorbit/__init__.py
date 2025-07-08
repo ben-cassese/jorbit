@@ -1,9 +1,9 @@
 """The jorbit package."""
 
 __url__ = "https://github.com/ben-cassese/jorbit"
-__license__ = "MIT"
+__license__ = "GPLv3+"
 __description__ = "Solar system orbit fitting and integration with JAX"
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 import warnings
 
