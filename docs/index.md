@@ -34,8 +34,7 @@ tutorials/generate_particle_ephemeris.ipynb
 tutorials/compare_w_horizons.ipynb
 tutorials/fit_an_orbit.ipynb
 tutorials/deep_dive.ipynb
-
-
+tutorials/apophis_flyby.ipynb
 ```
 
 

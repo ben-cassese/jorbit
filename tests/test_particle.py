@@ -12,6 +12,7 @@ from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit import Observations, Particle
+from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.utils.horizons import (
     horizons_bulk_astrometry_query,
     horizons_bulk_vector_query,
@@ -183,6 +184,7 @@ def test_different_inits() -> None:
         omega=jnp.array([140.26341029272996]),
         nu=jnp.array([173.59627946476093]),
         time=Time("2025-01-01").tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
     p = Particle(name="(274301) Wikipedia", state=k)
     _ = p.integrate(Time("2025-01-02"))

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from jorbit import Observations
 from jorbit.astrometry.transformations import icrs_to_horizons_ecliptic
-from jorbit.data.constants import TOTAL_SOLAR_SYSTEM_GM
+from jorbit.data.constants import SPEED_OF_LIGHT, TOTAL_SOLAR_SYSTEM_GM
 from jorbit.utils.states import CartesianState, KeplerianState
 
 
@@ -134,6 +134,9 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
         x=jnp.array([r[0]]),
         v=jnp.array([v1]),
         time=obs.times[0],
+        acceleration_func_kwargs={
+            "c2": SPEED_OF_LIGHT**2,
+        },
     )
 
 
@@ -182,6 +185,9 @@ def simple_circular(ra: float, dec: float, semi: float, time: float) -> Cartesia
         Omega=Omega,
         omega=omega,
         time=time,
+        acceleration_func_kwargs={
+            "c2": SPEED_OF_LIGHT**2,
+        },
     )
     c = k.to_cartesian()
 

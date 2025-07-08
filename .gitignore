@@ -13,6 +13,7 @@ coverage.xml
 .coverage
 .pytest_cache
 .ruff_cache
+.vscode
 
 # Docs
 docs/_build/

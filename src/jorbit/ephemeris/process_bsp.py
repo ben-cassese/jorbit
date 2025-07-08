@@ -19,6 +19,11 @@ def extract_data(
 ) -> tuple:
     """Extracts the Chebyshev coefficients for a given target and center from an SPK file.
 
+    Note: assumes that there is only one segment for each target/center pair in the SPK
+    file. This is valid for planetary ephemerides like DE440, but not necessarily for
+    other .bsp files like those generated for specific asteroids, which may have
+    multiple segments for the same target/center pair.
+
     Args:
         center (str):
             The center ID of an ephemeris segment.

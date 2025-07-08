@@ -12,7 +12,6 @@ from jorbit.astrometry.transformations import (
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
-from jorbit.data.constants import SPEED_OF_LIGHT
 
 
 @chex.dataclass
@@ -25,7 +24,7 @@ class SystemState:
     massive_velocities: jnp.ndarray
     log_gms: jnp.ndarray
     time: float
-    acceleration_func_kwargs: dict(default_factory=lambda: {"c2": SPEED_OF_LIGHT**2})
+    acceleration_func_kwargs: dict  # at a minimum, {"c2": SPEED_OF_LIGHT**2}
 
 
 @chex.dataclass
@@ -41,6 +40,7 @@ class KeplerianState:
     Omega: float
     omega: float
     nu: float
+    acceleration_func_kwargs: dict
     # careful here- adding a default to allow users creating Particles to pass
     # astropy.time.Time objects, which wouldn't work in these dataclasses
     # but, in general, need to specify for the SystemState you get from .to_system()
@@ -59,7 +59,12 @@ class KeplerianState:
         )
         x = horizons_ecliptic_to_icrs(x)
         v = horizons_ecliptic_to_icrs(v)
-        return CartesianState(x=x, v=v, time=self.time)
+        return CartesianState(
+            x=x,
+            v=v,
+            time=self.time,
+            acceleration_func_kwargs=self.acceleration_func_kwargs,
+        )
 
     def to_keplerian(self) -> "KeplerianState":
         """Convert to a Keplerian state.
@@ -79,7 +84,7 @@ class KeplerianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
-            acceleration_func_kwargs={},
+            acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
 
@@ -89,6 +94,7 @@ class CartesianState:
 
     x: jnp.ndarray
     v: jnp.ndarray
+    acceleration_func_kwargs: dict
     # same warning as above
     time: float = 2458849.5
 
@@ -98,7 +104,14 @@ class CartesianState:
         v = icrs_to_horizons_ecliptic(self.v)
         a, ecc, nu, inc, Omega, omega = cartesian_to_elements(x, v)
         return KeplerianState(
-            semi=a, ecc=ecc, inc=inc, Omega=Omega, omega=omega, nu=nu, time=self.time
+            semi=a,
+            ecc=ecc,
+            inc=inc,
+            Omega=Omega,
+            omega=omega,
+            nu=nu,
+            time=self.time,
+            acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
     def to_cartesian(self) -> "CartesianState":
@@ -118,7 +131,7 @@ class CartesianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
-            acceleration_func_kwargs={},
+            acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
 

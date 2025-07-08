@@ -261,6 +261,7 @@ def ias15_step(
         SystemState:
             The new system state.
     """
+    # jax.debug.print("starting a new step")
     # for convenience, rename initial state
     t_beginning = initial_system_state.time
     M = initial_system_state.massive_positions.shape[0]
@@ -276,6 +277,7 @@ def ias15_step(
     a0 = initial_integrator_state.a0
 
     dt = initial_integrator_state.dt
+    # jax.debug.print("initial dt: {x}", x=dt)
     csx = initial_integrator_state.csx
     csv = initial_integrator_state.csv
     g = initial_integrator_state.g
@@ -608,6 +610,11 @@ def ias15_step(
 
     # check the validity of the step, estimate next timestep
     dt_done = dt
+    # jax.debug.print(
+    #     "step complete, dt done before review = {x}, pc err = {y}",
+    #     x=dt_done,
+    #     y=predictor_corrector_error,
+    # )
 
     tmp = a0 + b.p0 + b.p1 + b.p2 + b.p3 + b.p4 + b.p5 + b.p6
     y2 = jnp.sum(tmp * tmp, axis=1)
@@ -625,29 +632,44 @@ def ias15_step(
         2.0 * b.p1 + 6.0 * b.p2 + 12.0 * b.p3 + 20.0 * b.p4 + 30.0 * b.p5 + 42.0 * b.p6
     )
     y4 = jnp.sum(tmp * tmp, axis=1)
-    tmp = 6.0 * b.p2 + 24.0 * b.p3 + 60.0 * b.p4 + 120.0 * b.p5 + 210.0 * b.p6
 
     timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
     min_timescale2 = jnp.nanmin(timescale2)
 
     dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
+    # jax.debug.print("proposed dt_new based on timescales: {x}", x=dt_new)
     # not checking for a min dt, since rebound default is 0.0 anyway
     # and we're willing to let it get tiny
 
     def step_too_ambitious(
-        x0: jnp.ndarray, v0: jnp.ndarray, csx: jnp.ndarray, csv: jnp.ndarray
+        x0: jnp.ndarray,
+        v0: jnp.ndarray,
+        csx: jnp.ndarray,
+        csv: jnp.ndarray,
+        dt_done: float,
+        dt_new: float,
     ) -> tuple:
+        # jax.debug.print("step too ambitious, rejecting")
         dt_done = 0.0
         return x0, v0, dt_done, dt_new
 
     def step_was_good(
-        x0: jnp.ndarray, v0: jnp.ndarray, csx: jnp.ndarray, csv: jnp.ndarray
+        x0: jnp.ndarray,
+        v0: jnp.ndarray,
+        csx: jnp.ndarray,
+        csv: jnp.ndarray,
+        dt_done: float,
+        dt_new: float,
     ) -> tuple:
+        # jax.debug.print("step was good, accepting")
         dt_neww = jnp.where(
             dt_new / dt_done > 1 / IAS15_SAFETY_FACTOR,
             dt_done / IAS15_SAFETY_FACTOR,
             dt_new,
         )
+        # jax.debug.print(
+        #     "dt new after making sure it doesn't grow too fast: {x}", x=dt_neww
+        # )
 
         x0, csx = add_cs(x0, csx, b.p6 / 72.0 * dt_done * dt_done)
         x0, csx = add_cs(x0, csx, b.p5 / 56.0 * dt_done * dt_done)
@@ -677,6 +699,8 @@ def ias15_step(
         v0,
         csx,
         csv,
+        dt_done,
+        dt_new,
     )
 
     new_system_state = SystemState(
@@ -688,6 +712,16 @@ def ias15_step(
         time=t_beginning + dt_done,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
+    # jax.debug.print(
+    #     "t_beginning: {x}, dt_done: {y}, their sum: {z}",
+    #     x=t_beginning,
+    #     y=dt_done,
+    #     z=t_beginning + dt_done,
+    # )
+    # jax.debug.print(
+    #     "the system state time after this step (should match): {x}",
+    #     x=new_system_state.time,
+    # )
 
     er = e
     br = b
@@ -759,14 +793,21 @@ def ias15_evolve(
             system_state, integrator_state, last_meaningful_dt, iter_num = args
 
             t = system_state.time
+            # integrator_state.dt = 0.0001
 
-            step_length = jnp.sign(final_time - t) * jnp.min(
-                jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
+            diff = final_time - t
+            step_length = jnp.sign(diff) * jnp.min(
+                jnp.array([jnp.abs(diff), jnp.abs(integrator_state.dt)])
             )
 
-            last_meaningful_dt = jnp.where(
-                step_length == 0, last_meaningful_dt, step_length
-            )
+            # jax.debug.print(
+            #     "another step is needed. the current time is {x}, the final time is {y}, the diff is {q},  \nintegrator_dt is {w}, step_length being set to {z}",
+            #     x=t,
+            #     y=final_time,
+            #     q=diff,
+            #     z=step_length,
+            #     w=integrator_state.dt,
+            # )
             integrator_state.dt = step_length
             # system_state, integrator_state = ias15_step_dynamic_predictor(
             #     system_state, acceleration_func, integrator_state
@@ -797,13 +838,18 @@ def ias15_evolve(
                 ),
             )
         )
-
-        final_integrator_state.dt = last_meaningful_dt
-        final_integrator_state.dt_last_done = last_meaningful_dt
+        # jax.debug.print(
+        #     "finished taking steps to goal time in {x} iterations", x=iter_num
+        # )
 
         return (final_system_state, final_integrator_state)
 
     def scan_func(carry: tuple, scan_over: float) -> tuple:
+        # jax.debug.print(
+        #     "\nattempting jump to next time: {x}. the current time is: {y}",
+        #     x=scan_over,
+        #     y=carry[0].time,
+        # )
         system_state, integrator_state = carry
         final_time = scan_over
         system_state, integrator_state = evolve(
