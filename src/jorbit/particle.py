@@ -598,6 +598,7 @@ class Particle:
                 x=jnp.array([result.x[:3]]),
                 v=jnp.array([result.x[3:]]),
                 time=self._time,
+                acceleration_func_kwargs=self._acc_func_kwargs,
             )
             if c.to_keplerian().ecc > 1:
                 warnings.warn(
