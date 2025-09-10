@@ -3,7 +3,7 @@
 [![codecov](https://codecov.io/github/ben-cassese/jorbit/graph/badge.svg?token=7AUZRB9MFO)](https://codecov.io/github/ben-cassese/jorbit)
 ![PyPI - Version](https://img.shields.io/pypi/v/jorbit)
 ![pypi-platforms](https://img.shields.io/pypi/pyversions/jorbit)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: GPL3](https://img.shields.io/badge/License-GPL3-blue.svg)](https://opensource.org/license/gpl-3-0)
 [![Project Status: Active – The project has reached a stable, usable state and is being actively developed.](https://www.repostatus.org/badges/latest/active.svg)](https://www.repostatus.org/#active)
 ![ruff-badge](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)
 
