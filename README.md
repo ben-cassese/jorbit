@@ -67,4 +67,21 @@ If you have any trouble with the code, feel free to open an issue! We welcome op
 ## Attribution
 jorbit is made freely available under the GPL License. If you use this code in your research, please cite the accompanying paper:
 
-(coming soon, under review)
+```
+@ARTICLE{2025arXiv250919549C,
+       author = {{Cassese}, Ben and {Rice}, Malena and {Lu}, Tiger},
+        title = "{A High-Precision, Differentiable Code for Solar System Ephemerides}",
+      journal = {arXiv e-prints},
+     keywords = {Earth and Planetary Astrophysics, Instrumentation and Methods for Astrophysics},
+         year = 2025,
+        month = sep,
+          eid = {arXiv:2509.19549},
+        pages = {arXiv:2509.19549},
+          doi = {10.48550/arXiv.2509.19549},
+archivePrefix = {arXiv},
+       eprint = {2509.19549},
+ primaryClass = {astro-ph.EP},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025arXiv250919549C},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
