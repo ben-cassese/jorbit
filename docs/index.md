@@ -11,20 +11,22 @@ Check out the tutorials/demos for an idea of what `jorbit` can do, and the user 
 
 jorbit is made freely available under the GPL License. If you use this code in your research, please cite the accompanying paper:
 ```
-@ARTICLE{2025arXiv250919549C,
+@ARTICLE{2025PSJ.....6..252C,
        author = {{Cassese}, Ben and {Rice}, Malena and {Lu}, Tiger},
-        title = "{A High-Precision, Differentiable Code for Solar System Ephemerides}",
-      journal = {arXiv e-prints},
-     keywords = {Earth and Planetary Astrophysics, Instrumentation and Methods for Astrophysics},
+        title = "{A High-precision, Differentiable Code for Solar System Ephemerides}",
+      journal = {\psj},
+     keywords = {Astronomy software, Solar system, Orbit determination, Bayesian statistics, 1855, 1528, 1175, 1900, Earth and Planetary Astrophysics, Instrumentation and Methods for Astrophysics},
          year = 2025,
-        month = sep,
-          eid = {arXiv:2509.19549},
-        pages = {arXiv:2509.19549},
-          doi = {10.48550/arXiv.2509.19549},
+        month = nov,
+       volume = {6},
+       number = {11},
+          eid = {252},
+        pages = {252},
+          doi = {10.3847/PSJ/ae0a36},
 archivePrefix = {arXiv},
        eprint = {2509.19549},
  primaryClass = {astro-ph.EP},
-       adsurl = {https://ui.adsabs.harvard.edu/abs/2025arXiv250919549C},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025PSJ.....6..252C},
       adsnote = {Provided by the SAO/NASA Astrophysics Data System}
 }
 ```
