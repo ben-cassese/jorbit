@@ -146,7 +146,7 @@ def on_sky(
         earth_distance = jnp.linalg.norm(xz - observer_position)
         light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
 
-        positions, velocities, final_system_state, final_integrator_state = (
+        _positions, _velocities, final_system_state, _final_integrator_state = (
             ias15_evolve(
                 state,
                 acc_func,

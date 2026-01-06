@@ -352,7 +352,7 @@ def step(
         # static in the subfunctions the scan doesn't like that
         for n in range(1, n_internal_points):
             # step_time = t_beginning + dt * h[n] # come back to this for time-variable acceleration functions
-            x, v = estimate_x_v_from_b(h[n], b)
+            x, _v = estimate_x_v_from_b(h[n], b)
             at = acceleration_func(x)
             b, g = refine_b_and_g(b, g, at, a0, n, False)
 
@@ -360,7 +360,7 @@ def step(
         # to evaluate convergence
         n = n_internal_points
         # step_time = t_beginning + dt * h[n]
-        x, v = estimate_x_v_from_b(h[n], b)
+        x, _v = estimate_x_v_from_b(h[n], b)
         at = acceleration_func(x)
         b, g, g_diff = refine_b_and_g(
             b=b, g=g, at=at, a0=a0, substep_num=n, return_g_diff=True

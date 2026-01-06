@@ -818,7 +818,7 @@ def ias15_evolve(
             return system_state, integrator_state, last_meaningful_dt, iter_num + 1
 
         def cond_func(args: tuple) -> bool:
-            system_state, integrator_state, last_meaningful_dt, iter_num = args
+            system_state, integrator_state, _last_meaningful_dt, iter_num = args
             t = system_state.time
 
             step_length = jnp.sign(final_time - t) * jnp.min(
@@ -826,7 +826,7 @@ def ias15_evolve(
             )
             return (step_length != 0) & (iter_num < 10_000)
 
-        final_system_state, final_integrator_state, last_meaningful_dt, iter_num = (
+        final_system_state, final_integrator_state, _last_meaningful_dt, _iter_num = (
             jax.lax.while_loop(
                 cond_func,
                 step_needed,

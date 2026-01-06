@@ -116,7 +116,7 @@ def test_on_sky() -> None:
     Given the same Cartesian position/velocity of an object and the same position of an
     observer, should agree with the Horizons astrometry to within 0.1 mas.
     """
-    seps_astropy, seps_jorbit = setup()
+    _seps_astropy, seps_jorbit = setup()
     np.testing.assert_allclose(seps_jorbit, 0.0, atol=1e-4)  # 0.1 mas
 
 

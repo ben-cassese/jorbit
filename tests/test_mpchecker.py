@@ -52,7 +52,7 @@ def test_mpchecker_high_res() -> None:
 
 def test_nearest_asteroid_low_res() -> None:
     """Check that the nearest_asteroid function runs ok- no comparison to anything yet."""
-    _, _ = separations, asteroids = nearest_asteroid(
+    _, _ = _separations, _asteroids = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
         times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         radius=2 * u.arcmin,
@@ -77,7 +77,7 @@ def test_nearest_asteroid_precompute() -> None:
         times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         observer="kitt peak",
     )
-    separations, asteroids, coord_table, mag_table, total_mags = nearest_asteroid(
+    _separations, _asteroids, coord_table, _mag_table, _total_mags = nearest_asteroid(
         coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
         times=Time("2025-01-01") + np.arange(0, 3, 1) * u.day,
         radius=2 * u.arcmin,

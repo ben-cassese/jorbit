@@ -107,8 +107,8 @@ def merge_data(
     early_indecies = []
     late_indecies = []
     for i in range(len(inits)):
-        component_count, coefficient_count, n = coeffs[i].shape
-        index, offset = jnp.divmod(
+        _component_count, _coefficient_count, n = coeffs[i].shape
+        index, _offset = jnp.divmod(
             (earliest_time.tdb.jd - 2451545.0) * 86400.0 - inits[i],
             intlens[i],
         )
@@ -116,7 +116,7 @@ def merge_data(
         index = jnp.where(omegas, index - 1, index)
         early_indecies.append(index)
 
-        index, offset = jnp.divmod(
+        index, _offset = jnp.divmod(
             (latest_time.tdb.jd - 2451545.0) * 86400.0 - inits[i],
             intlens[i],
         )
@@ -141,7 +141,7 @@ def merge_data(
     for i in trimmed_coeffs:
         coeff_shapes.append(i.shape)
     coeff_shapes = jnp.array(coeff_shapes)
-    most_coefficients, _, most_time_slices = jnp.max(coeff_shapes, axis=0)
+    most_coefficients, _, _most_time_slices = jnp.max(coeff_shapes, axis=0)
 
     padded_coefficients = []
     for c in trimmed_coeffs:

@@ -138,7 +138,7 @@ def ppn_gravity(
         return carry
 
     def do_iteration(carry: tuple) -> tuple:
-        a_prev, a_curr, _ = carry
+        _a_prev, a_curr, _ = carry
         non_const = iteration_step(a_curr)
         a_next = a_const + non_const
 
@@ -147,7 +147,7 @@ def ppn_gravity(
         return (a_curr, a_next, ratio)
 
     def body_fn(carry: tuple, _: None) -> tuple:
-        a_prev, a_curr, ratio = carry
+        _a_prev, _a_curr, ratio = carry
         should_continue = ratio > jnp.finfo(jnp.float64).eps
         new_carry = jax.lax.cond(should_continue, do_iteration, do_nothing, carry)
         return new_carry, None

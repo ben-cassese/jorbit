@@ -224,7 +224,7 @@ def step(
         predictor_corrector_error = 0.0
 
         for n in range(1, n_internal_points):
-            x, v = estimate_x_v_from_b(
+            x, _v = estimate_x_v_from_b(
                 a0=a0,
                 v0=v0,
                 x0=x0,
@@ -239,7 +239,7 @@ def step(
                 r=r, c=c, b=b, g=g, at=at, a0=a0, substep_num=n, return_g_diff=False
             )
         n = n_internal_points
-        x, v = estimate_x_v_from_b(
+        x, _v = estimate_x_v_from_b(
             a0=a0,
             v0=v0,
             x0=x0,

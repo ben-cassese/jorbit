@@ -247,7 +247,7 @@ def nearest_asteroid_helper(
     coordinate, _, t0, tf, chunk_size, names = setup_checks(
         coordinate, times, radius=0 * u.arcsec
     )
-    indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, 0, 0, None))(
+    indices, _offsets = jax.vmap(get_chunk_index, in_axes=(0, 0, 0, None))(
         times.tdb.jd, t0, tf, chunk_size
     )
     unique_indices = jnp.unique(indices)

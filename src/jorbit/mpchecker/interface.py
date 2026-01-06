@@ -121,14 +121,16 @@ def mpchecker(
     relevant_mpcorb = get_relevant_mpcorb(mask)
 
     if extra_precision:
-        coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
-            asteroid_flags=mask,
-            times=time,
-            radius=radius,
-            observer=observer,
-            coordinate=coordinate,
-            gravity=extra_precision_gravity,
-            relevant_mpcorb=relevant_mpcorb,
+        coords, seps, _coord_table, mags, _mag_table, _total_mags = (
+            extra_precision_calcs(
+                asteroid_flags=mask,
+                times=time,
+                radius=radius,
+                observer=observer,
+                coordinate=coordinate,
+                gravity=extra_precision_gravity,
+                relevant_mpcorb=relevant_mpcorb,
+            )
         )
         separations = seps[:, 0]
         ras = coords[:, 0].ra.rad
@@ -228,12 +230,12 @@ def nearest_asteroid(
         )
 
     if precomputed is None:
-        coordinate, _, t0, tf, chunk_size, names = setup_checks(
+        coordinate, _, t0, tf, chunk_size, _names = setup_checks(
             coordinate, times, radius=0 * u.arcsec
         )
         observer_positions = None
     else:
-        coordinate, _, t0, tf, chunk_size, names = precomputed[0]
+        coordinate, _, t0, tf, chunk_size, _names = precomputed[0]
         observer_positions = precomputed[2]
 
     indices, offsets = jax.vmap(get_chunk_index, in_axes=(0, 0, 0, None))(
@@ -324,7 +326,7 @@ def nearest_asteroid(
     if not compute_contamination:
         return separations * u.arcsec, relevant_mpcorb
 
-    coords, seps, coord_table, mags, mag_table, total_mags = extra_precision_calcs(
+    _coords, seps, coord_table, _mags, mag_table, total_mags = extra_precision_calcs(
         asteroid_flags=asteroid_flags,
         times=times,
         radius=radius,

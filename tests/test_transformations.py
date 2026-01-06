@@ -38,7 +38,7 @@ def test_elements_to_cartesian() -> None:
     omega_horizons = jnp.array([elements["w"][0]])
     nu_horizons = jnp.array([elements["nu"][0]])
 
-    xs, vs = elements_to_cartesian(
+    xs, _vs = elements_to_cartesian(
         a=a_horizons,
         ecc=ecc_horizons,
         inc=inc_horizons,
@@ -112,7 +112,7 @@ def test_inverses() -> None:
         x=true_xs,
         v=true_vs,
     )
-    converted_xs, converted_vs = elements_to_cartesian(
+    converted_xs, _converted_vs = elements_to_cartesian(
         a=a,
         ecc=ecc,
         nu=nu,

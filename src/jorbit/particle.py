@@ -493,8 +493,10 @@ class Particle:
         if times.shape == ():
             times = jnp.array([times])
 
-        positions, velocities, final_system_state, final_integrator_state = _integrate(
-            times, state, self.gravity, self._integrator, self._integrator_state
+        positions, velocities, _final_system_state, _final_integrator_state = (
+            _integrate(
+                times, state, self.gravity, self._integrator, self._integrator_state
+            )
         )
         return positions[:, 0, :], velocities[:, 0, :]
 

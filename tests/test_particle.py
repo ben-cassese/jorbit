@@ -44,7 +44,7 @@ def test_integrate() -> None:
 
         p = Particle.from_horizons(name=sso, time=Time("2025-01-01"))
 
-        positions, velocities = p.integrate(times)
+        positions, _velocities = p.integrate(times)
 
         assert (
             jnp.max(jnp.linalg.norm(horizons_x - positions, axis=1)) * u.au.to(u.m)
