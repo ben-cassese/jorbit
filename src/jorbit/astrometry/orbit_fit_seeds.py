@@ -166,11 +166,13 @@ def simple_circular(ra: float, dec: float, semi: float, time: float) -> Cartesia
     x = icrs_to_horizons_ecliptic(x_icrs)
 
     # assume we're observing the thing at its highest excursion from the ecliptic:
-    inc = jnp.array([jnp.abs(jnp.arcsin(x[2])) / jnp.linalg.norm(x) * 180 / jnp.pi])
+    inc = jnp.array([jnp.abs(jnp.arcsin(x[2])) * 180 / jnp.pi])
 
     # its longitude of ascending node is the angle between the x-axis and the projection of the vector onto the xy-plane:
     varphi = (jnp.arctan2(x[1], x[0]) * 180 / jnp.pi) % 360
-    Omega = jnp.array([varphi]) - 90 if x[2] > 0 else jnp.array([varphi]) + 90
+    Omega = (
+        (jnp.array([varphi]) - 90) if x[2] > 0 else (jnp.array([varphi]) + 90)
+    ) % 360
 
     nu = jnp.array([90.0]) if x[2] > 0 else jnp.array([270.0])
     a = jnp.array([semi])
@@ -189,6 +191,5 @@ def simple_circular(ra: float, dec: float, semi: float, time: float) -> Cartesia
             "c2": SPEED_OF_LIGHT**2,
         },
     )
-    c = k.to_cartesian()
 
-    return c
+    return k

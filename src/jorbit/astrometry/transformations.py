@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from jorbit.data.constants import (
     HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT,
     ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT,
-    TOTAL_SOLAR_SYSTEM_GM,
 )
 
 
@@ -42,7 +41,7 @@ def horizons_ecliptic_to_icrs(xs: jnp.ndarray) -> jnp.ndarray:
 
 @jax.jit
 def elements_to_cartesian(
-    a: float, ecc: float, nu: float, inc: float, Omega: float, omega: float
+    a: float, ecc: float, nu: float, inc: float, Omega: float, omega: float, mass: float
 ) -> tuple:
     """Convert orbital elements to cartesian coordinates.
 
@@ -63,6 +62,7 @@ def elements_to_cartesian(
         inc (float): Inclination in degrees.
         Omega (float): Longitude of the ascending node in degrees.
         omega (float): Argument of periapsis in degrees.
+        mass (float): Total mass (GM) of the central object with G in AU^3 / day^2.
 
     Returns:
         tuple: (x, v) where x is the position in AU and v is the velocity in AU/day.
@@ -82,7 +82,7 @@ def elements_to_cartesian(
         * jnp.column_stack((jnp.cos(nu), jnp.sin(nu), nu * 0.0))
     )
     v_w = (
-        jnp.sqrt(TOTAL_SOLAR_SYSTEM_GM)
+        jnp.sqrt(mass)
         / jnp.sqrt(t)
         * jnp.column_stack((-jnp.sin(nu), ecc + jnp.cos(nu), nu * 0))
     )
@@ -124,7 +124,7 @@ def elements_to_cartesian(
 
 
 @jax.jit
-def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
+def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
     """Convert cartesian coordinates to orbital elements.
 
     Relies on the total mass of the solar system, which is assumed to be the sum of all
@@ -135,6 +135,8 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
     Args:
         x (jnp.ndarray): Position in AU.
         v (jnp.ndarray): Velocity in AU/day.
+        mass (float): Total mass (GM) of the central object with G in AU^3 / day^2.
+
 
     Returns:
         tuple:
@@ -151,13 +153,13 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
     h_mag = jnp.linalg.norm(h, axis=1)
 
     # Eccentricity vector
-    e_vec = jnp.cross(v, h) / TOTAL_SOLAR_SYSTEM_GM - x / r_mag[:, jnp.newaxis]
+    e_vec = jnp.cross(v, h) / mass - x / r_mag[:, jnp.newaxis]
     ecc = jnp.linalg.norm(e_vec, axis=1)
 
     # Specific orbital energy
-    specific_energy = v_mag**2 / 2 - TOTAL_SOLAR_SYSTEM_GM / r_mag
+    specific_energy = v_mag**2 / 2 - mass / r_mag
 
-    a = -TOTAL_SOLAR_SYSTEM_GM / (2 * specific_energy)
+    a = -mass / (2 * specific_energy)
 
     inc = jnp.arccos(h[:, 2] / h_mag) * 180 / jnp.pi
 
