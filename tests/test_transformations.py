@@ -7,7 +7,6 @@ import astropy.units as u
 import jax.numpy as jnp
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
-from jorbit.utils.keplerian import M_from_f
 
 from jorbit import Particle
 from jorbit.astrometry.transformations import (
@@ -16,6 +15,7 @@ from jorbit.astrometry.transformations import (
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
+from jorbit.utils.kepler import M_from_f
 from jorbit.utils.states import barycentric_to_heliocentric, heliocentric_to_barycentric
 
 
