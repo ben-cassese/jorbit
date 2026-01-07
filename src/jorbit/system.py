@@ -16,6 +16,8 @@ from jorbit.accelerations import (
     create_default_ephemeris_acceleration_func,
     create_gr_ephemeris_acceleration_func,
     create_newtonian_ephemeris_acceleration_func,
+    newtonian_gravity,
+    ppn_gravity,
 )
 from jorbit.astrometry.sky_projection import on_sky
 from jorbit.ephemeris.ephemeris import Ephemeris
@@ -141,6 +143,12 @@ class System:
             )
             acc_func = create_default_ephemeris_acceleration_func(eph.processor)
 
+        elif gravity == "generic newtonian":
+            acc_func = jax.tree_util.Partial(newtonian_gravity)
+
+        elif gravity == "generic gr":
+            acc_func = jax.tree_util.Partial(ppn_gravity)
+
         return acc_func
 
     def _setup_integrator(self) -> tuple[IAS15IntegratorState, Callable]:
@@ -158,7 +166,7 @@ class System:
         """Integrate the System to a given time.
 
         Note: This method does not change the state of the system. It returns the
-        positions and velocitiesat the given times, but the system itself is not
+        positions and velocities at the given times, but the system itself is not
         changed.
 
         Args:
