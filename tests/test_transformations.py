@@ -15,6 +15,7 @@ from jorbit.astrometry.transformations import (
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
+from jorbit.data.constants import TOTAL_SOLAR_SYSTEM_GM
 from jorbit.utils.kepler import M_from_f
 from jorbit.utils.states import barycentric_to_heliocentric, heliocentric_to_barycentric
 
@@ -48,6 +49,7 @@ def test_elements_to_cartesian() -> None:
         Omega=Omega_horizons,
         omega=omega_horizons,
         nu=nu_horizons,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
     )
     xs = horizons_ecliptic_to_icrs(xs)
     # vs = horizons_ecliptic_to_icrs(vs)
@@ -81,6 +83,7 @@ def test_cartesian_to_elements() -> None:
     a, ecc, nu, inc, Omega, omega = cartesian_to_elements(
         x=xs,
         v=vs,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
     )
 
     assert jnp.allclose(a, a_horizons, atol=1e-11)  # 1m
@@ -114,6 +117,7 @@ def test_inverses() -> None:
     a, ecc, nu, inc, Omega, omega = cartesian_to_elements(
         x=true_xs,
         v=true_vs,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
     )
     converted_xs, _converted_vs = elements_to_cartesian(
         a=a,
@@ -122,6 +126,7 @@ def test_inverses() -> None:
         inc=inc,
         Omega=Omega,
         omega=omega,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
     )
     assert jnp.allclose(true_xs, converted_xs, atol=1e-15)
 
