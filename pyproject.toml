@@ -85,6 +85,7 @@ exclude = [
     "docs/*",
     "paper/*",
     "src/jorbit/mpchecker/ephem_generation/*",
+    "scratch*",
 ]
 pydocstyle.convention = "google"
 
