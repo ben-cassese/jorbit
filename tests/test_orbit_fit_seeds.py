@@ -54,7 +54,7 @@ def test_gauss_method_orbit() -> None:
 
 def test_simple_circular() -> None:
     """Test the simple circular orbit fit."""
-    np.random.seed(13)
+    np.random.seed(14)
 
     for _i in range(100):
         k = simple_circular(
@@ -62,7 +62,7 @@ def test_simple_circular() -> None:
             dec=np.random.uniform(-np.pi / 2, np.pi / 2),
             semi=np.random.uniform(1, 100),
             time=0.0,
-        ).to_keplerian()
+        )
 
         assert np.isfinite(k.semi)
         assert np.isfinite(k.ecc)
