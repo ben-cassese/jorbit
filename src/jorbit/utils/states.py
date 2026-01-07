@@ -3,15 +3,25 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+import astropy.units as u
 import chex
 import jax.numpy as jnp
+from astropy.time import Time
 
+from jorbit import Ephemeris
 from jorbit.astrometry.transformations import (
     cartesian_to_elements,
     elements_to_cartesian,
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
+from jorbit.data.constants import (
+    ALL_PLANET_LOG_GMS,
+    SPEED_OF_LIGHT,
+    TOTAL_SOLAR_SYSTEM_GM,
+)
+
+SUN_GM = jnp.exp(ALL_PLANET_LOG_GMS["sun"])
 
 
 @chex.dataclass
@@ -29,9 +39,10 @@ class SystemState:
 
 @chex.dataclass
 class KeplerianState:
-    """Contains the state of a particle in Keplerian elements.
+    """Contains the *barycentric* state of a particle in Keplerian elements.
 
-    Angles are in degrees.
+    Angles are in degrees. Elements will not agree with those presented in a
+    heliocentric frame.
     """
 
     semi: float
@@ -56,6 +67,7 @@ class KeplerianState:
             self.inc,
             self.Omega,
             self.omega,
+            TOTAL_SOLAR_SYSTEM_GM,
         )
         x = horizons_ecliptic_to_icrs(x)
         v = horizons_ecliptic_to_icrs(v)
@@ -90,7 +102,7 @@ class KeplerianState:
 
 @chex.dataclass
 class CartesianState:
-    """Contains the state of a particle in Cartesian coordinates."""
+    """Contains the *barycentric* state of a particle in Cartesian coordinates."""
 
     x: jnp.ndarray
     v: jnp.ndarray
@@ -102,7 +114,9 @@ class CartesianState:
         """Converts the Cartesian state to Keplerian elements."""
         x = icrs_to_horizons_ecliptic(self.x)
         v = icrs_to_horizons_ecliptic(self.v)
-        a, ecc, nu, inc, Omega, omega = cartesian_to_elements(x, v)
+        a, ecc, nu, inc, Omega, omega = cartesian_to_elements(
+            x, v, TOTAL_SOLAR_SYSTEM_GM
+        )
         return KeplerianState(
             semi=a,
             ecc=ecc,
@@ -149,3 +163,138 @@ class IAS15IntegratorState:
     a0: jnp.ndarray
     dt: float
     dt_last_done: float
+
+
+def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Helper to get the state vector of the Sun at a given time.
+
+    Uses the local copy of JPL DE440.
+
+    Args:
+        time: astropy.time.Time
+            The time at which to get the Sun's state.
+
+    Returns:
+        tuple:
+            A tuple containing the position and velocity of the Sun in AU and
+            AU/day, respectively.
+    """
+    eph = Ephemeris(
+        ssos="default planets",
+        earliest_time=time - 10 * u.day,
+        latest_time=time + 10 * u.day,
+    )
+    sun_state = eph.state(time)["sun"]
+    return sun_state
+
+
+def barycentric_to_heliocentric(
+    state: CartesianState | KeplerianState, time: Time
+) -> dict:
+    """Helper to compute heliocentric quantities from barycentric states.
+
+    Use the local copy of JPL DE440 to query the state vector of the Sun at the given
+    time.
+
+    Args:
+        state: CartesianState or KeplerianState
+            The barycentric state to convert.
+        time: astropy.time.Time
+            The time at which to compute the heliocentric elements.
+
+    Returns:
+        dict:
+            A dictionary containing heliocentric quantities. If the input state is
+            Cartesian, returns 'x_helio' and 'v_helio'. If Keplerian, returns
+            'a_helio', 'ecc_helio', 'inc_helio', 'Omega_helio', 'omega_helio', and
+            'nu_helio'.
+    """
+    sun_state = _get_sun_state(time)
+
+    cart = state.to_cartesian()
+    helio_x = cart.x - sun_state["x"].value
+    helio_v = cart.v - sun_state["v"].value
+
+    if isinstance(state, CartesianState):
+        return {"x_helio": helio_x, "v_helio": helio_v}
+    elif isinstance(state, KeplerianState):
+        helio_x = icrs_to_horizons_ecliptic(helio_x)
+        helio_v = icrs_to_horizons_ecliptic(helio_v)
+        a_helio, ecc_helio, nu_helio, inc_helio, Omega_helio, omega_helio = (
+            cartesian_to_elements(helio_x, helio_v, SUN_GM)
+        )
+        return {
+            "a_helio": a_helio,
+            "ecc_helio": ecc_helio,
+            "inc_helio": inc_helio,
+            "Omega_helio": Omega_helio,
+            "omega_helio": omega_helio,
+            "nu_helio": nu_helio,
+        }
+    else:
+        raise ValueError(
+            "state must be either a barycentric CartesianState or KeplerianState"
+        )
+
+
+def heliocentric_to_barycentric(
+    heliocentric_dict: dict,
+    time: Time,
+    acceleration_func_kwargs: dict = {"c2": SPEED_OF_LIGHT**2},
+) -> CartesianState | KeplerianState:
+    """Helper to compute barycentric quantities from heliocentric states.
+
+    Use the local copy of JPL DE440 to query the state vector of the Sun at the given
+    time.
+
+    Args:
+        heliocentric_dict: dict
+            A dictionary containing heliocentric quantities. If the input state is
+            Cartesian, must contain 'x_helio' and 'v_helio'. If Keplerian, must
+            contain 'a_helio', 'ecc_helio', 'inc_helio', 'Omega_helio',
+            'omega_helio', and 'nu_helio'.
+        time: astropy.time.Time
+            The time at which to compute the barycentric elements.
+        acceleration_func_kwargs: dict
+            Additional arguments to associate with the final CartesianState or
+            KeplerianState. Defaults to {"c2": SPEED_OF_LIGHT**2}.
+
+    Returns:
+        CartesianState or KeplerianState:
+            The barycentric state. If the input dict had Cartesian quantities, returns a
+            CartesianState. If the inputs were Keplerian, returns a KeplerianState.
+    """
+    sun_state = _get_sun_state(time)
+
+    if "x_helio" in heliocentric_dict:
+        cart_x = heliocentric_dict["x_helio"] + sun_state["x"].value
+        cart_v = heliocentric_dict["v_helio"] + sun_state["v"].value
+        return CartesianState(
+            x=cart_x,
+            v=cart_v,
+            time=time.tdb.jd,
+            acceleration_func_kwargs=acceleration_func_kwargs,
+        )
+    elif "a_helio" in heliocentric_dict:
+        helio_x, helio_v = elements_to_cartesian(
+            jnp.array([heliocentric_dict["a_helio"]]),
+            jnp.array([heliocentric_dict["ecc_helio"]]),
+            jnp.array([heliocentric_dict["nu_helio"]]),
+            jnp.array([heliocentric_dict["inc_helio"]]),
+            jnp.array([heliocentric_dict["Omega_helio"]]),
+            jnp.array([heliocentric_dict["omega_helio"]]),
+            SUN_GM,
+        )
+        cart_x = horizons_ecliptic_to_icrs(helio_x) + sun_state["x"].value
+        cart_v = horizons_ecliptic_to_icrs(helio_v) + sun_state["v"].value
+        state = CartesianState(
+            x=cart_x,
+            v=cart_v,
+            time=time,
+            acceleration_func_kwargs=acceleration_func_kwargs,
+        )
+        return state.to_keplerian()
+    else:
+        raise ValueError(
+            "heliocentric_dict must contain either heliocentric Cartesian or Keplerian quantities"
+        )

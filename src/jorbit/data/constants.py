@@ -116,7 +116,7 @@ LARGE_ASTEROID_LOG_GMS = {
 """Similar to ALL_PLANET_LOG_GMS but for the 16 asteroid perturbers."""
 
 # just the sum of all the planets and large asteroids above
-TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932
+TOTAL_SOLAR_SYSTEM_GM = 0.000296309274879932  # 0.00029630927460766373 if just planets
 """Just the sum of ALL_PLANET_LOG_GMS and LARGE_ASTEROID_LOG_GMS."""
 
 

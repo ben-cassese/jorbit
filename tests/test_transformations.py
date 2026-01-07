@@ -7,13 +7,16 @@ import astropy.units as u
 import jax.numpy as jnp
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
+from jorbit.utils.keplerian import M_from_f
 
+from jorbit import Particle
 from jorbit.astrometry.transformations import (
     cartesian_to_elements,
     elements_to_cartesian,
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
+from jorbit.utils.states import barycentric_to_heliocentric, heliocentric_to_barycentric
 
 
 def test_elements_to_cartesian() -> None:
@@ -121,3 +124,130 @@ def test_inverses() -> None:
         omega=omega,
     )
     assert jnp.allclose(true_xs, converted_xs, atol=1e-15)
+
+
+def test_barycentric_to_heliocentric_cartesian() -> None:
+    """Test barycentric to heliocentric Cartesian conversion."""
+    epoch = Time(61000.0, format="mjd", scale="tdb")
+    obj = Horizons(
+        id="J35M00J",
+        location="500@10",
+        epochs=epoch.tdb.jd,
+    )
+    vecs = obj.vectors(refplane="earth")
+    horizons_x = jnp.squeeze(
+        jnp.array([vecs["x"].value, vecs["y"].value, vecs["z"].value])
+    )
+    horizons_v = jnp.squeeze(
+        jnp.array([vecs["vx"].value, vecs["vy"].value, vecs["vz"].value])
+    )
+
+    p = Particle.from_horizons(name="J35M00J", time=epoch)
+    jorbit_helio = barycentric_to_heliocentric(state=p.cartesian_state, time=epoch)
+
+    assert jnp.allclose(jorbit_helio["x_helio"][0], horizons_x, atol=1e-10)
+    assert jnp.allclose(jorbit_helio["v_helio"][0], horizons_v, atol=1e-10)
+
+
+def test_barycentric_to_heliocentric_keplerian() -> None:
+    """Test barycentric to heliocentric Keplerian conversion."""
+    epoch = Time(61000.0, format="mjd", scale="tdb")
+
+    obj = Horizons(
+        id="J35M00J",
+        location="500@10",
+        epochs=epoch.tdb.jd,
+    )
+    heliocentric_elements = obj.elements(refplane="ecliptic")
+    heliocentric_elements = jnp.array(
+        [
+            heliocentric_elements["a"],
+            heliocentric_elements["e"],
+            heliocentric_elements["incl"],
+            heliocentric_elements["Omega"],
+            heliocentric_elements["w"],
+            heliocentric_elements["M"],
+        ]
+    ).T
+
+    p = Particle.from_horizons(name="J35M00J", time=epoch)
+    jorbit_helio = barycentric_to_heliocentric(state=p.keplerian_state, time=epoch)
+    jorbit_helio = jnp.squeeze(
+        jnp.array(
+            [
+                jorbit_helio["a_helio"],
+                jorbit_helio["ecc_helio"],
+                jorbit_helio["inc_helio"],
+                jorbit_helio["Omega_helio"],
+                jorbit_helio["omega_helio"],
+                M_from_f(
+                    jorbit_helio["nu_helio"] * jnp.pi / 180.0, jorbit_helio["ecc_helio"]
+                )
+                * 180.0
+                / jnp.pi,
+            ]
+        )
+    )
+    difference = jorbit_helio - heliocentric_elements
+    assert jnp.allclose(difference, 0, atol=1e-10)
+
+
+def test_heliocentric_to_barycentric_cartesian() -> None:
+    """Test heliocentric to barycentric Cartesian conversion."""
+    epoch = Time(61000.0, format="mjd", scale="tdb")
+    obj = Horizons(
+        id="J35M00J",
+        location="500@10",
+        epochs=epoch.tdb.jd,
+    )
+    vecs = obj.vectors(refplane="earth")
+    horizons_x = jnp.squeeze(
+        jnp.array([vecs["x"].value, vecs["y"].value, vecs["z"].value])
+    )
+    horizons_v = jnp.squeeze(
+        jnp.array([vecs["vx"].value, vecs["vy"].value, vecs["vz"].value])
+    )
+
+    horizons_bary = heliocentric_to_barycentric(
+        {"x_helio": horizons_x, "v_helio": horizons_v}, epoch
+    )
+
+    p = Particle.from_horizons(name="J35M00J", time=epoch)
+
+    assert jnp.allclose(p.cartesian_state.x[0], horizons_bary.x, atol=1e-10)
+    assert jnp.allclose(p.cartesian_state.v[0], horizons_bary.v, atol=1e-10)
+
+
+def test_heliocentric_to_barycentric_keplerian() -> None:
+    """Test heliocentric to barycentric Keplerian conversion."""
+    epoch = Time(61000.0, format="mjd", scale="tdb")
+    obj = Horizons(
+        id="J35M00J",
+        location="500@10",
+        epochs=epoch.tdb.jd,
+    )
+    horizons_helio_elements = obj.elements(refplane="ecliptic")
+    horizons_helio_elements = {
+        "a_helio": horizons_helio_elements["a"][0],
+        "ecc_helio": horizons_helio_elements["e"][0],
+        "inc_helio": horizons_helio_elements["incl"][0],
+        "Omega_helio": horizons_helio_elements["Omega"][0],
+        "omega_helio": horizons_helio_elements["w"][0],
+        "nu_helio": horizons_helio_elements["nu"][0],
+    }
+    horizons_bary_elements = heliocentric_to_barycentric(
+        heliocentric_dict=horizons_helio_elements,
+        time=epoch,
+    )
+
+    p = Particle.from_horizons(name="J35M00J", time=epoch)
+    assert jnp.allclose(p.keplerian_state.semi, horizons_bary_elements.semi, atol=1e-10)
+    assert jnp.allclose(p.keplerian_state.ecc, horizons_bary_elements.ecc, atol=1e-10)
+    assert jnp.allclose(p.keplerian_state.inc, horizons_bary_elements.inc, atol=1e-10)
+    assert jnp.allclose(
+        p.keplerian_state.Omega, horizons_bary_elements.Omega, atol=1e-10
+    )
+    assert jnp.allclose(
+        p.keplerian_state.omega, horizons_bary_elements.omega, atol=1e-10
+    )
+    assert jnp.allclose(p.keplerian_state.nu, horizons_bary_elements.nu, atol=1e-10)
