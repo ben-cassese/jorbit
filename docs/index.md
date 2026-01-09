@@ -56,6 +56,7 @@ tutorials/fit_an_orbit.ipynb
 tutorials/deep_dive.ipynb
 tutorials/apophis_flyby.ipynb
 tutorials/general_n_body.ipynb
+tutorials/pick_an_integrator.ipynb
 ```
 
 

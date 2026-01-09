@@ -20,10 +20,20 @@ from jorbit.accelerations import (
     ppn_gravity,
 )
 from jorbit.astrometry.sky_projection import on_sky
+from jorbit.data.constants import Y4_C, Y4_D, Y6_C, Y6_D, Y8_C, Y8_D
 from jorbit.ephemeris.ephemeris import Ephemeris
-from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
+from jorbit.integrators import (
+    create_leapfrog_times,
+    ias15_evolve,
+    initialize_ias15_integrator_state,
+    leapfrog_evolve,
+)
 from jorbit.utils.horizons import get_observer_positions
-from jorbit.utils.states import IAS15IntegratorState, SystemState
+from jorbit.utils.states import (
+    IAS15IntegratorState,
+    LeapfrogIntegratorState,
+    SystemState,
+)
 
 
 class System:
@@ -41,6 +51,7 @@ class System:
         integrator: str = "ias15",
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
+        max_step_size: u.Quantity | None = None,
     ) -> None:
         """Initialize a System.
 
@@ -58,10 +69,10 @@ class System:
                 a jax.tree_util.Partial object that follows the same signature as the
                 acceleration functions in jorbit.accelerations.
             integrator (str):
-                The integrator to use for the particle. Defaults to "ias15", which is a
-                15th order adaptive step-size integrator. Currently IAS15 is the only
-                option- this is a vestige of previous experiments with Gauss-Jackson
-                integrators that we might return to someday.
+                The integrator to use for the particle. Choices are "ias15", which is a
+                15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
+                are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
+                step sizes. Defaults to "ias15".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -70,6 +81,13 @@ class System:
                 The latest time we expect to integrate the particle to. Defaults to
                 Time("2050-01-01"). Larger time windows will result in larger in-memory
                 ephemeris objects.
+            max_step_size (u.Quantity, optional):
+                The fixed step size to use for leapfrog integrators. Required if
+                integrator is "Y4", "Y6", or "Y8". Ignored if integrator is "ias15".
+                Note that this is the maximum step size; the actual step size may be
+                smaller to ensure that the particle lands exactly on the requested
+                output times, and that the step size may change if the spacing between
+                output times is not constant. Defaults to None.
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
@@ -96,7 +114,11 @@ class System:
 
         self.gravity = self._setup_acceleration_func(gravity)
 
-        self._integrator_state, self._integrator = self._setup_integrator()
+        self._integrator_state, self._integrator = self._setup_integrator(
+            integrator, max_step_size
+        )
+        self._integrator_method = integrator
+        self._max_step_size = max_step_size
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
@@ -151,10 +173,33 @@ class System:
 
         return acc_func
 
-    def _setup_integrator(self) -> tuple[IAS15IntegratorState, Callable]:
-        a0 = self.gravity(self._state)
-        integrator_state = initialize_ias15_integrator_state(a0)
-        integrator = jax.tree_util.Partial(ias15_evolve)
+    def _setup_integrator(
+        self, integrator: str, max_step_size: u.Quantity | None
+    ) -> tuple[IAS15IntegratorState | LeapfrogIntegratorState, Callable]:
+        if integrator == "ias15":
+            assert (
+                max_step_size is None
+            ), "max_step_size should not be provided for IAS15 integrator."
+            a0 = self.gravity(self._state)
+            integrator_state = initialize_ias15_integrator_state(a0)
+            integrator = jax.tree_util.Partial(ias15_evolve)
+        elif integrator in ["Y4", "Y6", "Y8"]:
+            assert (
+                max_step_size is not None
+            ), "Must provide max_step_size for leapfrog integrators."
+            dt = max_step_size.to(u.day).value
+            if integrator == "Y4":
+                c = Y4_C
+                d = Y4_D
+            elif integrator == "Y6":
+                c = Y6_C
+                d = Y6_D
+            elif integrator == "Y8":
+                c = Y8_C
+                d = Y8_D
+
+            integrator_state = LeapfrogIntegratorState(dt=dt, C=c, D=d)
+            integrator = jax.tree_util.Partial(leapfrog_evolve)
 
         return integrator_state, integrator
 
@@ -184,6 +229,16 @@ class System:
         if times.shape == ():
             times = jnp.array([times])
 
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            # For leapfrog, need to create intermediate times
+            times, inds = create_leapfrog_times(
+                t0=self._state.time,
+                times=times,
+                biggest_allowed_dt=self._integrator_state.dt,
+            )
+        else:
+            inds = jnp.arange(times.shape[0])
+
         positions, velocities, _final_system_state, _final_integrator_state = (
             _integrate(
                 times,
@@ -191,8 +246,10 @@ class System:
                 self.gravity,
                 self._integrator,
                 self._integrator_state,
+                inds,
             )
         )
+
         return positions, velocities
 
     def ephemeris(
@@ -226,6 +283,16 @@ class System:
         if times.shape == ():
             times = jnp.array([times])
 
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            # For leapfrog, need to create intermediate times
+            times, inds = create_leapfrog_times(
+                t0=self._state.time,
+                times=times,
+                biggest_allowed_dt=self._integrator_state.dt,
+            )
+        else:
+            inds = jnp.arange(times.shape[0])
+
         ras, decs = _ephem(
             times,
             self._state,
@@ -233,7 +300,9 @@ class System:
             self._integrator,
             self._integrator_state,
             observer_positions,
+            inds,
         )
+
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
 
@@ -244,12 +313,18 @@ def _integrate(
     acc_func: Callable,
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState,
+    relevant_inds: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
         state, acc_func, times, integrator_state
     )
 
-    return positions, velocities, final_system_state, final_integrator_state
+    return (
+        positions[relevant_inds],
+        velocities[relevant_inds],
+        final_system_state,
+        final_integrator_state,
+    )
 
 
 @jax.jit
@@ -260,9 +335,10 @@ def _ephem(
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState,
     observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
-        times, state, acc_func, integrator_func, integrator_state
+        times, state, acc_func, integrator_func, integrator_state, relevant_inds
     )
 
     def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:

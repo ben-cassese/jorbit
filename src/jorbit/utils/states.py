@@ -58,7 +58,7 @@ class KeplerianState:
     # astropy.time.Time objects, which wouldn't work in these dataclasses
     # but, in general, need to specify for the SystemState you get from .to_system()
     # to produce correct accelerations later
-    time: float = 2458849.5
+    time: float
 
     def to_cartesian(self) -> CartesianState:
         """Converts the Keplerian state to Cartesian coordinates."""
@@ -110,7 +110,7 @@ class CartesianState:
     v: jnp.ndarray
     acceleration_func_kwargs: dict
     # same warning as above
-    time: float = 2458849.5
+    time: float
 
     def to_keplerian(self) -> KeplerianState:
         """Converts the Cartesian state to Keplerian elements."""
@@ -165,6 +165,15 @@ class IAS15IntegratorState:
     a0: jnp.ndarray
     dt: float
     dt_last_done: float
+
+
+@chex.dataclass
+class LeapfrogIntegratorState:
+    """Contains the state of a leapfrog integrator."""
+
+    dt: float
+    C: jnp.ndarray
+    D: jnp.ndarray
 
 
 def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
