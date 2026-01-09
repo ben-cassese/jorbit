@@ -24,14 +24,20 @@ from jorbit.accelerations import (
 )
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
-from jorbit.data.constants import SPEED_OF_LIGHT
+from jorbit.data.constants import SPEED_OF_LIGHT, Y4_C, Y4_D, Y6_C, Y6_D, Y8_C, Y8_D
 from jorbit.ephemeris.ephemeris import Ephemeris
-from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
+from jorbit.integrators import (
+    create_leapfrog_times,
+    ias15_evolve,
+    initialize_ias15_integrator_state,
+    leapfrog_evolve,
+)
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
 from jorbit.utils.states import (
     CartesianState,
     IAS15IntegratorState,
     KeplerianState,
+    LeapfrogIntegratorState,
     SystemState,
 )
 
@@ -78,6 +84,7 @@ class Particle:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
+        max_step_size: u.Quantity | None = None,
     ) -> None:
         """Initialize a Particle object.
 
@@ -109,10 +116,10 @@ class Particle:
                 "newtonian planets", "newtonian solar system", "gr planets", and "gr
                 solar system".
             integrator (str):
-                The integrator to use for the particle. Defaults to "ias15", which is a
-                15th order adaptive step-size integrator. Currently IAS15 is the only
-                option- this is a vestige of previous experiments with Gauss-Jackson
-                integrators that we might return to someday.
+                The integrator to use for the particle. Choices are "ias15", which is a
+                15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
+                are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
+                step sizes. Defaults to "ias15".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -125,13 +132,19 @@ class Particle:
                 A seed for fitting the orbit of the particle. If None, a seed will be
                 generated from the observations if they exist. Otherwise, a circular
                 orbit with semi-major axis 2.5 AU will be used.
+            max_step_size (u.Quantity, optional):
+                The fixed step size to use for leapfrog integrators. Required if
+                integrator is "Y4", "Y6", or "Y8". Ignored if integrator is "ias15".
+                Note that this is the maximum step size; the actual step size may be
+                smaller to ensure that the particle lands exactly on the requested
+                output times, and that the step size may change if the spacing between
+                output times is not constant. Defaults to None.
         """
         self._observations = observations
         self._earliest_time = earliest_time
         self._latest_time = latest_time
 
         self.gravity = gravity
-        self._integrator = integrator
 
         (
             self._x,
@@ -145,7 +158,11 @@ class Particle:
 
         self.gravity = self._setup_acceleration_func(gravity)
 
-        self._integrator_state, self._integrator = self._setup_integrator()
+        self._integrator_state, self._integrator = self._setup_integrator(
+            integrator, max_step_size
+        )
+        self._integrator_method = integrator
+        self._max_step_size = max_step_size
 
         self._fit_seed = self._setup_fit_seed(fit_seed)
 
@@ -189,7 +206,7 @@ class Particle:
 
         assert time is not None, "Must provide an epoch for the particle"
         if isinstance(time, type(Time("2023-01-01"))):
-            time = time.tdb.jd
+            time = jnp.array(time.tdb.jd)
 
         if state is not None:
             assert x is None and v is None, "Cannot provide both state and x, v"
@@ -273,10 +290,33 @@ class Particle:
 
         return acc_func
 
-    def _setup_integrator(self) -> tuple:
-        a0 = self.gravity(self._cartesian_state.to_system())
-        integrator_state = initialize_ias15_integrator_state(a0)
-        integrator = jax.tree_util.Partial(ias15_evolve)
+    def _setup_integrator(
+        self, integrator: str, max_step_size: u.Quantity | None
+    ) -> tuple[IAS15IntegratorState | LeapfrogIntegratorState, Callable]:
+        if integrator == "ias15":
+            assert (
+                max_step_size is None
+            ), "max_step_size should not be provided for IAS15 integrator."
+
+            a0 = self.gravity(self._cartesian_state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
+            integrator = jax.tree_util.Partial(ias15_evolve)
+        elif integrator in ["Y4", "Y6", "Y8"]:
+            assert (
+                max_step_size is not None
+            ), "Must provide max_step_size for leapfrog integrators."
+            dt = max_step_size.to(u.day).value
+            if integrator == "Y4":
+                c = Y4_C
+                d = Y4_D
+            elif integrator == "Y6":
+                c = Y6_C
+                d = Y6_D
+            elif integrator == "Y8":
+                c = Y8_C
+                d = Y8_D
+            integrator_state = LeapfrogIntegratorState(dt=dt, C=c, D=d)
+            integrator = jax.tree_util.Partial(leapfrog_evolve)
 
         return integrator_state, integrator
 
@@ -318,20 +358,32 @@ class Particle:
         if self._observations is None:
             return None, None, None, None
 
+        if self._integrator_method == "ias15":
+            times = self._observations.times
+            inds = jnp.arange(len(self._observations.times))
+
+        elif self._integrator_method in ["Y4", "Y6", "Y8"]:
+            times, inds = create_leapfrog_times(
+                self._cartesian_state.time,
+                self._observations.times,
+                self._max_step_size,
+            )
+
         residuals = jax.tree_util.Partial(
             _residuals,
-            self._observations.times,
+            times,
             self.gravity,
             self._integrator,
             self._integrator_state,
             self._observations.observer_positions,
             self._observations.ra,
             self._observations.dec,
+            inds,
         )
 
         ll = jax.tree_util.Partial(
             _loglike,
-            self._observations.times,
+            times,
             self.gravity,
             self._integrator,
             self._integrator_state,
@@ -340,9 +392,10 @@ class Particle:
             self._observations.dec,
             self._observations.inv_cov_matrices,
             self._observations.cov_log_dets,
+            inds,
         )
 
-        # since we've gone with the while loop version of the integrator, can no
+        # since we've gone with the while loop version of the ias15 integrator, can no
         # longer use reverse mode. But, actually specifying forward mode everywhere is
         # annoying, so we're going to re-define a custom vjp for "reverse" mode that's
         # actually just forward mode
@@ -403,6 +456,7 @@ class Particle:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
+        max_step_size: u.Quantity | None = None,
     ) -> Particle:
         """Query JPL Horizons for an SSOs state at a given time and create a Particle object.
 
@@ -425,10 +479,10 @@ class Particle:
                 "newtonian planets", "newtonian solar system", "gr planets", and "gr
                 solar system".
             integrator (str):
-                The integrator to use for the particle. Defaults to "ias15", which is a
-                15th order adaptive step-size integrator. Currently IAS15 is the only
-                option- this is a vestige of previous experiments with Gauss-Jackson
-                integrators that we might return to someday.
+                The integrator to use for the particle. Choices are "ias15", which is a
+                15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
+                are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
+                step sizes. Defaults to "ias15".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -441,6 +495,13 @@ class Particle:
                 A seed for fitting the orbit of the particle. If None, a seed will be
                 generated from the observations if they exist. Otherwise, a circular
                 orbit with semi-major axis 2.5 AU will be used.
+            max_step_size (u.Quantity, optional):
+                The fixed step size to use for leapfrog integrators. Required if
+                integrator is "Y4", "Y6", or "Y8". Ignored if integrator is "ias15".
+                Note that this is the maximum step size; the actual step size may be
+                smaller to ensure that the particle lands exactly on the requested
+                output times, and that the step size may change if the spacing between
+                output times is not constant. Defaults to None.
 
         Returns:
             Particle:
@@ -461,6 +522,7 @@ class Particle:
             earliest_time=earliest_time,
             latest_time=latest_time,
             fit_seed=fit_seed,
+            max_step_size=max_step_size,
         )
 
     def integrate(
@@ -493,9 +555,19 @@ class Particle:
         if times.shape == ():
             times = jnp.array([times])
 
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
+        else:
+            inds = jnp.arange(times.shape[0])
+
         positions, velocities, _final_system_state, _final_integrator_state = (
             _integrate(
-                times, state, self.gravity, self._integrator, self._integrator_state
+                times,
+                state,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                inds,
             )
         )
         return positions[:, 0, :], velocities[:, 0, :]
@@ -540,6 +612,11 @@ class Particle:
         if times.shape == ():
             times = jnp.array([times])
 
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
+        else:
+            inds = jnp.arange(times.shape[0])
+
         ras, decs = _ephem(
             times,
             state,
@@ -547,6 +624,7 @@ class Particle:
             self._integrator,
             self._integrator_state,
             observer_positions,
+            inds,
         )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
@@ -608,7 +686,7 @@ class Particle:
                     RuntimeWarning,
                     stacklevel=2,
                 )
-
+            print("did it!")
             return Particle(
                 x=result.x[:3],
                 v=result.x[3:],
@@ -617,10 +695,11 @@ class Particle:
                 observations=self._observations,
                 name=self._name,
                 gravity=self.gravity,
-                integrator=self._integrator,
+                integrator=self._integrator_method,
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 fit_seed=self._fit_seed,
+                max_step_size=self._max_step_size,
             )
         else:
             raise ValueError("Failed to converge")
@@ -637,14 +716,25 @@ def _integrate(
     particle_state: CartesianState | KeplerianState,
     acc_func: Callable,
     integrator_func: Callable,
-    integrator_state: IAS15IntegratorState,
-) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
+    relevant_inds: jnp.ndarray,
+) -> tuple[
+    jnp.ndarray,
+    jnp.ndarray,
+    SystemState,
+    IAS15IntegratorState | LeapfrogIntegratorState,
+]:
     state = particle_state.to_system()
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
         state, acc_func, times, integrator_state
     )
 
-    return positions, velocities, final_system_state, final_integrator_state
+    return (
+        positions[relevant_inds],
+        velocities[relevant_inds],
+        final_system_state,
+        final_integrator_state,
+    )
 
 
 @jax.jit
@@ -653,11 +743,17 @@ def _ephem(
     particle_state: CartesianState | KeplerianState,
     acc_func: Callable,
     integrator_func: Callable,
-    integrator_state: IAS15IntegratorState,
+    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
     observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
-        times, particle_state, acc_func, integrator_func, integrator_state
+        times,
+        particle_state,
+        acc_func,
+        integrator_func,
+        integrator_state,
+        relevant_inds,
     )
 
     # # only one particle, so take the 0th particle. shape is (time, particles, 3)
@@ -673,7 +769,12 @@ def _ephem(
     _, (ras, decs) = jax.lax.scan(
         scan_func,
         None,
-        (positions[:, 0, :], velocities[:, 0, :], times, observer_positions),
+        (
+            positions[:, 0, :],
+            velocities[:, 0, :],
+            times[relevant_inds],
+            observer_positions,
+        ),
     )
 
     return ras, decs
@@ -684,10 +785,11 @@ def _residuals(
     times: jnp.ndarray,
     gravity: Callable,
     integrator: Callable,
-    integrator_state: IAS15IntegratorState,
+    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
     observer_positions: jnp.ndarray,
     ra: jnp.ndarray,
     dec: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
 ) -> jnp.ndarray:
     ras, decs = _ephem(
@@ -697,6 +799,7 @@ def _residuals(
         integrator,
         integrator_state,
         observer_positions,
+        relevant_inds,
     )
 
     xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
@@ -705,18 +808,19 @@ def _residuals(
 
 
 # note: this external jitted function does not have fwd mode autodiff enforced, will
-# break on reverse mode
+# break on reverse mode when using ias15
 @jax.jit
 def _loglike(
     times: jnp.ndarray,
     gravity: Callable,
     integrator: Callable,
-    integrator_state: IAS15IntegratorState,
+    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
     observer_positions: jnp.ndarray,
     ra: jnp.ndarray,
     dec: jnp.ndarray,
     inv_cov_matrices: jnp.ndarray,
     cov_log_dets: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
 ) -> float:
     xis_etas = _residuals(
@@ -727,6 +831,7 @@ def _loglike(
         observer_positions,
         ra,
         dec,
+        relevant_inds,
         particle_state,
     )
 

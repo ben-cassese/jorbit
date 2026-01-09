@@ -84,7 +84,10 @@ class System:
             max_step_size (u.Quantity, optional):
                 The fixed step size to use for leapfrog integrators. Required if
                 integrator is "Y4", "Y6", or "Y8". Ignored if integrator is "ias15".
-                Defaults to None.
+                Note that this is the maximum step size; the actual step size may be
+                smaller to ensure that the particle lands exactly on the requested
+                output times, and that the step size may change if the spacing between
+                output times is not constant. Defaults to None.
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
@@ -172,7 +175,7 @@ class System:
 
     def _setup_integrator(
         self, integrator: str, max_step_size: u.Quantity | None
-    ) -> tuple[IAS15IntegratorState, Callable]:
+    ) -> tuple[IAS15IntegratorState | LeapfrogIntegratorState, Callable]:
         if integrator == "ias15":
             assert (
                 max_step_size is None
@@ -233,6 +236,8 @@ class System:
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
+        else:
+            inds = jnp.arange(times.shape[0])
 
         positions, velocities, _final_system_state, _final_integrator_state = (
             _integrate(
@@ -241,12 +246,9 @@ class System:
                 self.gravity,
                 self._integrator,
                 self._integrator_state,
+                inds,
             )
         )
-
-        if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            positions = positions[inds]
-            velocities = velocities[inds]
 
         return positions, velocities
 
@@ -288,6 +290,8 @@ class System:
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
+        else:
+            inds = jnp.arange(times.shape[0])
 
         ras, decs = _ephem(
             times,
@@ -296,11 +300,8 @@ class System:
             self._integrator,
             self._integrator_state,
             observer_positions,
+            inds,
         )
-
-        if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            ras = ras[:, inds]
-            decs = decs[:, inds]
 
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
@@ -312,12 +313,18 @@ def _integrate(
     acc_func: Callable,
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState,
+    relevant_inds: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     positions, velocities, final_system_state, final_integrator_state = integrator_func(
         state, acc_func, times, integrator_state
     )
 
-    return positions, velocities, final_system_state, final_integrator_state
+    return (
+        positions[relevant_inds],
+        velocities[relevant_inds],
+        final_system_state,
+        final_integrator_state,
+    )
 
 
 @jax.jit
@@ -328,9 +335,10 @@ def _ephem(
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState,
     observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
-        times, state, acc_func, integrator_func, integrator_state
+        times, state, acc_func, integrator_func, integrator_state, relevant_inds
     )
 
     def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:

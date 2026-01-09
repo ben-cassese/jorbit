@@ -171,6 +171,10 @@ def create_leapfrog_times(
     step_times = jnp.array([])
     inds = jnp.array([])
     for jump in time_deltas:
+        if jump == 0:
+            step_times = jnp.concatenate([step_times, jnp.array([t0])])
+            inds = jnp.concatenate([inds, jnp.array([0])])
+            continue
         step_size = jnp.sign(jump) * jnp.min(
             jnp.abs(jnp.array([jump, biggest_allowed_dt]))
         )
