@@ -167,6 +167,15 @@ class IAS15IntegratorState:
     dt_last_done: float
 
 
+@chex.dataclass
+class LeapfrogIntegratorState:
+    """Contains the state of a leapfrog integrator."""
+
+    dt: float
+    C: jnp.ndarray
+    D: jnp.ndarray
+
+
 def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Helper to get the state vector of the Sun at a given time.
 
