@@ -187,6 +187,11 @@ class Particle:
         """Return the Keplerian state of the particle."""
         return self._keplerian_state
 
+    @property
+    def observations(self) -> Observations | None:
+        """Return the observations associated with the particle."""
+        return self._observations
+
     ###############
     # SETUP METHODS
     ###############
@@ -686,7 +691,6 @@ class Particle:
                     RuntimeWarning,
                     stacklevel=2,
                 )
-            print("did it!")
             return Particle(
                 x=result.x[:3],
                 v=result.x[3:],
