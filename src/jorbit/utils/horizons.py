@@ -10,12 +10,14 @@ import io
 from contextlib import contextmanager
 from typing import NamedTuple
 
+import astropy.units as u
 import jax.numpy as jnp
 import pandas as pd
 import requests
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
+from jorbit import Ephemeris
 from jorbit.data.observatory_codes import OBSERVATORY_CODES
 from jorbit.utils.mpc import packed_to_unpacked_designation
 
@@ -409,7 +411,9 @@ def horizons_bulk_astrometry_query(
         raise ValueError(f"Astrometry query failed: {e!s}") from e
 
 
-def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.ndarray:
+def get_observer_positions(
+    times: Time, observatories: str | list[str], de_ephemeris_version: str
+) -> jnp.ndarray:
     """A wrapper to retrieve the barycentric positions of an observer from the Horizons API.
 
     Args:
@@ -422,6 +426,15 @@ def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.n
             assumed to be a Horizons-interpretable code. Otherwise it will be compared
             to the list of observatory names in the jorbit.data.observatory_codes module
             and mapped to its appropriate code.
+        de_ephemeris_version (str):
+            The DE ephemeris version to use for the query. This is something of a hack-
+            Horizons is using something like DE440 by default, so if you want the
+            observer's position while assuming a different ephemeris (e.g. you're
+            pretending the Earth is in a different location than Horizons thinks it is),
+            you need to correct for the shift. This will apply a translation to align
+            the Earth-Moon barycenter between the requested ephemeris and DE440; it will
+            not perform any rotations or higher-order corrections. Accepts '440' or
+            '430'.
 
     Returns:
         jnp.ndarray:
@@ -472,4 +485,22 @@ def get_observer_positions(times: Time, observatories: str | list[str]) -> jnp.n
 
     inverse_indices = jnp.argsort(sort_indices)
     positions = emb_from_ssb[inverse_indices] - emb_from_observer[inverse_indices]
+
+    if de_ephemeris_version != "440":
+        eph_440 = Ephemeris(
+            ssos="default planets",
+            earliest_time=min(times) - 30 * u.day,
+            latest_time=max(times) + 30 * u.day,
+            de_ephemeris_version="440",
+        )
+        eph_430 = Ephemeris(
+            ssos="default planets",
+            earliest_time=min(times) - 30 * u.day,
+            latest_time=max(times) + 30 * u.day,
+            de_ephemeris_version="430",
+        )
+        earth_440 = eph_440.state(times)["earth"]
+        earth_430 = eph_430.state(times)["earth"]
+        delta_x = (earth_430["x"] - earth_440["x"]).value
+        positions += delta_x
     return positions

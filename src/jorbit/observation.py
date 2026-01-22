@@ -35,6 +35,7 @@ class Observations:
         times: Time | None = None,
         observatories: str | list[str] | None = None,
         astrometric_uncertainties: u.Quantity | None = None,
+        de_ephemeris_version: str | None = "440",
         mpc_file: str | None = None,
     ) -> None:
         """Initialize the Observations class.
@@ -51,6 +52,9 @@ class Observations:
             astrometric_uncertainties (u.Quantity | None):
                 The astrometric uncertainties of the observations. None if loading an
                 MPC file.
+            de_ephemeris_version (str | None):
+                Which version of the JPL DE ephemeris to use when calculating Earth's
+                position. Accepts either "440" or "430", default is "440".
             mpc_file (str | None):
                 The path to an MPC file containing the observations.
         """
@@ -58,6 +62,7 @@ class Observations:
         self._times = times
         self._observatories = observatories
         self._astrometric_uncertainties = astrometric_uncertainties
+        self._de_ephemeris_version = de_ephemeris_version
         self._mpc_file = mpc_file
 
         self._input_checks()
@@ -280,6 +285,7 @@ class Observations:
             observer_positions = get_observer_positions(
                 times=Time(times, format="jd", scale="tdb"),
                 observatories=observatories,
+                de_ephemeris_version=self._de_ephemeris_version,
             )
         else:
             observer_positions = observatories

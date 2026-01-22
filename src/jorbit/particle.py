@@ -621,7 +621,9 @@ class Particle:
                 time.
         """
         if isinstance(observer, str):
-            observer_positions = get_observer_positions(times, observer)
+            observer_positions = get_observer_positions(
+                times, observer, self._de_ephemeris_version
+            )
         else:
             observer_positions = observer
 

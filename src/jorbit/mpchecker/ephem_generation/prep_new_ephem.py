@@ -34,7 +34,11 @@ for i in tqdm(range(int(len(forward_times) / chunk_size) + 1)):
     end = (i + 1) * chunk_size
     if end > len(forward_times):
         end = len(forward_times)
-    forward_pos.append(get_observer_positions(forward_times[start:end], "500@399"))
+    forward_pos.append(
+        get_observer_positions(
+            forward_times[start:end], "500@399", de_ephemeris_version="440"
+        )
+    )
 
 reverse_pos = []
 for i in tqdm(range(int(len(reverse_times) / chunk_size) + 1)):
@@ -42,7 +46,11 @@ for i in tqdm(range(int(len(reverse_times) / chunk_size) + 1)):
     end = (i + 1) * chunk_size
     if end > len(reverse_times):
         end = len(reverse_times)
-    reverse_pos.append(get_observer_positions(reverse_times[start:end], "500@399"))
+    reverse_pos.append(
+        get_observer_positions(
+            reverse_times[start:end], "500@399", de_ephemeris_version="440"
+        )
+    )
 
 forward_pos = jnp.concatenate(forward_pos, axis=0)
 reverse_pos = jnp.concatenate(reverse_pos, axis=0)

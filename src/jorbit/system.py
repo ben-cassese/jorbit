@@ -48,6 +48,7 @@ class System:
         particles: list | None = None,
         state: SystemState | None = None,
         gravity: str | Callable = "default solar system",
+        de_ephemeris_version: str | None = "440",
         integrator: str = "ias15",
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
@@ -68,6 +69,10 @@ class System:
                 asteroids in the asteroids_de441/sb441-n16.bsp ephemeris. Can also be
                 a jax.tree_util.Partial object that follows the same signature as the
                 acceleration functions in jorbit.accelerations.
+            de_ephemeris_version (str | None):
+                Which version of the JPL DE ephemeris to use for perturber positions
+                when using one of the built-in gravity models. Accepts either "440" or
+                "430", default is "440".
             integrator (str):
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
@@ -91,6 +96,7 @@ class System:
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
+        self._de_ephemeris_version = de_ephemeris_version
 
         if state is None:
             assert particles is not None
@@ -274,7 +280,9 @@ class System:
                 its own light travel time correction applied individually.
         """
         if isinstance(observer, str):
-            observer_positions = get_observer_positions(times, observer)
+            observer_positions = get_observer_positions(
+                times, observer, self._de_ephemeris_version
+            )
         else:
             observer_positions = observer
 
