@@ -176,7 +176,9 @@ class LeapfrogIntegratorState:
     D: jnp.ndarray
 
 
-def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _get_sun_state(
+    time: Time, de_ephemeris_version: str = "440"
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Helper to get the state vector of the Sun at a given time.
 
     Uses the local copy of JPL DE440.
@@ -184,6 +186,9 @@ def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
     Args:
         time: astropy.time.Time
             The time at which to get the Sun's state.
+        de_ephemeris_version: str
+            The version of the JPL DE ephemeris to use. Defaults to "440", accepts
+            "430".
 
     Returns:
         tuple:
@@ -192,15 +197,18 @@ def _get_sun_state(time: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     eph = Ephemeris(
         ssos="default planets",
-        earliest_time=time - 10 * u.day,
-        latest_time=time + 10 * u.day,
+        earliest_time=time - 30 * u.day,
+        latest_time=time + 30 * u.day,
+        de_ephemeris_version=de_ephemeris_version,
     )
     sun_state = eph.state(time)["sun"]
     return sun_state
 
 
 def barycentric_to_heliocentric(
-    state: CartesianState | KeplerianState, time: Time
+    state: CartesianState | KeplerianState,
+    time: Time,
+    de_ephemeris_version: str = "440",
 ) -> dict:
     """Helper to compute heliocentric quantities from barycentric states.
 
@@ -212,6 +220,9 @@ def barycentric_to_heliocentric(
             The barycentric state to convert.
         time: astropy.time.Time
             The time at which to compute the heliocentric elements.
+        de_ephemeris_version: str
+            The version of the JPL DE ephemeris to use. Defaults to "440", accepts
+            "430".
 
     Returns:
         dict:
@@ -220,7 +231,7 @@ def barycentric_to_heliocentric(
             'a_helio', 'ecc_helio', 'inc_helio', 'Omega_helio', 'omega_helio', and
             'nu_helio'.
     """
-    sun_state = _get_sun_state(time)
+    sun_state = _get_sun_state(time=time, de_ephemeris_version=de_ephemeris_version)
 
     cart = state.to_cartesian()
     helio_x = cart.x - sun_state["x"].value
@@ -251,6 +262,7 @@ def barycentric_to_heliocentric(
 def heliocentric_to_barycentric(
     heliocentric_dict: dict,
     time: Time,
+    de_ephemeris_version: str = "440",
     acceleration_func_kwargs: dict = {"c2": SPEED_OF_LIGHT**2},
 ) -> CartesianState | KeplerianState:
     """Helper to compute barycentric quantities from heliocentric states.
@@ -266,6 +278,9 @@ def heliocentric_to_barycentric(
             'omega_helio', and 'nu_helio'.
         time: astropy.time.Time
             The time at which to compute the barycentric elements.
+        de_ephemeris_version: str
+            The version of the JPL DE ephemeris to use. Defaults to "440",
+            accepts "430".
         acceleration_func_kwargs: dict
             Additional arguments to associate with the final CartesianState or
             KeplerianState. Defaults to {"c2": SPEED_OF_LIGHT**2}.
@@ -275,7 +290,7 @@ def heliocentric_to_barycentric(
             The barycentric state. If the input dict had Cartesian quantities, returns a
             CartesianState. If the inputs were Keplerian, returns a KeplerianState.
     """
-    sun_state = _get_sun_state(time)
+    sun_state = _get_sun_state(time=time, de_ephemeris_version=de_ephemeris_version)
 
     if "x_helio" in heliocentric_dict:
         cart_x = heliocentric_dict["x_helio"] + sun_state["x"].value
@@ -301,7 +316,7 @@ def heliocentric_to_barycentric(
         state = CartesianState(
             x=cart_x,
             v=cart_v,
-            time=time,
+            time=time.tdb.jd,
             acceleration_func_kwargs=acceleration_func_kwargs,
         )
         return state.to_keplerian()
