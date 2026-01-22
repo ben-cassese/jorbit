@@ -203,3 +203,41 @@ def packed_to_unpacked_designation(code: str) -> str:
         return str(num)
 
     raise ValueError(f"Invalid MPC code format: {code}")
+
+
+def unpack_epoch(epoch_str: str) -> Time:
+    """Convert a packed epoch string from the MPCORB format to an astropy Time object."""
+    century = epoch_str[0]
+    if century == "I":
+        year_prefix = "18"
+    elif century == "J":
+        year_prefix = "19"
+    elif century == "K":
+        year_prefix = "20"
+    else:
+        raise ValueError(f"Unknown century code: {century}")
+
+    decade = epoch_str[1:3]
+
+    if epoch_str[3].isdigit():
+        month = epoch_str[3]
+    else:
+        month = str(ord(epoch_str[3].lower()) - ord("a") + 10)
+
+    if epoch_str[4].isdigit():
+        day = epoch_str[4]
+    else:
+        day = str(ord(epoch_str[4].lower()) - ord("a") + 10)
+
+    date = Time(
+        f"{year_prefix}{decade}-{month.zfill(2)}-{day.zfill(2)}",
+        format="iso",
+        scale="utc",
+    )
+
+    if len(epoch_str) == 5:
+        return date
+
+    elif len(epoch_str) > 5:
+        day_frac = float(epoch_str[5:])
+        return date + day_frac * u.day

@@ -14,6 +14,7 @@ from jorbit.mpchecker import (
 )
 from jorbit.utils.mpc import (
     packed_to_unpacked_designation,
+    unpack_epoch,
     unpacked_to_packed_designation,
 )
 
@@ -91,3 +92,13 @@ def test_nearest_asteroid_precompute() -> None:
         coord_table=coord_table,
         radius=2 * u.arcmin,
     )
+
+
+def test_packed_epoch_translator() -> None:
+    """Test that the conversion from packed epoch to astropy Time matches online docs."""
+    # examples from https://minorplanetcenter.net/iau/info/PackedDates.html
+    assert unpack_epoch("J9611") == Time("1996-01-01", format="iso", scale="utc")
+    assert unpack_epoch("J961A") == Time("1996-01-10", format="iso", scale="utc")
+    assert unpack_epoch("J969U") == Time("1996-09-30", format="iso", scale="utc")
+    assert unpack_epoch("J96A1") == Time("1996-10-01", format="iso", scale="utc")
+    assert unpack_epoch("K01AM") == Time("2001-10-22", format="iso", scale="utc")
