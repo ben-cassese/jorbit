@@ -1,6 +1,10 @@
 Changelog
 +++++++++
 
+**development version**
+
+- Added option to select DE ephemeris version (DE430 or DE440) when creating `Ephemeris` and `Particle` objects. Updated relevant tutorials/tests.
+
 **1.1.0 (01/2026)**
 
 - Added general N-body integration functionality and tutorial.

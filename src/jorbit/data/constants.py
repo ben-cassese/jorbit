@@ -69,6 +69,17 @@ HUGE_ASTEROID_EPHEMERIS_URL = (
 # also here's 441
 # "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de441.bsp"
 
+DE430_PLANET_EPHEMERIS_URL = (
+    "https://ssd.jpl.nasa.gov//ftp/eph/planets/bsp/de430_1850-2150.bsp"
+)
+"""The URL for the DE430 planet ephemeris."""
+
+DE430_ASTEROID_EPHEMERIS_URL = (
+    "https://ssd.jpl.nasa.gov//ftp/eph/small_bodies/asteroids_de430/ast343de430.bsp"
+)
+"""The URL for the DE430 asteroid ephemeris."""
+
+
 # These are NOT from the JPL ephemeris comments, and are in units of AU^3 / day^2
 # They are actually from https://ssd.jpl.nasa.gov/ftp/xfr/gm_Horizons.pck,
 # which lists Earth as apparently 1% different from its de440 and de441 value

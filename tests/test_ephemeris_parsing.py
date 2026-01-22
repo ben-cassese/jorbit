@@ -5,6 +5,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
+import pytest
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
@@ -117,3 +118,45 @@ def test_asteroids_ephemeris() -> None:
 
         assert (jnp.linalg.norm(x_err) * u.au) < 200 * u.km
         assert (jnp.linalg.norm(v_err) * u.au / u.day) < (2 * u.km / u.day)
+
+
+def test_ephemeris_date_bounds() -> None:
+    """Test that requesting times outside of the ephemeris bounds raises an error."""
+    eph = Ephemeris(
+        ssos="default planets",
+        earliest_time=Time("1900-01-01"),
+        latest_time=Time("2100-01-01"),
+    )
+
+    too_early = Time("1800-01-01")
+    too_late = Time("2200-01-01")
+    within_bounds = Time("2000-01-01")
+
+    assert eph.state(within_bounds)  # should not raise
+    with pytest.raises(ValueError):
+        eph.state(too_early)
+    with pytest.raises(ValueError):
+        eph.state(too_late)
+
+
+def test_de431_ephem() -> None:
+    """Test that the DE431 ephemeris can be loaded and roughly agrees with DE440."""
+    eph1 = Ephemeris(
+        ssos="default solar system",
+        de_ephemeris_version="440",
+    )
+    eph2 = Ephemeris(
+        ssos="default solar system",
+        de_ephemeris_version="430",
+    )
+
+    t0 = Time("2026-01-01")
+    state1 = eph1.state(t0)
+    state2 = eph2.state(t0)
+
+    for planet in state1:
+        x_err = jnp.linalg.norm(state1[planet]["x"] - state2[planet]["x"])
+        v_err = jnp.linalg.norm(state1[planet]["v"] - state2[planet]["v"])
+
+        assert (x_err * u.au) < 1e4 * u.km
+        assert (v_err * u.au / u.day) < 1 * u.m / u.s

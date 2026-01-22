@@ -18,6 +18,8 @@ from jorbit.data.constants import (
     ALL_PLANET_IDS,
     ALL_PLANET_LOG_GMS,
     ALL_PLANET_NAMES,
+    DE430_ASTEROID_EPHEMERIS_URL,
+    DE430_PLANET_EPHEMERIS_URL,
     DEFAULT_ASTEROID_EPHEMERIS_URL,
     DEFAULT_PLANET_EPHEMERIS_URL,
     LARGE_ASTEROID_IDS,
@@ -52,6 +54,7 @@ class Ephemeris:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         postprocessing_func: Callable | None = None,
+        de_ephemeris_version: str | None = "440",
     ) -> None:
         """Initialize the Ephemeris object.
 
@@ -74,11 +77,26 @@ class Ephemeris:
             postprocessing_func (Optional[Callable], optional):
                 Function for post-processing state vectors.
                 Defaults to None.
+            de_ephemeris_version (Optional[str], optional):
+                Version of the JPL DE ephemeris to use. Supported versions are '440'
+                and '430'. Defaults to '440'.
         """
+        if de_ephemeris_version == "440":
+            planet_ephem_file = DEFAULT_PLANET_EPHEMERIS_URL
+            asteroid_ephem_file = DEFAULT_ASTEROID_EPHEMERIS_URL
+        elif de_ephemeris_version == "430":
+            planet_ephem_file = DE430_PLANET_EPHEMERIS_URL
+            asteroid_ephem_file = DE430_ASTEROID_EPHEMERIS_URL
+        else:
+            raise ValueError(
+                f"Unsupported planet DE version: {de_ephemeris_version}. "
+                "Supported versions are '440' and '430'."
+            )
+
         if ssos == "default planets":
             ssos = [
                 {
-                    "ephem_file": DEFAULT_PLANET_EPHEMERIS_URL,
+                    "ephem_file": planet_ephem_file,
                     "names": ALL_PLANET_NAMES,
                     "targets": [ALL_PLANET_IDS[name] for name in ALL_PLANET_NAMES],
                     "centers": [0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0],
@@ -99,14 +117,14 @@ class Ephemeris:
         elif ssos == "default solar system":
             ssos = [
                 {
-                    "ephem_file": DEFAULT_PLANET_EPHEMERIS_URL,
+                    "ephem_file": planet_ephem_file,
                     "names": ALL_PLANET_NAMES,
                     "targets": [ALL_PLANET_IDS[name] for name in ALL_PLANET_NAMES],
                     "centers": [0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0],
                     "log_gms": ALL_PLANET_LOG_GMS,
                 },
                 {
-                    "ephem_file": DEFAULT_ASTEROID_EPHEMERIS_URL,
+                    "ephem_file": asteroid_ephem_file,
                     "names": LARGE_ASTEROID_NAMES,
                     "targets": [
                         LARGE_ASTEROID_IDS[name] for name in LARGE_ASTEROID_NAMES
@@ -171,6 +189,9 @@ class Ephemeris:
         # else:
         self.processor = EphemerisPostProcessor(self.ephs, postprocessing_func)
 
+        self.earliest_time = earliest_time
+        self.latest_time = latest_time
+
     def state(self, time: Time) -> dict:
         """Calculate the state vectors for solar system objects at the given time(s).
 
@@ -190,8 +211,23 @@ class Ephemeris:
                 - 'log_gm': Logarithmic GM value (float)
         """
         if time.shape == ():
+            if time < self.earliest_time or time > self.latest_time:
+                raise ValueError(
+                    f"Requested time {time.iso} ({time.scale}) is outside of "
+                    f"the previously requested ephemeris range "
+                    f"({self.earliest_time.iso}, {self.earliest_time.scale} to "
+                    f"{self.latest_time.iso}, ({self.latest_time.scale}))"
+                )
             x, v = self.processor.state(time.tdb.jd)
         else:
+            # if any time falls outside of the requested range, raise an error
+            if jnp.any((time < self.earliest_time) | (time > self.latest_time)):
+                raise ValueError(
+                    "One or more requested times are outside of previously requested "
+                    f"ephemeris range "
+                    f"({self.earliest_time.iso} ({self.earliest_time.scale}) to "
+                    f"{self.latest_time.iso} ({self.latest_time.scale}))"
+                )
             x, v = jax.vmap(self.processor.state)(time.tdb.jd)
         s = {}
         for n in range(len(self._combined_names)):
