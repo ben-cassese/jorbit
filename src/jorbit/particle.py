@@ -478,6 +478,7 @@ class Particle:
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
         max_step_size: u.Quantity | None = None,
+        de_ephemeris_version: str | None = "440",
     ) -> Particle:
         """Query JPL Horizons for an SSOs state at a given time and create a Particle object.
 
@@ -523,11 +524,21 @@ class Particle:
                 smaller to ensure that the particle lands exactly on the requested
                 output times, and that the step size may change if the spacing between
                 output times is not constant. Defaults to None.
+            de_ephemeris_version (str | None):
+                Which version of the JPL DE ephemeris to use for perturber positions.
+                When using `from_horizons` to pull an initial state, only DE440 is
+                supported. Defaults to "440", will error on anything else as a
+                safeguard.
 
         Returns:
             Particle:
                 A Particle object representing the SSO at the given time.
         """
+        if de_ephemeris_version != "440":
+            raise ValueError(
+                "Only DE440 ephemeris version is supported when pulling "
+                "an initial state from JPL Horizons."
+            )
         data = horizons_bulk_vector_query(target=name, center="500@0", times=time)
         x0 = jnp.array([data["x"][0], data["y"][0], data["z"][0]])
         v0 = jnp.array([data["vx"][0], data["vy"][0], data["vz"][0]])
