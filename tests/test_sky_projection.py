@@ -83,7 +83,7 @@ def setup() -> tuple[np.ndarray, np.ndarray]:
     observatories = np.array(observatories)[order]
 
     # get the observer positions
-    obs_pos = get_observer_positions(times, observatories)
+    obs_pos = get_observer_positions(times, observatories, de_ephemeris_version="440")
 
     eph = Ephemeris("default planets")
     acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)

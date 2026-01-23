@@ -226,7 +226,10 @@ def load_mpcorb() -> pl.DataFrame:
 
 
 def nearest_asteroid_helper(
-    coordinate: SkyCoord, times: Time, observer: str | None = None
+    coordinate: SkyCoord,
+    times: Time,
+    observer: str | None = None,
+    de_ephemeris_version: str | None = "440",
 ) -> tuple:
     """Pre-compute and load material for the nearest_asteroid function.
 
@@ -237,6 +240,9 @@ def nearest_asteroid_helper(
             The times of the observation.
         observer (str):
             The observatory observing the target. Optional, defaults to None.
+        de_ephemeris_version (str | None):
+            Which version of the JPL DE ephemeris to use when calculating observer
+            positions. Accepts either "440" or "430", default is "440".
 
     Returns:
         tuple[tuple, jnp.ndarray, jnp.ndarray|None]:
@@ -281,7 +287,9 @@ def nearest_asteroid_helper(
     if observer is not None:
         if observer == "geocentric":
             observer = "500@399"
-        observer_positions = get_observer_positions(times, observer)
+        observer_positions = get_observer_positions(
+            times, observer, de_ephemeris_version
+        )
     else:
         observer_positions = None
 
@@ -349,6 +357,7 @@ def extra_precision_calcs(
     relevant_mpcorb: pl.DataFrame,
     gravity: str = "newtonian solar system",
     observer_positions: jnp.ndarray | None = None,
+    de_ephemeris_version: str | None = "440",
 ) -> tuple:
     """Helper function for running N-body ephemeris calculations.
 
@@ -371,6 +380,9 @@ def extra_precision_calcs(
             Default is "newtonian solar system".
         observer_positions (jnp.ndarray):
             The observer positions. If None, they will be retrieved from Horizons.
+        de_ephemeris_version (str | None):
+            Which version of the JPL DE ephemeris to use when calculating observer
+            positions. Accepts either "440" or "430", default is "440".
 
     Returns:
         tuple:
@@ -420,7 +432,9 @@ def extra_precision_calcs(
 
     # might as well only query once, will need both for the ephemeris and phase function
     if observer_positions is None:
-        observer_positions = get_observer_positions(times, observer)
+        observer_positions = get_observer_positions(
+            times, observer, de_ephemeris_version
+        )
     coords = sy.ephemeris(times=times, observer=observer_positions)
     coord_table = Table(
         [[str(i) for i in list(relevant_mpcorb["Unpacked Name"])], coords],
