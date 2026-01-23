@@ -7,9 +7,12 @@ import jax.numpy as jnp
 import numpy as np
 import rebound
 import reboundx
+from astropy.time import Time
 
-from jorbit.accelerations.gr import ppn_gravity
+from jorbit import Ephemeris
+from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
 from jorbit.accelerations.newtonian import newtonian_gravity
+from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.utils.states import SystemState
 
 
@@ -127,3 +130,28 @@ def test_newton_agreement_w_rebound() -> None:
     _newton_agreement_w_rebound(
         n_tracer=10_000, n_massive=20, seed=4
     )  # this is about the limit of reasonable for rebound, but jorbit's can go up to >1e6 tracer particles
+
+
+def test_static_gr_convergence() -> None:
+    """Test that the fixed-iteration GR acceleration converges to the flexible iterations result."""
+    eph = Ephemeris()
+    massive_positions, massive_velocities = eph.processor.state(
+        Time("2026-01-01").tdb.jd
+    )
+    perturber_log_gms = eph.processor.log_gms
+
+    state = SystemState(
+        massive_positions=massive_positions,
+        massive_velocities=massive_velocities,
+        tracer_positions=massive_positions[0][None, :] + jnp.array([[1e-2, 0, 0]]),
+        tracer_velocities=jnp.array([[0.0, 0, 0]]),
+        log_gms=perturber_log_gms,
+        time=Time("2026-01-01").tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+    )
+
+    g1 = ppn_gravity(state)
+    g2 = static_ppn_gravity(state, 4)
+
+    diff = g1 - g2
+    assert jnp.allclose(diff, 0.0, atol=1e-14, rtol=1e-14)

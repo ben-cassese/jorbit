@@ -21,26 +21,9 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.utils.states import SystemState
 
 
-# equivalent of rebx_calculate_gr_full in reboundx
-@partial(jax.jit, static_argnames=["max_iterations"])
-def ppn_gravity(
-    inputs: SystemState,
-    max_iterations: int = 10,
-) -> jnp.ndarray:
-    """Compute the acceleration felt by each particle due to PPN gravity.
-
-    Equivalent of rebx_calculate_gr_full in reboundx.
-
-    Args:
-        inputs (SystemState): The instantaneous state of the system.
-        max_iterations (int): The maximum number of iterations for the GR corrections
-            to converge.
-
-    Returns:
-        jnp.ndarray:
-            The 3D acceleration felt by each particle, ordered by massive particles
-            first followed by tracer particles.
-    """
+@jax.jit
+def _first_steps(inputs: SystemState) -> tuple:
+    """Compute the common first steps for the PPN gravity calculation."""
     c2 = inputs.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
 
     # surrendering on the efficient handling of tracers vs. massive particles-
@@ -120,6 +103,31 @@ def ppn_gravity(
 
     a_const = jnp.sum(part1 + part2, axis=1, where=mask[:, :, None])
 
+    return c2, dx, gms, r, r3, mask, a_const, a_newt
+
+
+# equivalent of rebx_calculate_gr_full in reboundx
+@partial(jax.jit, static_argnames=["max_iterations"])
+def ppn_gravity(
+    inputs: SystemState,
+    max_iterations: int = 10,
+) -> jnp.ndarray:
+    """Compute the acceleration felt by each particle due to PPN gravity.
+
+    Equivalent of rebx_calculate_gr_full in reboundx.
+
+    Args:
+        inputs (SystemState): The instantaneous state of the system.
+        max_iterations (int): The maximum number of iterations for the GR corrections
+            to converge.
+
+    Returns:
+        jnp.ndarray:
+            The 3D acceleration felt by each particle, ordered by massive particles
+            first followed by tracer particles.
+    """
+    c2, dx, gms, r, r3, mask, a_const, a_newt = _first_steps(inputs)
+
     def iteration_step(a_curr: jnp.ndarray) -> jnp.ndarray:
         rdota = jnp.sum(dx * a_curr[None, :, :], axis=-1)  # (N, N)
         non_const = jnp.sum(
@@ -160,6 +168,57 @@ def ppn_gravity(
     final_carry, _ = jax.lax.scan(body_fn, init_carry, None, length=max_iterations)
 
     _, a_final, _ = final_carry
+
+    # Combine Newtonian and GR terms
+    a = a_newt + a_final
+
+    return a
+
+
+@partial(jax.jit, static_argnames=["fixed_iterations"])
+def static_ppn_gravity(inputs: SystemState, fixed_iterations: int = 3) -> jnp.ndarray:
+    """Compute the acceleration felt by each particle due to PPN gravity.
+
+    Similar to ppn_gravity, but uses a fixed number of iterations for the GR
+    corrections to converge and contains no logic branching.
+
+    Args:
+        inputs (SystemState): The instantaneous state of the system.
+        fixed_iterations (int):
+            The fixed number of iterations for the GR corrections to converge.
+            Default is 3.
+
+    Returns:
+        jnp.ndarray:
+            The 3D acceleration felt by each particle, ordered by massive particles
+            first followed by tracer particles.
+    """
+    c2, dx, gms, r, r3, mask, a_const, a_newt = _first_steps(inputs)
+
+    def iteration_step(a_curr: jnp.ndarray) -> jnp.ndarray:
+        rdota = jnp.sum(dx * a_curr[None, :, :], axis=-1)  # (N, N)
+        non_const = jnp.sum(
+            (gms[None, :, None] / (2.0 * c2))
+            * (
+                (dx * rdota[:, :, None] / r3[:, :, None])
+                + (7.0 * a_curr[None, :, :] / r[:, :, None])
+            ),
+            axis=1,
+            where=mask[:, :, None],
+        )
+
+        return non_const
+
+    # Initialize with constant terms
+    init_a = jnp.zeros_like(a_const)
+
+    # iterate:
+    def scan_fn(a_curr: jnp.ndarray, _: None) -> jnp.ndarray:
+        non_const = iteration_step(a_curr)
+        a_next = a_const + non_const
+        return a_next, None
+
+    a_final, _ = jax.lax.scan(scan_fn, init_a, None, length=fixed_iterations)
 
     # Combine Newtonian and GR terms
     a = a_newt + a_final
