@@ -10,7 +10,7 @@ from jorbit.accelerations.create_acc_funcs import (
     create_gr_ephemeris_acceleration_func,
     create_newtonian_ephemeris_acceleration_func,
 )
-from jorbit.accelerations.gr import ppn_gravity
+from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
 from jorbit.accelerations.grav_harmonics import grav_harmonics
 from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.accelerations.nongrav import nongrav_acceleration
@@ -24,4 +24,5 @@ __all__ = [
     "newtonian_gravity",
     "nongrav_acceleration",
     "ppn_gravity",
+    "static_ppn_gravity",
 ]
