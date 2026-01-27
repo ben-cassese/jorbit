@@ -491,6 +491,19 @@ IAS15_D = jnp.array(
 )
 """The D array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
+IAS15_D_MATRIX = jnp.array(
+    [
+        [1.0, IAS15_D[0], IAS15_D[1], IAS15_D[3], IAS15_D[6], IAS15_D[10], IAS15_D[15]],
+        [0.0, 1.0, IAS15_D[2], IAS15_D[4], IAS15_D[7], IAS15_D[11], IAS15_D[16]],
+        [0.0, 0.0, 1.0, IAS15_D[5], IAS15_D[8], IAS15_D[12], IAS15_D[17]],
+        [0.0, 0.0, 0.0, 1.0, IAS15_D[9], IAS15_D[13], IAS15_D[18]],
+        [0.0, 0.0, 0.0, 0.0, 1.0, IAS15_D[14], IAS15_D[19]],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, IAS15_D[20]],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ]
+)
+"""IAS15D in matrix form for batched operations."""
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""

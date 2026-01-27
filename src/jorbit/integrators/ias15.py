@@ -30,7 +30,7 @@ import jax.numpy as jnp
 from jorbit.data.constants import (
     EPSILON,
     IAS15_C,
-    IAS15_D,
+    IAS15_D_MATRIX,
     IAS15_H,
     IAS15_RR,
     IAS15_SAFETY_FACTOR,
@@ -287,45 +287,17 @@ def ias15_step(
     br = initial_integrator_state.br
 
     # always zero the compensation terms
-    csb = IAS15Helper(
-        p0=jnp.zeros_like(x0, dtype=jnp.float64),
-        p1=jnp.zeros_like(x0, dtype=jnp.float64),
-        p2=jnp.zeros_like(x0, dtype=jnp.float64),
-        p3=jnp.zeros_like(x0, dtype=jnp.float64),
-        p4=jnp.zeros_like(x0, dtype=jnp.float64),
-        p5=jnp.zeros_like(x0, dtype=jnp.float64),
-        p6=jnp.zeros_like(x0, dtype=jnp.float64),
-    )
+    csb = initialize_ias15_helper(x0.shape[0])
 
-    # get the initial g terms from the b terms
-    g.p0 = (
-        b.p6 * IAS15_D[15]
-        + b.p5 * IAS15_D[10]
-        + b.p4 * IAS15_D[6]
-        + b.p3 * IAS15_D[3]
-        + b.p2 * IAS15_D[1]
-        + b.p1 * IAS15_D[0]
-        + b.p0
-    )
-    g.p1 = (
-        b.p6 * IAS15_D[16]
-        + b.p5 * IAS15_D[11]
-        + b.p4 * IAS15_D[7]
-        + b.p3 * IAS15_D[4]
-        + b.p2 * IAS15_D[2]
-        + b.p1
-    )
-    g.p2 = (
-        b.p6 * IAS15_D[17]
-        + b.p5 * IAS15_D[12]
-        + b.p4 * IAS15_D[8]
-        + b.p3 * IAS15_D[5]
-        + b.p2
-    )
-    g.p3 = b.p6 * IAS15_D[18] + b.p5 * IAS15_D[13] + b.p4 * IAS15_D[9] + b.p3
-    g.p4 = b.p6 * IAS15_D[19] + b.p5 * IAS15_D[14] + b.p4
-    g.p5 = b.p6 * IAS15_D[20] + b.p5
-    g.p6 = b.p6
+    b_stack = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
+    g_stack = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b_stack)
+    g.p0 = g_stack[0]
+    g.p1 = g_stack[1]
+    g.p2 = g_stack[2]
+    g.p3 = g_stack[3]
+    g.p4 = g_stack[4]
+    g.p5 = g_stack[5]
+    g.p6 = g_stack[6]
 
     # set up the predictor-corrector loop
     def do_nothing(
