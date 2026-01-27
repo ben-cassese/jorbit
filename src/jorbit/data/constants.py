@@ -504,6 +504,12 @@ IAS15_D_MATRIX = jnp.array(
 )
 """IAS15D in matrix form for batched operations."""
 
+IAS15_BX_DENOMS = ((jnp.arange(7) + 2) * (jnp.arange(7) + 3))[::-1][:, None, None]
+"""The denominators for the coefficients in the polynomial to estimate x(t)."""
+
+IAS15_BV_DENOMS = (jnp.arange(7) + 2)[::-1][:, None, None]
+"""The denominators for the coefficients in the polynomial to estimate v(t)."""
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
