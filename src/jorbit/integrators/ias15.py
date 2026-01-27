@@ -299,6 +299,15 @@ def ias15_step(
     g.p5 = g_stack[5]
     g.p6 = g_stack[6]
 
+    # # other substep things that can be reused
+    # b_len = 7
+    # k = jnp.arange(b_len)
+    # b_x_denoms = ((k + 2) * (k + 3))[:, None, None]  # [6, 12, 20, 30, 42, 56, 72]
+    # b_v_denoms = (k + 2)[:, None, None]  # [2, 3, 4, 5, 6, 7, 8]
+    # b_stack = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
+    # init_cond_x_stack = jnp.stack((x0, v0 * dt, a0 * dt * dt / 2.0))
+    # init_cond_v_stack = jnp.stack((v0, a0 * dt))
+
     # set up the predictor-corrector loop
     def do_nothing(
         b: IAS15Helper,
@@ -322,7 +331,17 @@ def ias15_step(
         ################################################################################
         n = 1
         step_time = t_beginning + dt * IAS15_H[n]
+        # h = IAS15_H[n]
         # get the new acceleration value at predicted position
+        # x_coeffs = jnp.concatenate(
+        #     [init_cond_x_stack, (b_stack * dt * dt / b_x_denoms)], axis=0
+        # )[::-1]
+
+        # v_coeffs = jnp.concatenate(
+        #     [init_cond_v_stack, (b_stack * dt / b_v_denoms)], axis=0
+        # )[::-1]
+        # x = jnp.polyval(x_coeffs, h) - csx
+        # v = jnp.polyval(v_coeffs, h) - csv
         # fmt: off
         x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
         v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
