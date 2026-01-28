@@ -26,3 +26,18 @@ def _estimate_x_v_from_b(
     v *= h * h
     v += v0 + (a0 * dt) * h
     return x, v
+
+
+def _refine_sub_g(
+    at: jnp.ndarray, a0: jnp.ndarray, previous_gs: jnp.ndarray, r: jnp.ndarray
+) -> jnp.ndarray:
+
+    def scan_body(carry: tuple, scan_over: tuple) -> tuple:
+        result = carry
+        g, r_sub = scan_over
+        result = (result - g) * r_sub
+        return result, None
+
+    initial_result = (at - a0) * r[0]
+    new_g, _ = jax.lax.scan(scan_body, initial_result, (previous_gs, r[1:]))
+    return new_g

@@ -435,6 +435,14 @@ IAS15_RR = jnp.array(
 )
 """The RR array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
+IAS15_r1 = jnp.array([IAS15_RR[0]])
+IAS15_r2 = IAS15_RR[1 : 1 + 2]
+IAS15_r3 = IAS15_RR[3 : 3 + 3]
+IAS15_r4 = IAS15_RR[6 : 6 + 4]
+IAS15_r5 = IAS15_RR[10 : 10 + 5]
+IAS15_r6 = IAS15_RR[15 : 15 + 6]
+IAS15_r7 = IAS15_RR[21 : 21 + 7]
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_C = jnp.array(
     [
