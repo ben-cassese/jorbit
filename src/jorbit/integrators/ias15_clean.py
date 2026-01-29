@@ -110,6 +110,15 @@ def _step(
     csb = jnp.zeros_like(b)
     g = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b)
 
+    def _do_nothing(
+        b: jnp.ndarray,
+        csb: jnp.ndarray,
+        g: jnp.ndarray,
+        predictor_corrector_error: jnp.ndarray,
+    ) -> tuple:
+        jax.debug.print("just chillin")
+        return b, csb, g, predictor_corrector_error, predictor_corrector_error
+
     def _predictor_corrector_iteration(
         b: jnp.ndarray,
         csb: jnp.ndarray,
@@ -159,20 +168,29 @@ def _step(
 
         return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
 
-    def _scan_func(carry: tuple, scan_over: None) -> tuple:
-        b, csb, g, predictor_corrector_error = carry
-        b, csb, g, predictor_corrector_error, predictor_corrector_error_last = (
-            _predictor_corrector_iteration(b, csb, g, predictor_corrector_error)
-        )
-        _condition = (predictor_corrector_error < EPSILON) | (
+    def scan_func(carry: tuple, scan_over: int) -> tuple:
+        b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
+        jax.debug.print("pc err: {pc_err}", pc_err=predictor_corrector_error)
+
+        condition = (predictor_corrector_error < EPSILON) | (
             (scan_over > 2)
             & (predictor_corrector_error > predictor_corrector_error_last)
         )
-        return (b, csb, g, predictor_corrector_error), None
 
-    initial_carry = (b, csb, g, 1e300)
-    (b, csb, g, _predictor_corrector_error), _ = jax.lax.scan(
-        _scan_func, initial_carry, jnp.arange(3)
+        carry = jax.lax.cond(
+            condition,
+            _do_nothing,
+            _predictor_corrector_iteration,
+            b,
+            csb,
+            g,
+            predictor_corrector_error,
+        )
+        return carry, None
+
+    initial_carry = (b, csb, g, 1e300, 2.0)
+    (b, csb, g, _pc_error, _pc_error_last), _ = jax.lax.scan(
+        scan_func, initial_carry, jnp.arange(10)
     )
 
     dt_done = dt
