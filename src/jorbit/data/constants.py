@@ -40,7 +40,9 @@ using mpmath with 24 digits of precision.
 HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
 """Transpose of ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT."""
 
-EPSILON = jnp.array(jnp.finfo(jnp.float64).eps)
+EPSILON = float(
+    jnp.finfo(jnp.float64).eps
+)  # you get a simpler jaxpr if this is a float, not a jnp.array
 """Machine specific precision."""
 
 JORBIT_EPHEM_URL_BASE = (
@@ -435,13 +437,14 @@ IAS15_RR = jnp.array(
 )
 """The RR array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
-IAS15_r1 = jnp.array([IAS15_RR[0]])
-IAS15_r2 = IAS15_RR[1 : 1 + 2]
-IAS15_r3 = IAS15_RR[3 : 3 + 3]
-IAS15_r4 = IAS15_RR[6 : 6 + 4]
-IAS15_r5 = IAS15_RR[10 : 10 + 5]
-IAS15_r6 = IAS15_RR[15 : 15 + 6]
-IAS15_r7 = IAS15_RR[21 : 21 + 7]
+IAS15_r1 = 1 / jnp.array([IAS15_RR[0]])
+IAS15_r2 = 1 / IAS15_RR[1 : 1 + 2]
+IAS15_r3 = 1 / IAS15_RR[3 : 3 + 3]
+IAS15_r4 = 1 / IAS15_RR[6 : 6 + 4]
+IAS15_r5 = 1 / IAS15_RR[10 : 10 + 5]
+IAS15_r6 = 1 / IAS15_RR[15 : 15 + 6]
+IAS15_r7 = 1 / IAS15_RR[21 : 21 + 7]
+IAS15_sub_rs = (IAS15_r1, IAS15_r2, IAS15_r3, IAS15_r4, IAS15_r5, IAS15_r6, IAS15_r7)
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_C = jnp.array(
@@ -477,6 +480,7 @@ IAS15_c4 = jnp.concatenate([IAS15_C[3:6], jnp.array([1.0])])
 IAS15_c5 = jnp.concatenate([IAS15_C[6:10], jnp.array([1.0])])
 IAS15_c6 = jnp.concatenate([IAS15_C[10:15], jnp.array([1.0])])
 IAS15_c7 = jnp.concatenate([IAS15_C[15:21], jnp.array([1.0])])
+IAS15_sub_cs = (IAS15_c1, IAS15_c2, IAS15_c3, IAS15_c4, IAS15_c5, IAS15_c6, IAS15_c7)
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
