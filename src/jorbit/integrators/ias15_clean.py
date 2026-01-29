@@ -9,6 +9,7 @@ import jax.numpy as jnp
 
 from jorbit.data.constants import (
     EPSILON,
+    IAS15_BEZIER_COEFFS,
     IAS15_BV_DENOMS,
     IAS15_BX_DENOMS,
     IAS15_D_MATRIX,
@@ -106,6 +107,25 @@ def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.nd
     return dt_new
 
 
+def _predict_next_step(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+
+    def large_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+        e_new = jnp.zeros_like(e)
+        b_new = jnp.zeros_like(b)
+        return e_new, b_new
+
+    def reasonable_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+        qs = ratio ** jnp.arange(1, 8)
+        diff = b - e
+        e = jnp.einsum("i,ij,j...->i...", qs, IAS15_BEZIER_COEFFS, b)
+        b = e + diff
+        return e, b
+
+    e, b = jax.lax.cond(ratio > 20.0, large_ratio, reasonable_ratio, ratio, e, b)
+
+    return e, b
+
+
 def _step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
@@ -128,6 +148,7 @@ def _step(
     a0 = initial_integrator_state.a0
     csx = initial_integrator_state.csx
     csv = initial_integrator_state.csv
+    e = initial_integrator_state.e
     b = initial_integrator_state.b
 
     b = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
@@ -279,5 +300,10 @@ def _step(
         time=t_beginning + dt_done,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
+
+    ratio = next_dt / dt
+    # if we're rejecting the step, trick predict_next_step into not predicting
+    ratio = jnp.where(dt_done == 0.0, 100.0, ratio)
+    e, b = _predict_next_step(ratio, e, b)
 
     return new_system_state

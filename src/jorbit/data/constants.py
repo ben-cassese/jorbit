@@ -542,6 +542,19 @@ IAS15_SAFETY_FACTOR = 0.25
 IAS15_MIN_DT = 0.0
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
+IAS15_BEZIER_COEFFS = jnp.array(
+    [
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        [0.0, 1.0, 3.0, 6.0, 10.0, 15.0, 21.0],
+        [0.0, 0.0, 1.0, 4.0, 10.0, 20.0, 35.0],
+        [0.0, 0.0, 0.0, 1.0, 5.0, 15.0, 35.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 6.0, 21.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 7.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ]
+)
+"""The coefficients needed to predict the next b coefficients."""
+
 ################################################################################
 # experimental DoubleDouble IAS15 constants
 ################################################################################
