@@ -13,6 +13,8 @@ from jorbit.data.constants import (
     IAS15_BX_DENOMS,
     IAS15_D_MATRIX,
     IAS15_H,
+    IAS15_SAFETY_FACTOR,
+    IAS15_EPS_Modified,
     IAS15_sub_cs,
     IAS15_sub_rs,
 )
@@ -86,12 +88,31 @@ def _update_bs(
     return add_cs(current_bs, current_csbs, (g_diff[None, :] * c[:, None, None]))
 
 
+def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.ndarray:
+    tmp = a0 + jnp.sum(b, axis=0)
+    y2 = jnp.sum(tmp * tmp, axis=1)
+
+    coeffs_1 = jnp.arange(1, 8)
+    tmp = jnp.sum(coeffs_1[:, None, None] * b, axis=0)
+    y3 = jnp.sum(tmp * tmp, axis=1)
+
+    coeffs_2 = jnp.arange(2, 8) * jnp.arange(1, 7)
+    tmp = jnp.sum(coeffs_2[:, None, None] * b[1:], axis=0)
+    y4 = jnp.sum(tmp * tmp, axis=1)
+
+    timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
+    min_timescale2 = jnp.nanmin(timescale2)
+    dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
+    return dt_new
+
+
 def _step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     initial_integrator_state: IAS15IntegratorState,
 ) -> SystemState:
     t_beginning = initial_system_state.time
+
     M = initial_system_state.massive_positions.shape[0]
     x0 = jnp.concatenate(
         (initial_system_state.massive_positions, initial_system_state.tracer_positions)
@@ -102,8 +123,11 @@ def _step(
             initial_system_state.tracer_velocities,
         )
     )
+
     dt = initial_integrator_state.dt
     a0 = initial_integrator_state.a0
+    csx = initial_integrator_state.csx
+    csv = initial_integrator_state.csv
     b = initial_integrator_state.b
 
     b = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
@@ -116,7 +140,7 @@ def _step(
         g: jnp.ndarray,
         predictor_corrector_error: jnp.ndarray,
     ) -> tuple:
-        jax.debug.print("just chillin")
+        # jax.debug.print("just chillin")
         return b, csb, g, predictor_corrector_error, predictor_corrector_error
 
     def _predictor_corrector_iteration(
@@ -128,7 +152,6 @@ def _step(
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
         for n, h, c, r in zip(range(1, 8), IAS15_H[1:], IAS15_sub_cs, IAS15_sub_rs):
-            # jax.debug.print("Substep number: {n}", n=n)
             step_time = t_beginning + dt * h
             x, v = _estimate_x_v_from_b(
                 a0=a0,
@@ -138,7 +161,6 @@ def _step(
                 dt=dt,
                 bp=b[::-1],
             )
-            # jax.debug.print("x[0]: {x0}", x0=x[0])
             acc_state = SystemState(
                 massive_positions=x[:M],
                 massive_velocities=v[:M],
@@ -150,27 +172,22 @@ def _step(
             )
             at = acceleration_func(acc_state)
             g_old = g[n - 1]
-            # jax.debug.print("g_old[0]: {g0}", g0=g_old[0])
             g_new = _refine_sub_g(at, a0, g[: n - 1], r)
-            # jax.debug.print("g_new[0]: {g0}", g0=g_new[0])
             g_diff = g_new - g_old
             new_bs, new_csbs = _update_bs(b[:n], csb[:n], g_diff, c)
             g = g.at[n - 1].set(g_new)
             b = b.at[:n].set(new_bs)
             csb = csb.at[:n].set(new_csbs)
-            # jax.debug.print("b[0]: {b0}\n", b0=b[0])
 
         maxa = jnp.max(jnp.abs(at))
         maxb6tmp = jnp.max(jnp.abs(g_diff))
 
         predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
-        # jax.debug.print("---")
 
         return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
 
     def scan_func(carry: tuple, scan_over: int) -> tuple:
         b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
-        jax.debug.print("pc err: {pc_err}", pc_err=predictor_corrector_error)
 
         condition = (predictor_corrector_error < EPSILON) | (
             (scan_over > 2)
@@ -194,26 +211,65 @@ def _step(
     )
 
     dt_done = dt
-    csx = jnp.zeros_like(x0)
-    csv = jnp.zeros_like(v0)
-    # jax.debug.print("\nFinal b[0]: {b0}", b0=b[0])
-    x0, csx = add_cs(x0, csx, b[6] / 72.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[5] / 56.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[4] / 42.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[3] / 30.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[2] / 20.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[1] / 12.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, b[0] / 6.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, a0 / 2.0 * dt_done * dt_done)
-    x0, csx = add_cs(x0, csx, v0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[6] / 8.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[5] / 7.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[4] / 6.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[3] / 5.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[2] / 4.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[1] / 3.0 * dt_done)
-    v0, csv = add_cs(v0, csv, b[0] / 2.0 * dt_done)
-    v0, csv = add_cs(v0, csv, a0 * dt_done)
+    next_dt = _next_proposed_dt(a0, b, dt)
+
+    def step_too_ambitious(
+        x0: jnp.ndarray,
+        v0: jnp.ndarray,
+        csx: jnp.ndarray,
+        csv: jnp.ndarray,
+        dt_done: float,
+        next_dt: float,
+    ) -> tuple:
+        dt_done = 0.0
+        return x0, v0, dt_done, next_dt
+
+    def step_was_good(
+        x0: jnp.ndarray,
+        v0: jnp.ndarray,
+        csx: jnp.ndarray,
+        csv: jnp.ndarray,
+        dt_done: float,
+        next_dt: float,
+    ) -> tuple:
+        dt_neww = jnp.where(
+            next_dt / dt_done > 1 / IAS15_SAFETY_FACTOR,
+            dt_done / IAS15_SAFETY_FACTOR,
+            next_dt,
+        )
+
+        x0, csx = add_cs(x0, csx, b.p6 / 72.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p5 / 56.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p4 / 42.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p3 / 30.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p2 / 20.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p1 / 12.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b.p0 / 6.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, a0 / 2.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, v0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p6 / 8.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p5 / 7.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p4 / 6.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p3 / 5.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p2 / 4.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p1 / 3.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b.p0 / 2.0 * dt_done)
+        v0, csv = add_cs(v0, csv, a0 * dt_done)
+
+        return x0, v0, dt_done, dt_neww
+
+    x0, v0, dt_done, next_dt = jax.lax.cond(
+        jnp.abs(next_dt / dt_done) < IAS15_SAFETY_FACTOR,
+        step_too_ambitious,
+        step_was_good,
+        x0,
+        v0,
+        csx,
+        csv,
+        dt_done,
+        next_dt,
+    )
+
     new_system_state = SystemState(
         massive_positions=x0[:M],
         massive_velocities=v0[:M],
