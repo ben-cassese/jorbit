@@ -158,8 +158,6 @@ class IAS15IntegratorState:
     g: jnp.ndarray
     b: jnp.ndarray
     e: jnp.ndarray
-    br: jnp.ndarray
-    er: jnp.ndarray
     csx: jnp.ndarray
     csv: jnp.ndarray
     a0: jnp.ndarray
