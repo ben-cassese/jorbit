@@ -470,6 +470,13 @@ IAS15_C = jnp.array(
     ]
 )
 """The C array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+IAS15_c1 = jnp.array([1.0])
+IAS15_c2 = jnp.concatenate([IAS15_C[0:1], jnp.array([1.0])])
+IAS15_c3 = jnp.concatenate([IAS15_C[1:3], jnp.array([1.0])])
+IAS15_c4 = jnp.concatenate([IAS15_C[3:6], jnp.array([1.0])])
+IAS15_c5 = jnp.concatenate([IAS15_C[6:10], jnp.array([1.0])])
+IAS15_c6 = jnp.concatenate([IAS15_C[10:15], jnp.array([1.0])])
+IAS15_c7 = jnp.concatenate([IAS15_C[15:21], jnp.array([1.0])])
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
