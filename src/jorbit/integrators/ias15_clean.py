@@ -45,6 +45,7 @@ def add_cs(p: jnp.ndarray, csp: jnp.ndarray, inp: jnp.ndarray) -> tuple:
     return p, csp
 
 
+@jax.jit
 def _estimate_x_v_from_b(
     a0: jnp.ndarray,
     v0: jnp.ndarray,
@@ -65,6 +66,7 @@ def _estimate_x_v_from_b(
     return x, v
 
 
+@jax.jit
 def _refine_sub_g(
     at: jnp.ndarray, a0: jnp.ndarray, previous_gs: jnp.ndarray, r: jnp.ndarray
 ) -> jnp.ndarray:
@@ -80,6 +82,7 @@ def _refine_sub_g(
     return new_g
 
 
+@jax.jit
 def _update_bs(
     current_bs: jnp.ndarray,
     current_csbs: jnp.ndarray,
@@ -89,6 +92,7 @@ def _update_bs(
     return add_cs(current_bs, current_csbs, (g_diff[None, :] * c[:, None, None]))
 
 
+@jax.jit
 def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.ndarray:
     tmp = a0 + jnp.sum(b, axis=0)
     y2 = jnp.sum(tmp * tmp, axis=1)
@@ -107,25 +111,28 @@ def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.nd
     return dt_new
 
 
+@jax.jit
 def _predict_next_step(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
 
     def large_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
         e_new = jnp.zeros_like(e)
-        b_new = jnp.zeros_like(b)
-        return e_new, b_new
+        return e_new, b
 
     def reasonable_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
         qs = ratio ** jnp.arange(1, 8)
         diff = b - e
         e = jnp.einsum("i,ij,j...->i...", qs, IAS15_BEZIER_COEFFS, b)
-        b = e + diff
+        b = e - diff
         return e, b
 
-    e, b = jax.lax.cond(ratio > 20.0, large_ratio, reasonable_ratio, ratio, e, b)
+    e, b = jax.lax.cond(
+        ratio >= 1 / IAS15_SAFETY_FACTOR, large_ratio, reasonable_ratio, ratio, e, b
+    )
 
     return e, b
 
 
+@jax.jit
 def _step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
@@ -151,7 +158,6 @@ def _step(
     e = initial_integrator_state.e
     b = initial_integrator_state.b
 
-    b = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
     csb = jnp.zeros_like(b)
     g = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b)
 
@@ -253,31 +259,31 @@ def _step(
         dt_done: float,
         next_dt: float,
     ) -> tuple:
-        dt_neww = jnp.where(
+        safe_next_dt = jnp.where(
             next_dt / dt_done > 1 / IAS15_SAFETY_FACTOR,
             dt_done / IAS15_SAFETY_FACTOR,
             next_dt,
         )
 
-        x0, csx = add_cs(x0, csx, b.p6 / 72.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p5 / 56.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p4 / 42.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p3 / 30.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p2 / 20.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p1 / 12.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p0 / 6.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[6] / 72.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[5] / 56.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[4] / 42.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[3] / 30.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[2] / 20.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[1] / 12.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[0] / 6.0 * dt_done * dt_done)
         x0, csx = add_cs(x0, csx, a0 / 2.0 * dt_done * dt_done)
         x0, csx = add_cs(x0, csx, v0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p6 / 8.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p5 / 7.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p4 / 6.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p3 / 5.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p2 / 4.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p1 / 3.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p0 / 2.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[6] / 8.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[5] / 7.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[4] / 6.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[3] / 5.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[2] / 4.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[1] / 3.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[0] / 2.0 * dt_done)
         v0, csv = add_cs(v0, csv, a0 * dt_done)
 
-        return x0, v0, dt_done, dt_neww
+        return x0, v0, dt_done, safe_next_dt
 
     x0, v0, dt_done, next_dt = jax.lax.cond(
         jnp.abs(next_dt / dt_done) < IAS15_SAFETY_FACTOR,
@@ -301,9 +307,23 @@ def _step(
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 
-    ratio = next_dt / dt
+    ratio = next_dt / dt_done
+    # ratio = 100 # temporarily disable prediction
     # if we're rejecting the step, trick predict_next_step into not predicting
     ratio = jnp.where(dt_done == 0.0, 100.0, ratio)
-    e, b = _predict_next_step(ratio, e, b)
+    pred_e, pred_b = _predict_next_step(ratio, e, b)
 
-    return new_system_state
+    new_integrator_state = IAS15IntegratorState(
+        g=g,
+        b=b,
+        e=e,
+        csx=csx,
+        csv=csv,
+        a0=acceleration_func(new_system_state),
+        dt=next_dt,
+        dt_last_done=dt_done,
+        er=pred_e,
+        br=pred_b,
+    )
+
+    return new_system_state, new_integrator_state
