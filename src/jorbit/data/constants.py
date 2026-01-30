@@ -40,7 +40,9 @@ using mpmath with 24 digits of precision.
 HORIZONS_ECLIPTIC_TO_ICRS_ROT_MAT = ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT.T
 """Transpose of ICRS_TO_HORIZONS_ECLIPTIC_ROT_MAT."""
 
-EPSILON = jnp.array(jnp.finfo(jnp.float64).eps)
+EPSILON = float(
+    jnp.finfo(jnp.float64).eps
+)  # you get a simpler jaxpr if this is a float, not a jnp.array
 """Machine specific precision."""
 
 JORBIT_EPHEM_URL_BASE = (
@@ -260,129 +262,6 @@ PERTURBER_PACKED_DESIGNATIONS = [
 """The packed designations of the 16 asteroid perturbers + Pluto."""
 
 ################################################################################
-# Yoshida constants.
-
-# No longer ever used now that we've removed the high order leapfrog integrator.
-################################################################################
-
-# # Taken from Section 4 of Yoshida 1990
-# # DOI: 10.1016/0375-9601(90)90092-3
-# Y4_Ws = jnp.array([1 / (2 - 2 ** (1 / 3))])
-
-# # Taken from Table 1 of Yoshida 1990
-# # DOI: 10.1016/0375-9601(90)90092-3
-# Y6_Ws = jnp.array([-0.117767998417887e1, 0.23557321335935, 0.78451361047756])
-
-# # Taken from Table 2 of Yoshida 1990
-# # DOI: 10.1016/0375-9601(90)90092-3
-# Y8_Ws = jnp.array(
-#     [
-#         0.102799849391985e0,
-#         -0.196061023297549e1,
-#         0.193813913762276e1,
-#         -0.158240635368243e0,
-#         -0.144485223686048e1,
-#         0.253693336566229e0,
-#         0.914844246229740e0,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y4_C = jnp.array(
-#     [
-#         0.675603595979828817023843904,
-#         -0.17560359597982881702384390,
-#         -0.17560359597982881702384390,
-#         0.675603595979828817023843904,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y4_D = jnp.array(
-#     [
-#         1.351207191959657634047687808,
-#         -1.70241438391931526809537562,
-#         1.351207191959657634047687808,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y6_C = jnp.array(
-#     [
-#         0.392256805238779981959140741,
-#         0.510043411918454980824577660,
-#         -0.47105338540976005035076923,
-#         0.068753168252525087567050832,
-#         0.068753168252525087567050832,
-#         -0.47105338540976005035076923,
-#         0.510043411918454980824577660,
-#         0.392256805238779981959140741,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y6_D = jnp.array(
-#     [
-#         0.78451361047755996391828148,
-#         0.23557321335934999773087383,
-#         -1.1776799841788700984324123,
-#         1.31518632068392027356651397,
-#         -1.1776799841788700984324123,
-#         0.23557321335934999773087383,
-#         0.78451361047755996391828148,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y8_C = jnp.array(
-#     [
-#         0.457422123114870016191702006,
-#         0.584268791397984516011732125,
-#         -0.59557945014712546094592937,
-#         -0.80154643611436146577453598,
-#         0.889949251127258450511092746,
-#         -0.01123554767636503193273256,
-#         -0.92890519179175248809521292,
-#         0.905626460089491464033883972,
-#         0.905626460089491464033883972,
-#         -0.92890519179175248809521292,
-#         -0.01123554767636503193273256,
-#         0.889949251127258450511092746,
-#         -0.80154643611436146577453598,
-#         -0.59557945014712546094592937,
-#         0.584268791397984516011732125,
-#         0.457422123114870016191702006,
-#     ]
-# )
-
-# # Created using the Decimal version of
-# # jorbit.utils.generate_coefficients.create_yoshida_coeffs
-# Y8_D = jnp.array(
-#     [
-#         0.91484424622974003238340401,
-#         0.25369333656622899964006023,
-#         -1.4448522368604799215319189,
-#         -0.1582406353682430100171529,
-#         1.93813913762275991103933847,
-#         -1.9606102329754899749048036,
-#         0.10279984939198499871437775,
-#         1.70845307078699792935339019,
-#         0.10279984939198499871437775,
-#         -1.9606102329754899749048036,
-#         1.93813913762275991103933847,
-#         -0.1582406353682430100171529,
-#         -1.4448522368604799215319189,
-#         0.25369333656622899964006023,
-#         0.91484424622974003238340401,
-#     ]
-# )
-
-################################################################################
 # IAS15 constants
 ################################################################################
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
@@ -435,6 +314,15 @@ IAS15_RR = jnp.array(
 )
 """The RR array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
+IAS15_r1 = 1 / jnp.array([IAS15_RR[0]])
+IAS15_r2 = 1 / IAS15_RR[1 : 1 + 2]
+IAS15_r3 = 1 / IAS15_RR[3 : 3 + 3]
+IAS15_r4 = 1 / IAS15_RR[6 : 6 + 4]
+IAS15_r5 = 1 / IAS15_RR[10 : 10 + 5]
+IAS15_r6 = 1 / IAS15_RR[15 : 15 + 6]
+IAS15_r7 = 1 / IAS15_RR[21 : 21 + 7]
+IAS15_sub_rs = (IAS15_r1, IAS15_r2, IAS15_r3, IAS15_r4, IAS15_r5, IAS15_r6, IAS15_r7)
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_C = jnp.array(
     [
@@ -462,6 +350,14 @@ IAS15_C = jnp.array(
     ]
 )
 """The C array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+IAS15_c1 = jnp.array([1.0])
+IAS15_c2 = jnp.concatenate([IAS15_C[0:1], jnp.array([1.0])])
+IAS15_c3 = jnp.concatenate([IAS15_C[1:3], jnp.array([1.0])])
+IAS15_c4 = jnp.concatenate([IAS15_C[3:6], jnp.array([1.0])])
+IAS15_c5 = jnp.concatenate([IAS15_C[6:10], jnp.array([1.0])])
+IAS15_c6 = jnp.concatenate([IAS15_C[10:15], jnp.array([1.0])])
+IAS15_c7 = jnp.concatenate([IAS15_C[15:21], jnp.array([1.0])])
+IAS15_sub_cs = (IAS15_c1, IAS15_c2, IAS15_c3, IAS15_c4, IAS15_c5, IAS15_c6, IAS15_c7)
 
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
@@ -491,6 +387,25 @@ IAS15_D = jnp.array(
 )
 """The D array from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
+IAS15_D_MATRIX = jnp.array(
+    [
+        [1.0, IAS15_D[0], IAS15_D[1], IAS15_D[3], IAS15_D[6], IAS15_D[10], IAS15_D[15]],
+        [0.0, 1.0, IAS15_D[2], IAS15_D[4], IAS15_D[7], IAS15_D[11], IAS15_D[16]],
+        [0.0, 0.0, 1.0, IAS15_D[5], IAS15_D[8], IAS15_D[12], IAS15_D[17]],
+        [0.0, 0.0, 0.0, 1.0, IAS15_D[9], IAS15_D[13], IAS15_D[18]],
+        [0.0, 0.0, 0.0, 0.0, 1.0, IAS15_D[14], IAS15_D[19]],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, IAS15_D[20]],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ]
+)
+"""IAS15D in matrix form for batched operations."""
+
+IAS15_BX_DENOMS = ((jnp.arange(7) + 2) * (jnp.arange(7) + 3))[::-1][:, None, None]
+"""The denominators for the coefficients in the polynomial to estimate x(t)."""
+
+IAS15_BV_DENOMS = (jnp.arange(7) + 2)[::-1][:, None, None]
+"""The denominators for the coefficients in the polynomial to estimate v(t)."""
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_EPSILON = 10 ** (-9)
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
@@ -503,6 +418,19 @@ IAS15_SAFETY_FACTOR = 0.25
 
 IAS15_MIN_DT = 0.0
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+
+IAS15_BEZIER_COEFFS = jnp.array(
+    [
+        [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+        [0.0, 1.0, 3.0, 6.0, 10.0, 15.0, 21.0],
+        [0.0, 0.0, 1.0, 4.0, 10.0, 20.0, 35.0],
+        [0.0, 0.0, 0.0, 1.0, 5.0, 15.0, 35.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 6.0, 21.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 7.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    ]
+)
+"""The coefficients needed to predict the next b coefficients."""
 
 ################################################################################
 # experimental DoubleDouble IAS15 constants
