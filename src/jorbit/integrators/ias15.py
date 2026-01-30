@@ -1,12 +1,11 @@
 """A JAX implementation of the IAS15 integrator.
 
 This is a pythonized/jaxified version of the IAS15 integrator from Rein & Spiegel (2015)
-(DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND. It follows the
-implementation found in the REBOUND source as closely as possible: for a slightly more
-JAX-friendly version, see the `iasnn_dd_prec.py` module for a full rewrite.
+(DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND. It used to follow the
+implementation found in the REBOUND source as closely as possible; see < v1.2 for that.
 
 The original code is available on `github <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_.
-Accessed Summer 2023, re-visited Fall 2024.
+Accessed Summer 2023, re-visited Fall 2024. Refactored early 2026.
 
 Many thanks to the REBOUND developers for their work on this integrator, and for making it open source!
 """
@@ -14,7 +13,7 @@ Many thanks to the REBOUND developers for their work on this integrator, and for
 # This is a pythonized/jaxified version of the IAS15 integrator from
 # Rein & Spiegel (2015) (DOI: 10.1093/mnras/stu2164), currently implemented in REBOUND.
 # The original code is available at https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
-# Accessed Summer 2023, re-visited Fall 2024.
+# Accessed Summer 2023, re-visited Fall 2024. Refactored early 2026.
 
 # Many thanks to the REBOUND developers for their work on this integrator,
 # and for making it open source!
@@ -24,55 +23,21 @@ import jax
 jax.config.update("jax_enable_x64", True)
 from collections.abc import Callable
 
-import chex
 import jax.numpy as jnp
 
 from jorbit.data.constants import (
     EPSILON,
-    IAS15_C,
+    IAS15_BEZIER_COEFFS,
+    IAS15_BV_DENOMS,
+    IAS15_BX_DENOMS,
     IAS15_D_MATRIX,
     IAS15_H,
-    IAS15_RR,
     IAS15_SAFETY_FACTOR,
     IAS15_EPS_Modified,
+    IAS15_sub_cs,
+    IAS15_sub_rs,
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
-
-
-@chex.dataclass
-class IAS15Helper:
-    """A chex.dataclass that acts like the reb_dp7 struct in rebound."""
-
-    # the equivalent of the reb_dp7 struct in rebound, but obviously without pointers
-    p0: jnp.ndarray
-    p1: jnp.ndarray
-    p2: jnp.ndarray
-    p3: jnp.ndarray
-    p4: jnp.ndarray
-    p5: jnp.ndarray
-    p6: jnp.ndarray
-
-
-def initialize_ias15_helper(n_particles: int) -> IAS15Helper:
-    """Initializes the IAS15Helper dataclass with zeros.
-
-    Args:
-        n_particles (int):
-            The number of particles.
-
-    Returns:
-        IAS15Helper:
-            An instance of the IAS15Helper dataclass with zeros.
-    """
-    return IAS15Helper(
-        p0=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p1=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p2=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p3=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p4=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p5=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-        p6=jnp.zeros((n_particles, 3), dtype=jnp.float64),
-    )
 
 
 def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
@@ -88,11 +53,9 @@ def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
     """
     n_particles = a0.shape[0]
     return IAS15IntegratorState(
-        g=initialize_ias15_helper(n_particles),
-        b=initialize_ias15_helper(n_particles),
-        e=initialize_ias15_helper(n_particles),
-        br=initialize_ias15_helper(n_particles),
-        er=initialize_ias15_helper(n_particles),
+        g=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
+        b=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
+        e=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
         csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         a0=a0,
@@ -125,118 +88,90 @@ def add_cs(p: jnp.ndarray, csp: jnp.ndarray, inp: jnp.ndarray) -> tuple:
 
 
 @jax.jit
-def predict_next_step(ratio: jnp.ndarray, _e: IAS15Helper, _b: IAS15Helper) -> tuple:
-    """Predicts the next b coefficients for the IAS15 integrator.
+def _estimate_x_v_from_b(
+    a0: jnp.ndarray,
+    v0: jnp.ndarray,
+    x0: jnp.ndarray,
+    h: jnp.ndarray,
+    dt: jnp.ndarray,
+    bp: jnp.ndarray,  # remember to flip it!
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    xcoeffs = bp * dt * dt / IAS15_BX_DENOMS
+    x, _ = jax.lax.scan(lambda y, _p: (y * h + _p, None), jnp.zeros_like(x0), xcoeffs)
+    x *= h * h * h
+    x += (v0 * dt) * h + (a0 * dt * dt / 2.0) * h * h + x0
 
-    Args:
-        ratio (float):
-            The ratio of the current step size to the previous step size.
-        _e (IAS15Helper):
-            The current error terms.
-        _b (IAS15Helper):
-            The current b terms.
+    vcoeffs = bp * dt / IAS15_BV_DENOMS
+    v, _ = jax.lax.scan(lambda y, _p: (y * h + _p, None), jnp.zeros_like(x0), vcoeffs)
+    v *= h * h
+    v += v0 + (a0 * dt) * h
+    return x, v
 
-    Returns:
-        tuple:
-            The predicted error and b terms.
-    """
-    e = IAS15Helper(
-        p0=jnp.zeros_like(_e.p0, dtype=jnp.float64),
-        p1=jnp.zeros_like(_e.p1, dtype=jnp.float64),
-        p2=jnp.zeros_like(_e.p2, dtype=jnp.float64),
-        p3=jnp.zeros_like(_e.p3, dtype=jnp.float64),
-        p4=jnp.zeros_like(_e.p4, dtype=jnp.float64),
-        p5=jnp.zeros_like(_e.p5, dtype=jnp.float64),
-        p6=jnp.zeros_like(_e.p6, dtype=jnp.float64),
-    )
-    b = IAS15Helper(
-        p0=jnp.zeros_like(_b.p0, dtype=jnp.float64),
-        p1=jnp.zeros_like(_b.p1, dtype=jnp.float64),
-        p2=jnp.zeros_like(_b.p2, dtype=jnp.float64),
-        p3=jnp.zeros_like(_b.p3, dtype=jnp.float64),
-        p4=jnp.zeros_like(_b.p4, dtype=jnp.float64),
-        p5=jnp.zeros_like(_b.p5, dtype=jnp.float64),
-        p6=jnp.zeros_like(_b.p6, dtype=jnp.float64),
-    )
 
-    def large_ratio(ratio: jnp.ndarray, er: IAS15Helper, br: IAS15Helper) -> tuple:
+@jax.jit
+def _refine_sub_g(
+    at: jnp.ndarray, a0: jnp.ndarray, previous_gs: jnp.ndarray, r: jnp.ndarray
+) -> jnp.ndarray:
+
+    def scan_body(carry: tuple, scan_over: tuple) -> tuple:
+        result = carry
+        g, r_sub = scan_over
+        result = (result - g) * r_sub
+        return result, None
+
+    initial_result = (at - a0) * r[0]
+    new_g, _ = jax.lax.scan(scan_body, initial_result, (previous_gs, r[1:]))
+    return new_g
+
+
+@jax.jit
+def _update_bs(
+    current_bs: jnp.ndarray,
+    current_csbs: jnp.ndarray,
+    g_diff: jnp.ndarray,
+    c: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    return add_cs(current_bs, current_csbs, (g_diff[None, :] * c[:, None, None]))
+
+
+@jax.jit
+def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.ndarray:
+    tmp = a0 + jnp.sum(b, axis=0)
+    y2 = jnp.sum(tmp * tmp, axis=1)
+
+    coeffs_1 = jnp.arange(1, 8)
+    tmp = jnp.sum(coeffs_1[:, None, None] * b, axis=0)
+    y3 = jnp.sum(tmp * tmp, axis=1)
+
+    coeffs_2 = jnp.arange(2, 8) * jnp.arange(1, 7)
+    tmp = jnp.sum(coeffs_2[:, None, None] * b[1:], axis=0)
+    y4 = jnp.sum(tmp * tmp, axis=1)
+
+    timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
+    min_timescale2 = jnp.nanmin(timescale2)
+    dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
+    return dt_new
+
+
+@jax.jit
+def _predict_next_step(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+
+    def large_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+        e_new = jnp.zeros_like(e)
+        return e_new, b
+
+    def reasonable_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+        qs = ratio ** jnp.arange(1, 8)
+        diff = b - e
+        e = jnp.einsum("i,ij,j...->i...", qs, IAS15_BEZIER_COEFFS, b)
+        b = e - diff
         return e, b
 
-    def reasonable_ratio(ratio: jnp.ndarray, er: IAS15Helper, br: IAS15Helper) -> tuple:
-        q1 = ratio
-        q2 = q1 * q1
-        q3 = q1 * q2
-        q4 = q2 * q2
-        q5 = q2 * q3
-        q6 = q3 * q3
-        q7 = q3 * q4
+    e, b = jax.lax.cond(
+        ratio >= 1 / IAS15_SAFETY_FACTOR, large_ratio, reasonable_ratio, ratio, e, b
+    )
 
-        be0 = _b.p0 - _e.p0
-        be1 = _b.p1 - _e.p1
-        be2 = _b.p2 - _e.p2
-        be3 = _b.p3 - _e.p3
-        be4 = _b.p4 - _e.p4
-        be5 = _b.p5 - _e.p5
-        be6 = _b.p6 - _e.p6
-
-        e.p0 = q1 * (
-            _b.p6 * 7.0
-            + _b.p5 * 6.0
-            + _b.p4 * 5.0
-            + _b.p3 * 4.0
-            + _b.p2 * 3.0
-            + _b.p1 * 2.0
-            + _b.p0
-        )
-        e.p1 = q2 * (
-            _b.p6 * 21.0
-            + _b.p5 * 15.0
-            + _b.p4 * 10.0
-            + _b.p3 * 6.0
-            + _b.p2 * 3.0
-            + _b.p1
-        )
-        e.p2 = q3 * (_b.p6 * 35.0 + _b.p5 * 20.0 + _b.p4 * 10.0 + _b.p3 * 4.0 + _b.p2)
-        e.p3 = q4 * (_b.p6 * 35.0 + _b.p5 * 15.0 + _b.p4 * 5.0 + _b.p3)
-        e.p4 = q5 * (_b.p6 * 21.0 + _b.p5 * 6.0 + _b.p4)
-        e.p5 = q6 * (_b.p6 * 7.0 + _b.p5)
-        e.p6 = q7 * _b.p6
-
-        b.p0 = e.p0 + be0
-        b.p1 = e.p1 + be1
-        b.p2 = e.p2 + be2
-        b.p3 = e.p3 + be3
-        b.p4 = e.p4 + be4
-        b.p5 = e.p5 + be5
-        b.p6 = e.p6 + be6
-
-        return e, b
-
-    e, b = jax.lax.cond(ratio > 20.0, large_ratio, reasonable_ratio, ratio, _e, _b)
     return e, b
-
-
-# note, the manual Horner method here isn't really necessary: jnp.polyval does that
-# internally. Could equivalently swap the x, v calculations at each substep w/:
-# b_len = 7
-# b_x_denoms = (1+jnp.arange(1, b_len + 1, 1)) * (2+jnp.arange(1, b_len + 1, 1))
-# b_v_denoms = jnp.arange(2, b_len + 2, 1)
-
-# xcoeffs = jnp.zeros(b_len + 3)
-# xcoeffs = xcoeffs.at[3:].set(bp * dt * dt / b_x_denoms)
-# xcoeffs = xcoeffs.at[2].set(a0 * dt * dt / 2.0)
-# xcoeffs = xcoeffs.at[1].set(v0 * dt)
-# xcoeffs = xcoeffs.at[0].set(x0)
-# xcoeffs = xcoeffs[::-1]
-
-# vcoeffs = jnp.zeros(b_len + 2)
-# vcoeffs = vcoeffs.at[2:].set(bp * dt / b_v_denoms)
-# vcoeffs = vcoeffs.at[1].set(a0 * dt)
-# vcoeffs = vcoeffs.at[0].set(v0)
-# vcoeffs = vcoeffs[::-1]
-
-# new_x = jnp.polyval(xcoeffs, h)
-# new_v = jnp.polyval(vcoeffs, h)
 
 
 @jax.jit
@@ -258,12 +193,11 @@ def ias15_step(
             The initial integrator state.
 
     Returns:
-        SystemState:
-            The new system state.
+        tuple[SystemState, IAS15IntegratorState]:
+            The new system state and new integrator state.
     """
-    # jax.debug.print("starting a new step")
-    # for convenience, rename initial state
     t_beginning = initial_system_state.time
+
     M = initial_system_state.massive_positions.shape[0]
     x0 = jnp.concatenate(
         (initial_system_state.massive_positions, initial_system_state.tracer_positions)
@@ -274,300 +208,68 @@ def ias15_step(
             initial_system_state.tracer_velocities,
         )
     )
-    a0 = initial_integrator_state.a0
 
     dt = initial_integrator_state.dt
-    # jax.debug.print("initial dt: {x}", x=dt)
+    a0 = initial_integrator_state.a0
     csx = initial_integrator_state.csx
     csv = initial_integrator_state.csv
-    g = initial_integrator_state.g
     e = initial_integrator_state.e
     b = initial_integrator_state.b
-    er = initial_integrator_state.er
-    br = initial_integrator_state.br
 
-    # always zero the compensation terms
-    csb = initialize_ias15_helper(x0.shape[0])
+    csb = jnp.zeros_like(b)
+    g = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b)
 
-    b_stack = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
-    g_stack = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b_stack)
-    g.p0 = g_stack[0]
-    g.p1 = g_stack[1]
-    g.p2 = g_stack[2]
-    g.p3 = g_stack[3]
-    g.p4 = g_stack[4]
-    g.p5 = g_stack[5]
-    g.p6 = g_stack[6]
-
-    # # other substep things that can be reused
-    # b_len = 7
-    # k = jnp.arange(b_len)
-    # b_x_denoms = ((k + 2) * (k + 3))[:, None, None]  # [6, 12, 20, 30, 42, 56, 72]
-    # b_v_denoms = (k + 2)[:, None, None]  # [2, 3, 4, 5, 6, 7, 8]
-    # b_stack = jnp.stack([b.p0, b.p1, b.p2, b.p3, b.p4, b.p5, b.p6], axis=0)
-    # init_cond_x_stack = jnp.stack((x0, v0 * dt, a0 * dt * dt / 2.0))
-    # init_cond_v_stack = jnp.stack((v0, a0 * dt))
-
-    # set up the predictor-corrector loop
-    def do_nothing(
-        b: IAS15Helper,
-        csb: IAS15Helper,
-        g: IAS15Helper,
+    def _do_nothing(
+        b: jnp.ndarray,
+        csb: jnp.ndarray,
+        g: jnp.ndarray,
         predictor_corrector_error: jnp.ndarray,
     ) -> tuple:
-        # print("just chillin")
+        # jax.debug.print("just chillin")
         return b, csb, g, predictor_corrector_error, predictor_corrector_error
 
-    def predictor_corrector_iteration(
-        b: IAS15Helper,
-        csb: IAS15Helper,
-        g: IAS15Helper,
-        predictor_corrector_error: jnp.ndarray,
+    def _predictor_corrector_iteration(
+        b: jnp.ndarray,
+        csb: jnp.ndarray,
+        g: jnp.ndarray,
+        predictor_corrector_error: float,
     ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
-
-        # loop over each subinterval
-        ################################################################################
-        n = 1
-        step_time = t_beginning + dt * IAS15_H[n]
-        # h = IAS15_H[n]
-        # get the new acceleration value at predicted position
-        # x_coeffs = jnp.concatenate(
-        #     [init_cond_x_stack, (b_stack * dt * dt / b_x_denoms)], axis=0
-        # )[::-1]
-
-        # v_coeffs = jnp.concatenate(
-        #     [init_cond_v_stack, (b_stack * dt / b_v_denoms)], axis=0
-        # )[::-1]
-        # x = jnp.polyval(x_coeffs, h) - csx
-        # v = jnp.polyval(v_coeffs, h) - csv
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p0
-        gk = at - a0
-        g.p0 = gk / IAS15_RR[0]
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, g.p0 - tmp)
-
-        ################################################################################
-        n = 2
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p1
-        gk = at - a0
-        g.p1 = (gk / IAS15_RR[1] - g.p0) / IAS15_RR[2]
-        tmp = g.p1 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[0])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp)
-
-        ################################################################################
-        n = 3
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p2
-        gk = at - a0
-        g.p2 = ((gk / IAS15_RR[3] - g.p0) / IAS15_RR[4] - g.p1) / IAS15_RR[5]
-        tmp = g.p2 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[1])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[2])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp)
-
-        ################################################################################
-        n = 4
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p3
-        gk = at - a0
-        g.p3 = (
-            ((gk / IAS15_RR[6] - g.p0) / IAS15_RR[7] - g.p1) / IAS15_RR[8] - g.p2
-        ) / IAS15_RR[9]
-        tmp = g.p3 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[3])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[4])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[5])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp)
-
-        ################################################################################
-        n = 5
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p4
-        gk = at - a0
-        g.p4 = (
-            (((gk / IAS15_RR[10] - g.p0) / IAS15_RR[11] - g.p1) / IAS15_RR[12] - g.p2)
-            / IAS15_RR[13]
-            - g.p3
-        ) / IAS15_RR[14]
-        tmp = g.p4 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[6])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[7])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[8])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[9])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp)
-
-        ################################################################################
-        n = 6
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p5
-        gk = at - a0
-        g.p5 = (
-            (
-                (
-                    ((gk / IAS15_RR[15] - g.p0) / IAS15_RR[16] - g.p1) / IAS15_RR[17]
-                    - g.p2
-                )
-                / IAS15_RR[18]
-                - g.p3
+        for n, h, c, r in zip(range(1, 8), IAS15_H[1:], IAS15_sub_cs, IAS15_sub_rs):
+            step_time = t_beginning + dt * h
+            x, v = _estimate_x_v_from_b(
+                a0=a0,
+                v0=v0,
+                x0=x0,
+                h=h,
+                dt=dt,
+                bp=b[::-1],
             )
-            / IAS15_RR[19]
-            - g.p4
-        ) / IAS15_RR[20]
-        tmp = g.p5 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[10])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[11])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[12])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[13])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp * IAS15_C[14])
-        b.p5, csb.p5 = add_cs(b.p5, csb.p5, tmp)
-
-        ################################################################################
-        n = 7
-        step_time = t_beginning + dt * IAS15_H[n]
-        # fmt: off
-        x = x0 - csx + ((((((((b.p6*7.*IAS15_H[n]/9. + b.p5)*3.*IAS15_H[n]/4. + b.p4)*5.*IAS15_H[n]/7. + b.p3)*2.*IAS15_H[n]/3. + b.p2)*3.*IAS15_H[n]/5. + b.p1)*IAS15_H[n]/2. + b.p0)*IAS15_H[n]/3. + a0)*dt*IAS15_H[n]/2. + v0)*dt*IAS15_H[n]
-        v = v0 - csv + (((((((b.p6*7.*IAS15_H[n]/8. + b.p5)*6.*IAS15_H[n]/7. + b.p4)*5.*IAS15_H[n]/6. + b.p3)*4.*IAS15_H[n]/5. + b.p2)*3.*IAS15_H[n]/4. + b.p1)*2.*IAS15_H[n]/3. + b.p0)*IAS15_H[n]/2. + a0)*dt*IAS15_H[n]
-        # fmt: on
-        acc_state = SystemState(
-            massive_positions=x[:M],
-            massive_velocities=v[:M],
-            tracer_positions=x[M:],
-            tracer_velocities=v[M:],
-            log_gms=initial_system_state.log_gms,
-            time=step_time,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        )
-        at = acceleration_func(acc_state)
-
-        tmp = g.p6
-        gk = at - a0
-        g.p6 = (
-            (
-                (
-                    (
-                        ((gk / IAS15_RR[21] - g.p0) / IAS15_RR[22] - g.p1)
-                        / IAS15_RR[23]
-                        - g.p2
-                    )
-                    / IAS15_RR[24]
-                    - g.p3
-                )
-                / IAS15_RR[25]
-                - g.p4
+            acc_state = SystemState(
+                massive_positions=x[:M],
+                massive_velocities=v[:M],
+                tracer_positions=x[M:],
+                tracer_velocities=v[M:],
+                log_gms=initial_system_state.log_gms,
+                time=step_time,
+                acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
             )
-            / IAS15_RR[26]
-            - g.p5
-        ) / IAS15_RR[27]
-        tmp = g.p6 - tmp
-        b.p0, csb.p0 = add_cs(b.p0, csb.p0, tmp * IAS15_C[15])
-        b.p1, csb.p1 = add_cs(b.p1, csb.p1, tmp * IAS15_C[16])
-        b.p2, csb.p2 = add_cs(b.p2, csb.p2, tmp * IAS15_C[17])
-        b.p3, csb.p3 = add_cs(b.p3, csb.p3, tmp * IAS15_C[18])
-        b.p4, csb.p4 = add_cs(b.p4, csb.p4, tmp * IAS15_C[19])
-        b.p5, csb.p5 = add_cs(b.p5, csb.p5, tmp * IAS15_C[20])
-        b.p6, csb.p6 = add_cs(b.p6, csb.p6, tmp)
+            at = acceleration_func(acc_state)
+            g_old = g[n - 1]
+            g_new = _refine_sub_g(at, a0, g[: n - 1], r)
+            g_diff = g_new - g_old
+            new_bs, new_csbs = _update_bs(b[:n], csb[:n], g_diff, c)
+            g = g.at[n - 1].set(g_new)
+            b = b.at[:n].set(new_bs)
+            csb = csb.at[:n].set(new_csbs)
 
         maxa = jnp.max(jnp.abs(at))
-        maxb6tmp = jnp.max(jnp.abs(tmp))
+        maxb6tmp = jnp.max(jnp.abs(g_diff))
 
         predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
 
         return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
-
-    # return predictor_corrector_iteration(b, csb, g, 1e300)
 
     def scan_func(carry: tuple, scan_over: int) -> tuple:
         b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
@@ -579,8 +281,8 @@ def ias15_step(
 
         carry = jax.lax.cond(
             condition,
-            do_nothing,
-            predictor_corrector_iteration,
+            _do_nothing,
+            _predictor_corrector_iteration,
             b,
             csb,
             g,
@@ -588,49 +290,13 @@ def ias15_step(
         )
         return carry, None
 
-    predictor_corrector_error = 1e300
-    predictor_corrector_error_last = 2.0
-
-    (b, csb, g, predictor_corrector_error, predictor_corrector_error_last), _ = (
-        jax.lax.scan(
-            scan_func,
-            (b, csb, g, predictor_corrector_error, predictor_corrector_error_last),
-            jnp.arange(10),
-        )
+    initial_carry = (b, csb, g, 1e300, 2.0)
+    (b, csb, g, _pc_error, _pc_error_last), _ = jax.lax.scan(
+        scan_func, initial_carry, jnp.arange(10)
     )
 
-    # check the validity of the step, estimate next timestep
     dt_done = dt
-    # jax.debug.print(
-    #     "step complete, dt done before review = {x}, pc err = {y}",
-    #     x=dt_done,
-    #     y=predictor_corrector_error,
-    # )
-
-    tmp = a0 + b.p0 + b.p1 + b.p2 + b.p3 + b.p4 + b.p5 + b.p6
-    y2 = jnp.sum(tmp * tmp, axis=1)
-    tmp = (
-        b.p0
-        + 2.0 * b.p1
-        + 3.0 * b.p2
-        + 4.0 * b.p3
-        + 5.0 * b.p4
-        + 6.0 * b.p5
-        + 7.0 * b.p6
-    )
-    y3 = jnp.sum(tmp * tmp, axis=1)
-    tmp = (
-        2.0 * b.p1 + 6.0 * b.p2 + 12.0 * b.p3 + 20.0 * b.p4 + 30.0 * b.p5 + 42.0 * b.p6
-    )
-    y4 = jnp.sum(tmp * tmp, axis=1)
-
-    timescale2 = 2.0 * y2 / (y3 + jnp.sqrt(y4 * y2))  # PRS23
-    min_timescale2 = jnp.nanmin(timescale2)
-
-    dt_new = jnp.sqrt(min_timescale2) * dt_done * IAS15_EPS_Modified
-    # jax.debug.print("proposed dt_new based on timescales: {x}", x=dt_new)
-    # not checking for a min dt, since rebound default is 0.0 anyway
-    # and we're willing to let it get tiny
+    next_dt = _next_proposed_dt(a0, b, dt)
 
     def step_too_ambitious(
         x0: jnp.ndarray,
@@ -638,11 +304,10 @@ def ias15_step(
         csx: jnp.ndarray,
         csv: jnp.ndarray,
         dt_done: float,
-        dt_new: float,
+        next_dt: float,
     ) -> tuple:
-        # jax.debug.print("step too ambitious, rejecting")
         dt_done = 0.0
-        return x0, v0, dt_done, dt_new
+        return x0, v0, dt_done, next_dt
 
     def step_was_good(
         x0: jnp.ndarray,
@@ -650,40 +315,36 @@ def ias15_step(
         csx: jnp.ndarray,
         csv: jnp.ndarray,
         dt_done: float,
-        dt_new: float,
+        next_dt: float,
     ) -> tuple:
-        # jax.debug.print("step was good, accepting")
-        dt_neww = jnp.where(
-            dt_new / dt_done > 1 / IAS15_SAFETY_FACTOR,
+        safe_next_dt = jnp.where(
+            next_dt / dt_done > 1 / IAS15_SAFETY_FACTOR,
             dt_done / IAS15_SAFETY_FACTOR,
-            dt_new,
+            next_dt,
         )
-        # jax.debug.print(
-        #     "dt new after making sure it doesn't grow too fast: {x}", x=dt_neww
-        # )
 
-        x0, csx = add_cs(x0, csx, b.p6 / 72.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p5 / 56.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p4 / 42.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p3 / 30.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p2 / 20.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p1 / 12.0 * dt_done * dt_done)
-        x0, csx = add_cs(x0, csx, b.p0 / 6.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[6] / 72.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[5] / 56.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[4] / 42.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[3] / 30.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[2] / 20.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[1] / 12.0 * dt_done * dt_done)
+        x0, csx = add_cs(x0, csx, b[0] / 6.0 * dt_done * dt_done)
         x0, csx = add_cs(x0, csx, a0 / 2.0 * dt_done * dt_done)
         x0, csx = add_cs(x0, csx, v0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p6 / 8.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p5 / 7.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p4 / 6.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p3 / 5.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p2 / 4.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p1 / 3.0 * dt_done)
-        v0, csv = add_cs(v0, csv, b.p0 / 2.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[6] / 8.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[5] / 7.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[4] / 6.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[3] / 5.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[2] / 4.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[1] / 3.0 * dt_done)
+        v0, csv = add_cs(v0, csv, b[0] / 2.0 * dt_done)
         v0, csv = add_cs(v0, csv, a0 * dt_done)
 
-        return x0, v0, dt_done, dt_neww
+        return x0, v0, dt_done, safe_next_dt
 
-    x0, v0, dt_done, dt_new = jax.lax.cond(
-        jnp.abs(dt_new / dt_done) < IAS15_SAFETY_FACTOR,
+    x0, v0, dt_done, next_dt = jax.lax.cond(
+        jnp.abs(next_dt / dt_done) < IAS15_SAFETY_FACTOR,
         step_too_ambitious,
         step_was_good,
         x0,
@@ -691,7 +352,7 @@ def ias15_step(
         csx,
         csv,
         dt_done,
-        dt_new,
+        next_dt,
     )
 
     new_system_state = SystemState(
@@ -703,34 +364,21 @@ def ias15_step(
         time=t_beginning + dt_done,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
-    # jax.debug.print(
-    #     "t_beginning: {x}, dt_done: {y}, their sum: {z}",
-    #     x=t_beginning,
-    #     y=dt_done,
-    #     z=t_beginning + dt_done,
-    # )
-    # jax.debug.print(
-    #     "the system state time after this step (should match): {x}",
-    #     x=new_system_state.time,
-    # )
 
-    er = e
-    br = b
-    ratio = dt_new / dt
+    ratio = next_dt / dt_done
+    # ratio = 100 # temporarily disable prediction
     # if we're rejecting the step, trick predict_next_step into not predicting
     ratio = jnp.where(dt_done == 0.0, 100.0, ratio)
-    e, b = predict_next_step(ratio, er, br)
+    predicted_next_e, predicted_next_b = _predict_next_step(ratio, e, b)
 
     new_integrator_state = IAS15IntegratorState(
         g=g,
-        b=b,
-        e=e,
-        br=br,
-        er=er,
+        b=predicted_next_b,
+        e=predicted_next_e,
         csx=csx,
         csv=csv,
         a0=acceleration_func(new_system_state),
-        dt=dt_new,
+        dt=next_dt,
         dt_last_done=dt_done,
     )
 
