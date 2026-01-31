@@ -141,11 +141,10 @@ def on_sky(
     a0 = acc_func(state)
     initial_integrator_state = initialize_ias15_integrator_state(a0)
 
-    def scan_func(carry: tuple, scan_over: None) -> tuple[tuple, None]:
-        xz = carry
+    xz = state.tracer_positions[0]
+    for _ in range(3):
         earth_distance = jnp.linalg.norm(xz - observer_position)
         light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
-
         _positions, _velocities, final_system_state, _final_integrator_state = (
             ias15_evolve(
                 state,
@@ -154,15 +153,29 @@ def on_sky(
                 initial_integrator_state,
             )
         )
+        xz = final_system_state.tracer_positions[0]
+    # def scan_func(carry: tuple, scan_over: None) -> tuple[tuple, None]:
+    #     xz = carry
+    #     earth_distance = jnp.linalg.norm(xz - observer_position)
+    #     light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
 
-        return final_system_state.tracer_positions[0], None
+    #     _positions, _velocities, final_system_state, _final_integrator_state = (
+    #         ias15_evolve(
+    #             state,
+    #             acc_func,
+    #             jnp.array([state.time - light_travel_time]),
+    #             initial_integrator_state,
+    #         )
+    #     )
 
-    xz, _ = jax.lax.scan(
-        scan_func,
-        state.tracer_positions[0],
-        None,
-        length=3,
-    )
+    #     return final_system_state.tracer_positions[0], None
+
+    # xz, _ = jax.lax.scan(
+    #     scan_func,
+    #     state.tracer_positions[0],
+    #     None,
+    #     length=3,
+    # )
 
     X = xz - observer_position
     calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
