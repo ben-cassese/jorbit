@@ -4,6 +4,7 @@ Changelog
 **development version**
 
 - Added option to select DE ephemeris version (DE430 or DE440) when creating `Ephemeris` and `Particle` objects. Updated relevant tutorials/tests.
+- Major refactor of ias15.py, no longer resembles the original REBOUND implementation. Removed IAS15Helper, but otherwise no API changes.
 
 **1.1.0 (01/2026)**
 
