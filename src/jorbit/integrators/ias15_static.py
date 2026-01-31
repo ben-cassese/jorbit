@@ -32,7 +32,8 @@ def ias15_static_step(
 
     Like ias15_step, but with a fixed number of predictor-corrector iterations, no
     checks for convergence, no checks for step size appropriateness, and no next step
-    predictions. Right now hard-coded to 4 predictor-corrector iterations.
+    predictions. Right now hard-coded to 4 predictor-corrector iterations. Blindly
+    trusts what it's given in exchange for no logic branches and better JIT compilation.
 
     Args:
         initial_system_state (SystemState):
@@ -155,3 +156,65 @@ def ias15_static_step(
     )
 
     return new_system_state, new_integrator_state
+
+
+@jax.jit
+def ias15_static_evolve(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    dts: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+    """Take multiple steps using ias15_static_step to evolve without safety checks.
+
+    This blindly evolves the system using the provided time steps, without any checks
+    for convergence within each step or appropriateness of each step size.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        dts (jnp.ndarray):
+            The time steps to evolve the system by.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+            The positions and velocities of the system at each timestep,
+            the final state of the system, and the final state of the integrator.
+    """
+
+    def scan_func(carry: tuple, scan_over: float) -> tuple:
+        system_state, integrator_state = carry
+        dt = scan_over
+        integrator_state.dt = dt
+        new_system_state, new_integrator_state = ias15_static_step(
+            system_state,
+            acceleration_func,
+            integrator_state,
+        )
+        return (new_system_state, new_integrator_state), (
+            jnp.concatenate(
+                (
+                    system_state.massive_positions,
+                    system_state.tracer_positions,
+                )
+            ),
+            jnp.concatenate(
+                (
+                    system_state.massive_velocities,
+                    system_state.tracer_velocities,
+                )
+            ),
+        )
+
+    (final_system_state, final_integrator_state), (positions, velocities) = (
+        jax.lax.scan(
+            scan_func,
+            (initial_system_state, initial_integrator_state),
+            dts,
+        )
+    )
+    return positions, velocities, final_system_state, final_integrator_state

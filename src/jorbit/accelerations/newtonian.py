@@ -63,3 +63,37 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
     # Combine accelerations for all particles
     # This works even when T=0 thanks to JAX's handling of zero-sized arrays
     return jnp.concatenate([a_massive, a_tracers], axis=0)
+
+
+# unused for now, but technically better for solar system tracers since you avoid
+# computing massive-massive interactions between fixed perturbers
+def newtonian_gravity_tracer_only(inputs: SystemState) -> jnp.ndarray:
+    """Newtonian gravity on a system of tracers only, massive perturbers assumed fixed.
+
+    Args:
+        inputs (SystemState):
+            The instantaneous state of the system. In the acceleration_func_kwargs,
+            the key "newtonian_perturber_xs" must be present, containing
+            the positions of the massive perturbers.
+
+    Returns:
+        jnp.ndarray:
+            The 3D acceleration felt by each particle, ordered by massive particles
+            first followed by tracer particles.
+
+    """
+    dx_tracers = (
+        inputs.tracer_positions[:, None, :]
+        - inputs.acceleration_func_kwargs["newtonian_perturber_xs"][None, :, :]
+    )  # (T,M,3)
+    r2_tracers = jnp.sum(dx_tracers * dx_tracers, axis=-1)  # (T,M)
+    r3_tracers = r2_tracers * jnp.sqrt(r2_tracers)  # (T,M)
+
+    a_tracers = -jnp.sum(
+        (1.0 / r3_tracers)[:, :, None]
+        * dx_tracers
+        * jnp.exp(inputs.log_gms[None, :, None]),
+        axis=1,
+    )  # (T,3)
+
+    return a_tracers
