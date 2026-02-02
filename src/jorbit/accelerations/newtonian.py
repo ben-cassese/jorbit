@@ -25,18 +25,22 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
     """
     M = inputs.massive_positions.shape[0]  # number of massive particles
 
-    # 1. Compute accelerations on massive particles due to other massive particles
+    # massive particles due to other massive particles
     dx_massive = (
         inputs.massive_positions[:, None, :] - inputs.massive_positions[None, :, :]
     )  # (M,M,3)
     r2_massive = jnp.sum(dx_massive * dx_massive, axis=-1)  # (M,M)
     r3_massive = r2_massive * jnp.sqrt(r2_massive)  # (M,M)
 
-    # Mask for i!=j calculations among massive particles
+    # mask for i!=j calculations among massive particles
+    # this seems to be faster than
+    # dx_massive += jnp.eye(M)[:, :, None]  # Avoid zero division
+    # mask_massive = jnp.eye(M)*-1 + 1
+    # prefac_massive = mask_massive / r3_massive
+
     mask_massive = ~jnp.eye(M, dtype=bool)  # (M,M)
     prefac_massive = jnp.where(mask_massive, 1.0 / r3_massive, 0.0)
 
-    # Accelerations on massive particles from massive particles
     a_massive = -jnp.sum(
         prefac_massive[:, :, None]
         * dx_massive
@@ -44,15 +48,14 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
         axis=1,
     )  # (M,3)
 
-    # 2. Compute accelerations on tracer particles due to massive particles
-    # (This will work even when T=0 due to JAX's shape polymorphism)
+    # tracer particles due to massive particles
     dx_tracers = (
         inputs.tracer_positions[:, None, :] - inputs.massive_positions[None, :, :]
     )  # (T,M,3)
     r2_tracers = jnp.sum(dx_tracers * dx_tracers, axis=-1)  # (T,M)
     r3_tracers = r2_tracers * jnp.sqrt(r2_tracers)  # (T,M)
 
-    # Accelerations on tracer particles from massive particles
+    # tracer particles from massive particles
     a_tracers = -jnp.sum(
         (1.0 / r3_tracers)[:, :, None]
         * dx_tracers
@@ -60,40 +63,22 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
         axis=1,
     )  # (T,3)
 
-    # Combine accelerations for all particles
-    # This works even when T=0 thanks to JAX's handling of zero-sized arrays
-    return jnp.concatenate([a_massive, a_tracers], axis=0)
+    all_as = jnp.concatenate([a_massive, a_tracers], axis=0)
 
-
-# unused for now, but technically better for solar system tracers since you avoid
-# computing massive-massive interactions between fixed perturbers
-def newtonian_gravity_tracer_only(inputs: SystemState) -> jnp.ndarray:
-    """Newtonian gravity on a system of tracers only, massive perturbers assumed fixed.
-
-    Args:
-        inputs (SystemState):
-            The instantaneous state of the system. In the acceleration_func_kwargs,
-            the key "newtonian_perturber_xs" must be present, containing
-            the positions of the massive perturbers.
-
-    Returns:
-        jnp.ndarray:
-            The 3D acceleration felt by each particle, ordered by massive particles
-            first followed by tracer particles.
-
-    """
-    dx_tracers = (
-        inputs.tracer_positions[:, None, :]
-        - inputs.acceleration_func_kwargs["newtonian_perturber_xs"][None, :, :]
-    )  # (T,M,3)
-    r2_tracers = jnp.sum(dx_tracers * dx_tracers, axis=-1)  # (T,M)
-    r3_tracers = r2_tracers * jnp.sqrt(r2_tracers)  # (T,M)
-
-    a_tracers = -jnp.sum(
-        (1.0 / r3_tracers)[:, :, None]
-        * dx_tracers
-        * jnp.exp(inputs.log_gms[None, :, None]),
+    # now do the fixed perturbers if they exist
+    dx_perturbers = (
+        jnp.concatenate([inputs.massive_positions, inputs.tracer_positions], axis=0)[
+            :, None, :
+        ]
+        - inputs.fixed_perturber_positions[None, :, :]
+    )  # (N,Mp,3)
+    r2_perturbers = jnp.sum(dx_perturbers * dx_perturbers, axis=-1)  # (N,Mp)
+    r3_perturbers = r2_perturbers * jnp.sqrt(r2_perturbers)  # (N,Mp)
+    a_perturbers = -jnp.sum(
+        (1.0 / r3_perturbers)[:, :, None]
+        * dx_perturbers
+        * jnp.exp(inputs.fixed_perturber_log_gms[None, :, None]),
         axis=1,
-    )  # (T,3)
+    )  # (N,3)
 
-    return a_tracers
+    return all_as + a_perturbers

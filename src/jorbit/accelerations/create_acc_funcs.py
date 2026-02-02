@@ -17,7 +17,7 @@ from jorbit.utils.states import SystemState
 def create_newtonian_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
 ) -> jax.tree_util.Partial:
-    """Create and return a function that adds newtonian gravity from fixed perturbers.
+    """Create and return a function that adds newtonian gravity from fixed perturbers conjured from an ephemeris.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
@@ -34,21 +34,20 @@ def create_newtonian_ephemeris_acceleration_func(
         perturber_log_gms = ephem_processor.log_gms
 
         new_state = SystemState(
-            massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
-            massive_velocities=jnp.concatenate(
-                [perturber_vs, inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate([perturber_log_gms, inputs.log_gms]),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[None, :],
+            fixed_perturber_velocities=perturber_vs[None, :],
+            fixed_perturber_log_gms=perturber_log_gms,
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
 
         accs = newtonian_gravity(new_state)
-
-        num_perturbers = perturber_xs.shape[0]
-        return accs[num_perturbers:]
+        return accs
 
     return jax.tree_util.Partial(func)
 
@@ -56,7 +55,7 @@ def create_newtonian_ephemeris_acceleration_func(
 def create_gr_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
 ) -> jax.tree_util.Partial:
-    """Create and return a function that adds gr gravity from fixed perturbers.
+    """Create and return a function that adds gr gravity from fixed perturbers conjured from an ephemeris.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
@@ -73,21 +72,20 @@ def create_gr_ephemeris_acceleration_func(
         perturber_log_gms = ephem_processor.log_gms
 
         new_state = SystemState(
-            massive_positions=jnp.concatenate([perturber_xs, inputs.massive_positions]),
-            massive_velocities=jnp.concatenate(
-                [perturber_vs, inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate([perturber_log_gms, inputs.log_gms]),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[None, :],
+            fixed_perturber_velocities=perturber_vs[None, :],
+            fixed_perturber_log_gms=perturber_log_gms,
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
 
         accs = ppn_gravity(new_state)
-
-        num_perturbers = perturber_xs.shape[0]
-        return accs[num_perturbers:]
+        return accs
 
     return jax.tree_util.Partial(func)
 
@@ -112,44 +110,38 @@ def create_default_ephemeris_acceleration_func(
 
     def func(inputs: SystemState) -> jnp.ndarray:
         num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
-        num_newtonian_perturbers = 16  # the asteroids
+        # num_newtonian_perturbers = 16  # the asteroids
 
         perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
         perturber_log_gms = ephem_processor.log_gms
 
         gr_state = SystemState(
-            massive_positions=jnp.concatenate(
-                [perturber_xs[:num_gr_perturbers], inputs.massive_positions]
-            ),
-            massive_velocities=jnp.concatenate(
-                [perturber_vs[:num_gr_perturbers], inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate(
-                [perturber_log_gms[:num_gr_perturbers], inputs.log_gms]
-            ),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[:num_gr_perturbers],
+            fixed_perturber_velocities=perturber_vs[:num_gr_perturbers],
+            fixed_perturber_log_gms=perturber_log_gms[:num_gr_perturbers],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        gr_acc = ppn_gravity(gr_state)[num_gr_perturbers:]
+        gr_acc = ppn_gravity(gr_state)
 
         newtonian_state = SystemState(
-            massive_positions=jnp.concatenate(
-                [perturber_xs[num_gr_perturbers:], inputs.massive_positions]
-            ),
-            massive_velocities=jnp.concatenate(
-                [perturber_vs[num_gr_perturbers:], inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate(
-                [perturber_log_gms[num_gr_perturbers:], inputs.log_gms]
-            ),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[num_gr_perturbers:],
+            fixed_perturber_velocities=perturber_vs[num_gr_perturbers:],
+            fixed_perturber_log_gms=perturber_log_gms[num_gr_perturbers:],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        newtonian_acc = newtonian_gravity(newtonian_state)[num_newtonian_perturbers:]
+        newtonian_acc = newtonian_gravity(newtonian_state)
 
         return gr_acc + newtonian_acc
 
@@ -192,19 +184,15 @@ def create_ephem_grav_harmonics_acceleration_func(
     return jax.tree_util.Partial(func)
 
 
-def create_static_generic_acceleration_func() -> jax.tree_util.Partial:
+def create_static_default_acceleration_func() -> jax.tree_util.Partial:
     """Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
 
     This adds GR corrections for the 10 planets and newtonian corrections for the 16
     asteroids. Unlike create_default_ephemeris_acceleration_func, it will *not*
     actually call an EphemerisProcessor to get the perturber positions in real-time;
     instead, it assumes those have been pre-computed and stored in the input
-    SystemState's acceleration_func_kwargs. The needed keys are:
-        "gr_perturber_xs": positions of the GR perturbers
-        "gr_perturber_vs": velocities of the GR perturbers
-        "newtonian_perturber_xs": positions of the newtonian perturbers
-        "newtonian_perturber_vs": velocities of the newtonian perturbers
-        "perturber_log_gms": log GMs of all perturbers (GR first, then newtonian)
+    SystemState.
+
     This *can* be used for multi-particle systems that include massive particles,
     but the perturbers themselves are assumed fixed.
 
@@ -217,52 +205,41 @@ def create_static_generic_acceleration_func() -> jax.tree_util.Partial:
     """
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        gr_perturber_xs = inputs.acceleration_func_kwargs["gr_perturber_xs"]
-        gr_perturber_vs = inputs.acceleration_func_kwargs["gr_perturber_vs"]
-        newtonian_perturber_xs = inputs.acceleration_func_kwargs[
-            "newtonian_perturber_xs"
-        ]
-        newtonian_perturber_vs = inputs.acceleration_func_kwargs[
-            "newtonian_perturber_vs"
-        ]
-        perturber_log_gms = inputs.acceleration_func_kwargs["perturber_log_gms"]
-
         num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
-        num_newtonian_perturbers = 16  # the asteroids
+        # num_newtonian_perturbers = 16  # the asteroids
+
+        perturber_xs = inputs.fixed_perturber_positions
+        perturber_vs = inputs.fixed_perturber_velocities
+        perturber_log_gms = inputs.fixed_perturber_log_gms
 
         gr_state = SystemState(
-            massive_positions=jnp.concatenate(
-                [gr_perturber_xs, inputs.massive_positions]
-            ),
-            massive_velocities=jnp.concatenate(
-                [gr_perturber_vs, inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate(
-                [perturber_log_gms[:num_gr_perturbers], inputs.log_gms]
-            ),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[:num_gr_perturbers],
+            fixed_perturber_velocities=perturber_vs[:num_gr_perturbers],
+            fixed_perturber_log_gms=perturber_log_gms[:num_gr_perturbers],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        gr_acc = static_ppn_gravity(gr_state)[num_gr_perturbers:]
+        gr_acc = static_ppn_gravity(gr_state)
 
         newtonian_state = SystemState(
-            massive_positions=jnp.concatenate(
-                [newtonian_perturber_xs, inputs.massive_positions]
-            ),
-            massive_velocities=jnp.concatenate(
-                [newtonian_perturber_vs, inputs.massive_velocities]
-            ),
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=jnp.concatenate(
-                [perturber_log_gms[num_gr_perturbers:], inputs.log_gms]
-            ),
+            log_gms=inputs.log_gms,
             time=inputs.time,
+            fixed_perturber_positions=perturber_xs[num_gr_perturbers:],
+            fixed_perturber_velocities=perturber_vs[num_gr_perturbers:],
+            fixed_perturber_log_gms=perturber_log_gms[num_gr_perturbers:],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        newtonian_acc = newtonian_gravity(newtonian_state)[num_newtonian_perturbers:]
+        newtonian_acc = newtonian_gravity(newtonian_state)
+
         return gr_acc + newtonian_acc
 
     return jax.tree_util.Partial(func)

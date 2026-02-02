@@ -182,7 +182,10 @@ def ias15_step(
 ) -> SystemState:
     """Take a single step using the IAS15 integrator.
 
-    Contains all of the predictor/corrector logic and step validity checks.
+    Contains all of the predictor/corrector logic and step validity checks. Does not
+    accept any pre-computed perturber information, since we don't know the times this
+    will be needed until runtime. For a static version that accepts pre-computed
+    perturber data, see ias15_static_step.
 
     Args:
         initial_system_state (SystemState):
@@ -246,6 +249,8 @@ def ias15_step(
                 dt=dt,
                 bp=b[::-1],
             )
+            # note that the fixed perturber bits likely can/will be overwritten by the
+            # acceleration function- see ias15_static_step + create_static_default_acceleration_func
             acc_state = SystemState(
                 massive_positions=x[:M],
                 massive_velocities=v[:M],
@@ -253,6 +258,13 @@ def ias15_step(
                 tracer_velocities=v[M:],
                 log_gms=initial_system_state.log_gms,
                 time=step_time,
+                fixed_perturber_positions=jnp.empty(
+                    (0, 3),
+                ),
+                fixed_perturber_velocities=jnp.empty(
+                    (0, 3),
+                ),
+                fixed_perturber_log_gms=jnp.empty((0,)),
                 acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
             )
             at = acceleration_func(acc_state)
@@ -362,6 +374,9 @@ def ias15_step(
         tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
         time=t_beginning + dt_done,
+        fixed_perturber_positions=initial_system_state.fixed_perturber_positions * 0,
+        fixed_perturber_velocities=initial_system_state.fixed_perturber_velocities * 0,
+        fixed_perturber_log_gms=initial_system_state.fixed_perturber_log_gms * 0,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 

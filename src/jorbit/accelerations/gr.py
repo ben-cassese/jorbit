@@ -28,16 +28,32 @@ def _first_steps(inputs: SystemState) -> tuple:
 
     # surrendering on the efficient handling of tracers vs. massive particles-
     # lots of unnecessary computation here if T > 0, but ah well for now
+    # similarly just lumping fixed perturbers in with massive particles- there might
+    # be a way to avoid actually computing perturber-perturber interactions,
+    # but again ah well for now
+    P = inputs.fixed_perturber_positions.shape[0]
     M = inputs.massive_positions.shape[0]
     T = inputs.tracer_positions.shape[0]
-    N = M + T
+    N = P + M + T
     positions = jnp.concatenate(
-        [inputs.massive_positions, inputs.tracer_positions], axis=0
+        [
+            inputs.fixed_perturber_positions,
+            inputs.massive_positions,
+            inputs.tracer_positions,
+        ],
+        axis=0,
     )
     velocities = jnp.concatenate(
-        [inputs.massive_velocities, inputs.tracer_velocities], axis=0
+        [
+            inputs.fixed_perturber_velocities,
+            inputs.massive_velocities,
+            inputs.tracer_velocities,
+        ],
+        axis=0,
     )
-    gms = jnp.concatenate([jnp.exp(inputs.log_gms), jnp.zeros(T)])
+    gms = jnp.concatenate(
+        [jnp.exp(inputs.fixed_perturber_log_gms), jnp.exp(inputs.log_gms), jnp.zeros(T)]
+    )
 
     dx = positions[:, None, :] - positions[None, :, :]
     r2 = jnp.sum(dx * dx, axis=-1)
@@ -172,7 +188,8 @@ def ppn_gravity(
     # Combine Newtonian and GR terms
     a = a_newt + a_final
 
-    return a
+    P = inputs.fixed_perturber_positions.shape[0]
+    return a[P:]  # exclude the fixed perturbers from the returned accelerations
 
 
 @partial(jax.jit, static_argnames=["fixed_iterations"])
@@ -223,4 +240,5 @@ def static_ppn_gravity(inputs: SystemState, fixed_iterations: int = 3) -> jnp.nd
     # Combine Newtonian and GR terms
     a = a_newt + a_final
 
-    return a
+    P = inputs.fixed_perturber_positions.shape[0]
+    return a[P:]  # exclude the fixed perturbers from the returned accelerations

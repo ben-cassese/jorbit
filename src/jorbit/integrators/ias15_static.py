@@ -27,6 +27,9 @@ def ias15_static_step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     initial_integrator_state: IAS15IntegratorState,
+    fixed_perturber_positions: jnp.ndarray = jnp.empty((8, 0, 3)),
+    fixed_perturber_velocities: jnp.ndarray = jnp.empty((8, 0, 3)),
+    fixed_perturber_log_gms: jnp.ndarray = jnp.empty((0,)),
 ) -> SystemState:
     """Take a single step using the IAS15 integraton with no checks for convergence or adaptivity.
 
@@ -42,6 +45,14 @@ def ias15_static_step(
             The acceleration function.
         initial_integrator_state (IAS15IntegratorState):
             The initial integrator state.
+        fixed_perturber_positions (jnp.ndarray):
+            The fixed perturber positions for each substep. Shape
+            (n_substeps, n_perturbers, 3). Default is empty array of shape (8, 0, 3).
+        fixed_perturber_velocities (jnp.ndarray):
+            Same as above, but for velocities.
+        fixed_perturber_log_gms (jnp.ndarray):
+            The log GM values for the fixed perturbers. Shape (n_perturbers,).
+            Default is empty array of shape (0,).
 
     Returns:
         tuple[SystemState, IAS15IntegratorState]:
@@ -95,6 +106,9 @@ def ias15_static_step(
                 tracer_velocities=v[M:],
                 log_gms=initial_system_state.log_gms,
                 time=step_time,
+                fixed_perturber_positions=fixed_perturber_positions[n],
+                fixed_perturber_velocities=fixed_perturber_velocities[n],
+                fixed_perturber_log_gms=fixed_perturber_log_gms,
                 acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
             )
             at = acceleration_func(acc_state)
@@ -134,6 +148,9 @@ def ias15_static_step(
     v0, csv = add_cs(v0, csv, b[0] / 2.0 * dt_done)
     v0, csv = add_cs(v0, csv, a0 * dt_done)
 
+    # Zeroing out the perturber positions so that hopefully it's obvious something
+    # has gone wrong if these are reused for the next time step. These are only valid
+    # for the time given at the start of the step
     new_system_state = SystemState(
         massive_positions=x0[:M],
         massive_velocities=v0[:M],
@@ -141,6 +158,9 @@ def ias15_static_step(
         tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
         time=t_beginning + dt_done,
+        fixed_perturber_positions=initial_system_state.fixed_perturber_positions * 0,
+        fixed_perturber_velocities=initial_system_state.fixed_perturber_velocities * 0,
+        fixed_perturber_log_gms=initial_system_state.fixed_perturber_log_gms * 0,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 
@@ -163,6 +183,9 @@ def ias15_static_evolve(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     dts: jnp.ndarray,
+    perturber_positions: jnp.ndarray,
+    perturber_velocities: jnp.ndarray,
+    perturber_log_gms: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     """Take multiple steps using ias15_static_step to evolve without safety checks.
@@ -179,6 +202,12 @@ def ias15_static_evolve(
             The time steps to evolve the system by.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        perturber_positions (jnp.ndarray):
+            The positions of the perturbers. Shape (n_dts, 8, n_perturbers, 3).
+        perturber_velocities (jnp.ndarray):
+            The velocities of the perturbers. Same shape as perturber_positions.
+        perturber_log_gms (jnp.ndarray):
+            The log gravitational parameters of the perturbers. Shape (n_perturbers,).
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
@@ -188,8 +217,10 @@ def ias15_static_evolve(
 
     def scan_func(carry: tuple, scan_over: float) -> tuple:
         system_state, integrator_state = carry
-        dt = scan_over
+        dt, perturber_positions, perturber_velocities = scan_over
         integrator_state.dt = dt
+        system_state.fixed_perturber_positions = perturber_positions
+        system_state.fixed_perturber_velocities = perturber_velocities
         new_system_state, new_integrator_state = ias15_static_step(
             system_state,
             acceleration_func,
@@ -210,11 +241,13 @@ def ias15_static_evolve(
             ),
         )
 
+    initial_system_state.fixed_perturber_log_gms = perturber_log_gms
+
     (final_system_state, final_integrator_state), (positions, velocities) = (
         jax.lax.scan(
             scan_func,
             (initial_system_state, initial_integrator_state),
-            dts,
+            (dts, perturber_positions, perturber_velocities),
         )
     )
     return positions, velocities, final_system_state, final_integrator_state

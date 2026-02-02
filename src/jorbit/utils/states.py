@@ -36,6 +36,11 @@ class SystemState:
     massive_velocities: jnp.ndarray
     log_gms: jnp.ndarray
     time: float
+    fixed_perturber_positions: (
+        jnp.ndarray
+    )  # need a leading axis! (n_substeps, n_perturbers, 3)
+    fixed_perturber_velocities: jnp.ndarray
+    fixed_perturber_log_gms: jnp.ndarray
     acceleration_func_kwargs: dict  # at a minimum, {"c2": SPEED_OF_LIGHT**2}
 
 
@@ -98,6 +103,9 @@ class KeplerianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty((0,)),
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
@@ -147,6 +155,9 @@ class CartesianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty((0,)),
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
