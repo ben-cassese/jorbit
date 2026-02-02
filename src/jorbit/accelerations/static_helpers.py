@@ -48,6 +48,8 @@ def precompute_perturber_positions(
     # this whole function could absolutely be done without loops/appends, but it only
     # runs once so I don't really care
     times = times.tdb.jd
+    if times.shape == ():
+        times = jnp.array([times])
     t0 = t0.tdb.jd
 
     times = jnp.concatenate([jnp.array([t0]), times])
@@ -86,7 +88,9 @@ def precompute_perturber_positions(
     asteroid_vel = []
     for i in range(len(all_times) - 1):
         step_size = all_times[i + 1] - all_times[i]
-        subtimes = all_times[i] + step_size * IAS15_H
+        subtimes = all_times[i] + step_size * jnp.concatenate(
+            [IAS15_H, jnp.array([1.0])]
+        )
         perturber_states = jax.vmap(eph.processor.state)(subtimes)
         planet_x = perturber_states[0][:, :11, :]
         planet_v = perturber_states[1][:, :11, :]
@@ -102,4 +106,14 @@ def precompute_perturber_positions(
     asteroid_pos = jnp.array(asteroid_pos)
     asteroid_vel = jnp.array(asteroid_vel)
 
-    return planet_pos, planet_vel, asteroid_pos, asteroid_vel, all_times, obs_indices
+    gms = eph.processor.log_gms
+
+    return (
+        planet_pos,
+        planet_vel,
+        asteroid_pos,
+        asteroid_vel,
+        all_times,
+        obs_indices,
+        gms,
+    )

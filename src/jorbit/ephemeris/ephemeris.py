@@ -92,6 +92,10 @@ class Ephemeris:
                 f"Unsupported planet DE version: {de_ephemeris_version}. "
                 "Supported versions are '440' and '430'."
             )
+        earliest_time = earliest_time - 100 * u.day  # add a buffer to avoid edge issues
+        latest_time = (
+            latest_time + 100 * u.day
+        )  # buffer should be longer than chunk lengths
 
         if ssos == "default planets":
             ssos = [

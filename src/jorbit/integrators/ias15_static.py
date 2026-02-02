@@ -158,9 +158,9 @@ def ias15_static_step(
         tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
         time=t_beginning + dt_done,
-        fixed_perturber_positions=initial_system_state.fixed_perturber_positions * 0,
-        fixed_perturber_velocities=initial_system_state.fixed_perturber_velocities * 0,
-        fixed_perturber_log_gms=initial_system_state.fixed_perturber_log_gms * 0,
+        fixed_perturber_positions=fixed_perturber_positions[-1],
+        fixed_perturber_velocities=fixed_perturber_velocities[-1],
+        fixed_perturber_log_gms=fixed_perturber_log_gms,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 
@@ -219,12 +219,13 @@ def ias15_static_evolve(
         system_state, integrator_state = carry
         dt, perturber_positions, perturber_velocities = scan_over
         integrator_state.dt = dt
-        system_state.fixed_perturber_positions = perturber_positions
-        system_state.fixed_perturber_velocities = perturber_velocities
         new_system_state, new_integrator_state = ias15_static_step(
             system_state,
             acceleration_func,
             integrator_state,
+            perturber_positions,
+            perturber_velocities,
+            perturber_log_gms,
         )
         return (new_system_state, new_integrator_state), (
             jnp.concatenate(
