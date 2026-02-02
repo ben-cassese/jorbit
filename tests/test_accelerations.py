@@ -59,6 +59,9 @@ def _gr_agreement_w_reboundx(n_tracer: int, n_massive: int, seed: int) -> None:
         massive_velocities=massive_v,
         log_gms=jnp.log(ms),
         time=0.0,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={"c2": 100.0},
     )
     jorb_res = ppn_gravity(s)
@@ -105,6 +108,9 @@ def _newton_agreement_w_rebound(n_tracer: int, n_massive: int, seed: int) -> Non
         massive_velocities=massive_v,
         log_gms=jnp.log(ms),
         time=0.0,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={"c2": 100.0},
     )
     jorb_res = newtonian_gravity(s)
@@ -147,6 +153,9 @@ def test_static_gr_convergence() -> None:
         tracer_velocities=jnp.array([[0.0, 0, 0]]),
         log_gms=perturber_log_gms,
         time=Time("2026-01-01").tdb.jd,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
 

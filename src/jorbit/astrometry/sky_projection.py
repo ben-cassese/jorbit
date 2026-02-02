@@ -136,6 +136,9 @@ def on_sky(
         tracer_velocities=jnp.array([v]),
         log_gms=jnp.empty(0),
         time=time,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
         acceleration_func_kwargs=acc_func_kwargs,
     )
     a0 = acc_func(state)

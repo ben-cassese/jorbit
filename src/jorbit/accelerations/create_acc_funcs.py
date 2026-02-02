@@ -40,8 +40,8 @@ def create_newtonian_ephemeris_acceleration_func(
             tracer_velocities=inputs.tracer_velocities,
             log_gms=inputs.log_gms,
             time=inputs.time,
-            fixed_perturber_positions=perturber_xs[None, :],
-            fixed_perturber_velocities=perturber_vs[None, :],
+            fixed_perturber_positions=perturber_xs,
+            fixed_perturber_velocities=perturber_vs,
             fixed_perturber_log_gms=perturber_log_gms,
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
@@ -78,8 +78,8 @@ def create_gr_ephemeris_acceleration_func(
             tracer_velocities=inputs.tracer_velocities,
             log_gms=inputs.log_gms,
             time=inputs.time,
-            fixed_perturber_positions=perturber_xs[None, :],
-            fixed_perturber_velocities=perturber_vs[None, :],
+            fixed_perturber_positions=perturber_xs,
+            fixed_perturber_velocities=perturber_vs,
             fixed_perturber_log_gms=perturber_log_gms,
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
