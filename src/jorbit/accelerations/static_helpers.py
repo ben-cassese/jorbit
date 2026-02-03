@@ -9,6 +9,8 @@ from astropy.time import Time
 
 from jorbit.data.constants import IAS15_H
 from jorbit.ephemeris.ephemeris import Ephemeris
+from jorbit.integrators import ias15_step
+from jorbit.utils.states import IAS15IntegratorState
 
 
 def precompute_perturber_positions(
@@ -117,3 +119,73 @@ def precompute_perturber_positions(
         obs_indices,
         gms,
     )
+
+
+def _get_intermediate_dts(
+    initial_system_state: IAS15IntegratorState,
+    acceleration_func: jax.tree_util.Partial,
+    final_time: float,
+    initial_integrator_state: IAS15IntegratorState,
+) -> jnp.ndarray:
+
+    def step_needed(args: tuple) -> tuple:
+        system_state, integrator_state, last_meaningful_dt, iter_num = args
+
+        t = system_state.time
+
+        diff = final_time - t
+        step_length = jnp.sign(diff) * jnp.min(
+            jnp.array([jnp.abs(diff), jnp.abs(integrator_state.dt)])
+        )
+
+        integrator_state.dt = step_length
+
+        system_state, integrator_state = ias15_step(
+            system_state, acceleration_func, integrator_state
+        )
+        return system_state, integrator_state, last_meaningful_dt, iter_num + 1
+
+    def cond_func(args: tuple) -> bool:
+        system_state, integrator_state, _last_meaningful_dt, iter_num = args
+        t = system_state.time
+
+        step_length = jnp.sign(final_time - t) * jnp.min(
+            jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
+        )
+        return (step_length != 0) & (iter_num < 10_000)
+
+    args = (
+        initial_system_state,
+        initial_integrator_state,
+        initial_integrator_state.dt,
+        0,
+    )
+    dts = []
+    while cond_func(args):
+        args = step_needed(args)
+        if args[1].dt_last_done != 0:
+            dts.append(args[1].dt_last_done)
+
+    return jnp.array(dts), args[0], args[1]
+
+
+def _get_all_intermediate_dts(
+    initial_system_state: IAS15IntegratorState,
+    acceleration_func: jax.tree_util.Partial,
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+) -> jnp.ndarray:
+    all_dts = []
+    system_state = initial_system_state
+    integrator_state = initial_integrator_state
+
+    for final_time in times:
+        dts, system_state, integrator_state = _get_intermediate_dts(
+            system_state,
+            acceleration_func,
+            final_time,
+            integrator_state,
+        )
+        all_dts.append(dts)
+
+    return jnp.concatenate(all_dts)
