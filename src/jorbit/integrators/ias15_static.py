@@ -58,7 +58,7 @@ def ias15_static_step(
         tuple[SystemState, IAS15IntegratorState]:
             The new system state and new integrator state.
     """
-    n_pc_iterations = 4
+    n_pc_iterations = 3
     t_beginning = initial_system_state.time
 
     M = initial_system_state.massive_positions.shape[0]
@@ -230,14 +230,14 @@ def ias15_static_evolve(
         return (new_system_state, new_integrator_state), (
             jnp.concatenate(
                 (
-                    system_state.massive_positions,
-                    system_state.tracer_positions,
+                    new_system_state.massive_positions,
+                    new_system_state.tracer_positions,
                 )
             ),
             jnp.concatenate(
                 (
-                    system_state.massive_velocities,
-                    system_state.tracer_velocities,
+                    new_system_state.massive_velocities,
+                    new_system_state.tracer_velocities,
                 )
             ),
         )
