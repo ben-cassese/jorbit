@@ -35,7 +35,7 @@ def ias15_static_step(
 
     Like ias15_step, but with a fixed number of predictor-corrector iterations, no
     checks for convergence, no checks for step size appropriateness, and no next step
-    predictions. Right now hard-coded to 4 predictor-corrector iterations. Blindly
+    predictions. Right now hard-coded to 3 predictor-corrector iterations. Blindly
     trusts what it's given in exchange for no logic branches and better JIT compilation.
 
     Args:

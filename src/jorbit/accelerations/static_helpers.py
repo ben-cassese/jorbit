@@ -207,50 +207,53 @@ def get_all_dynamic_intermediate_dts(
     return jnp.concatenate(all_dts), jnp.cumsum(jnp.array(obs_inds)) - 1
 
 
-def get_fixed_intermediate_dts(t0: Time, times: Time, max_step_size: float) -> tuple:
-    """Generate fixed intermediate step times between observation times.
+# not used for now- more efficient to just run the adaptive integrator once to get
+# "optimal" steps than iterate with different guesses for uniform steps
 
-    Given a set of observation times, generate a set of step times that includes
-    intermediate steps such that no step is larger than max_step_size.
+# def get_fixed_intermediate_dts(t0: Time, times: Time, max_step_size: float) -> tuple:
+#     """Generate fixed intermediate step times between observation times.
 
-    Args:
-        t0 (Time):
-            Initial time to start an integration
-        times (Time):
-            Times at which observations are made
-        max_step_size (float):
-            Maximum step size to use during an integration. This function will insert
-            intermediate steps between the observation times as needed to keep the step
-            size below this value.
+#     Given a set of observation times, generate a set of step times that includes
+#     intermediate steps such that no step is larger than max_step_size.
 
-    Returns:
-        tuple:
-            all_dts (jnp.ndarray):
-                Array of all step sizes dt used in the integration, including inserted
-                intermediate steps.
-            obs_indices (jnp.ndarray):
-                Array of indices into all_dts that correspond to the original
-                observation times.
-    """
-    times = times.tdb.jd
-    if times.shape == ():
-        times = jnp.array([times])
-    t0 = t0.tdb.jd
+#     Args:
+#         t0 (Time):
+#             Initial time to start an integration
+#         times (Time):
+#             Times at which observations are made
+#         max_step_size (float):
+#             Maximum step size to use during an integration. This function will insert
+#             intermediate steps between the observation times as needed to keep the step
+#             size below this value.
 
-    times = jnp.concatenate([jnp.array([t0]), times])
-    diffs = jnp.diff(times)
+#     Returns:
+#         tuple:
+#             all_dts (jnp.ndarray):
+#                 Array of all step sizes dt used in the integration, including inserted
+#                 intermediate steps.
+#             obs_indices (jnp.ndarray):
+#                 Array of indices into all_dts that correspond to the original
+#                 observation times.
+#     """
+#     times = times.tdb.jd
+#     if times.shape == ():
+#         times = jnp.array([times])
+#     t0 = t0.tdb.jd
 
-    obs_indices = []
-    all_dts = []
-    for i in range(len(diffs)):
-        n_steps = int(jnp.ceil(diffs[i] / max_step_size))
-        step_size = diffs[i] / n_steps
-        if n_steps == 0:
-            n_steps = 1
-            step_size = 0.0
-        all_dts.extend([step_size] * n_steps)
-        obs_indices.append(len(all_dts))
+#     times = jnp.concatenate([jnp.array([t0]), times])
+#     diffs = jnp.diff(times)
 
-    obs_indices = jnp.array(obs_indices)
+#     obs_indices = []
+#     all_dts = []
+#     for i in range(len(diffs)):
+#         n_steps = int(jnp.ceil(diffs[i] / max_step_size))
+#         step_size = diffs[i] / n_steps
+#         if n_steps == 0:
+#             n_steps = 1
+#             step_size = 0.0
+#         all_dts.extend([step_size] * n_steps)
+#         obs_indices.append(len(all_dts))
 
-    return jnp.array(all_dts), obs_indices - 1
+#     obs_indices = jnp.array(obs_indices)
+
+#     return jnp.array(all_dts), obs_indices - 1
