@@ -3,7 +3,6 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import astropy.units as u
 import jax.numpy as jnp
 from astropy.time import Time
 
@@ -14,17 +13,15 @@ from jorbit.utils.states import IAS15IntegratorState
 
 
 def precompute_perturber_positions(
-    t0: Time, times: Time, max_step_size: u.Quantity, de_ephemeris_version: str = "440"
+    t0: Time, dts: jnp.ndarray, de_ephemeris_version: str = "440"
 ) -> tuple:
     """Precompute the states of perturbers for use in repeated integrations.
 
     Args:
         t0 (Time): Initial time to start an integration
-        times (Time): Times at which observations are made
-        max_step_size (u.Quantity):
-            Maximum step size to use during an integration. This function will insert
-            intermediate steps between the observation times as needed to keep the step
-            size below this value.
+        dts (jnp.ndarray):
+            Array of all step sizes dt used in the integration, including inserted
+            intermediate steps.
         de_ephemeris_version (str, optional):
             Version of the JPL DE ephemeris to use. Defaults to "440", accepts "430"
 
@@ -40,42 +37,12 @@ def precompute_perturber_positions(
                 the positions of the asteroid perturbers at each step and substep.
             asteroid_vel (jnp.ndarray):
                 Like asteroid_pos, but for velocities.
-            all_times (jnp.ndarray):
-                Array of all step times dt used in the integration, including inserted
-                intermediate steps. Does not include substeps.
-            obs_indices (jnp.ndarray):
-                Array of indices into all_times that correspond to the original
-                observation
     """
     # this whole function could absolutely be done without loops/appends, but it only
     # runs once so I don't really care
-    times = times.tdb.jd
-    if times.shape == ():
-        times = jnp.array([times])
+
     t0 = t0.tdb.jd
-
-    times = jnp.concatenate([jnp.array([t0]), times])
-
-    diffs = jnp.diff(times)
-
-    all_times = []
-    obs_indices = []
-    current_index = 0
-
-    obs_indices.append(current_index)
-    for i in range(len(diffs)):
-        n_steps = int(jnp.ceil(diffs[i] / max_step_size))
-        step_size = diffs[i] / n_steps
-
-        for j in range(n_steps):
-            all_times.append(times[i] + j * step_size)
-            current_index += 1
-        obs_indices.append(current_index)
-
-    all_times.append(times[-1])
-
-    all_times = jnp.array(all_times)
-    obs_indices = jnp.array(obs_indices)
+    all_times = jnp.cumsum(jnp.concatenate([jnp.array([0.0]), dts])) + t0
 
     eph = Ephemeris(
         ssos="default solar system",
@@ -115,18 +82,34 @@ def precompute_perturber_positions(
         planet_vel,
         asteroid_pos,
         asteroid_vel,
-        all_times,
-        obs_indices,
         gms,
     )
 
 
-def _get_intermediate_dts(
+def get_dynamic_intermediate_dts(
     initial_system_state: IAS15IntegratorState,
     acceleration_func: jax.tree_util.Partial,
     final_time: float,
     initial_integrator_state: IAS15IntegratorState,
 ) -> jnp.ndarray:
+    """Use the adaptive IAS15 stepper to compute the required steps between two times.
+
+    Args:
+        initial_system_state (IAS15IntegratorState):
+            The initial state of the system at the start of the integration. Contains
+            the initial time.
+        acceleration_func (jax.tree_util.Partial):
+            The acceleration function to use for the integration.
+        final_time (float):
+            The final time to integrate to.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        jnp.ndarray:
+            Array of the intermediate step sizes that would be taken by the IAS15
+            integrator between the initial time and final time.
+    """
 
     def step_needed(args: tuple) -> tuple:
         system_state, integrator_state, last_meaningful_dt, iter_num = args
@@ -166,26 +149,108 @@ def _get_intermediate_dts(
         if args[1].dt_last_done != 0:
             dts.append(args[1].dt_last_done)
 
-    return jnp.array(dts), args[0], args[1]
+    if len(dts) == 0:
+        dts = jnp.array([0.0])
+    return jnp.array(dts), len(dts), args[0], args[1]
 
 
-def _get_all_intermediate_dts(
+def get_all_dynamic_intermediate_dts(
     initial_system_state: IAS15IntegratorState,
     acceleration_func: jax.tree_util.Partial,
-    times: jnp.ndarray,
+    times: Time,
     initial_integrator_state: IAS15IntegratorState,
 ) -> jnp.ndarray:
+    """Get all intermediate step sizes needed to integrate over a series of times.
+
+    Just a wrapper around get_dynamic_intermediate_dts to handle multiple times.
+
+    Args:
+        initial_system_state (IAS15IntegratorState):
+            The initial state of the system at the start of the integration. Contains
+            the initial time.
+        acceleration_func (jax.tree_util.Partial):
+            The acceleration function to use for the integration.
+        times (Time):
+            The final times to integrate to.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        tuple:
+            all_dts (jnp.ndarray):
+                Array of all intermediate step sizes that would be taken by the IAS15
+                integrator between the initial time and each of the final times. The
+                array is flattened, 1D.
+            obs_indices (jnp.ndarray):
+                Array of indices into all_dts that correspond to the original
+                observation times.
+    """
+    times = times.tdb.jd
+    if times.shape == ():
+        times = jnp.array([times])
+
     all_dts = []
+    obs_inds = []
     system_state = initial_system_state
     integrator_state = initial_integrator_state
 
     for final_time in times:
-        dts, system_state, integrator_state = _get_intermediate_dts(
+        dts, num_steps, system_state, integrator_state = get_dynamic_intermediate_dts(
             system_state,
             acceleration_func,
             final_time,
             integrator_state,
         )
         all_dts.append(dts)
+        obs_inds.append(num_steps)
 
-    return jnp.concatenate(all_dts)
+    return jnp.concatenate(all_dts), jnp.cumsum(jnp.array(obs_inds)) - 1
+
+
+def get_fixed_intermediate_dts(t0: Time, times: Time, max_step_size: float) -> tuple:
+    """Generate fixed intermediate step times between observation times.
+
+    Given a set of observation times, generate a set of step times that includes
+    intermediate steps such that no step is larger than max_step_size.
+
+    Args:
+        t0 (Time):
+            Initial time to start an integration
+        times (Time):
+            Times at which observations are made
+        max_step_size (float):
+            Maximum step size to use during an integration. This function will insert
+            intermediate steps between the observation times as needed to keep the step
+            size below this value.
+
+    Returns:
+        tuple:
+            all_dts (jnp.ndarray):
+                Array of all step sizes dt used in the integration, including inserted
+                intermediate steps.
+            obs_indices (jnp.ndarray):
+                Array of indices into all_dts that correspond to the original
+                observation times.
+    """
+    times = times.tdb.jd
+    if times.shape == ():
+        times = jnp.array([times])
+    t0 = t0.tdb.jd
+
+    times = jnp.concatenate([jnp.array([t0]), times])
+    diffs = jnp.diff(times)
+
+    obs_indices = []
+    all_dts = []
+    for i in range(len(diffs)):
+        n_steps = int(jnp.ceil(diffs[i] / max_step_size))
+        step_size = diffs[i] / n_steps
+        if n_steps == 0:
+            n_steps = 1
+            step_size = 0.0
+        all_dts.extend([step_size] * n_steps)
+        obs_indices.append(len(all_dts))
+
+    obs_indices = jnp.array(obs_indices)
+
+    return jnp.array(all_dts), obs_indices - 1
