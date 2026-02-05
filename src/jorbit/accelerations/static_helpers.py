@@ -3,8 +3,10 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+import astropy.units as u
 import jax.numpy as jnp
 from astropy.time import Time
+from scipy.special import eval_chebyt
 
 from jorbit.data.constants import IAS15_H
 from jorbit.ephemeris.ephemeris import Ephemeris
@@ -257,3 +259,64 @@ def get_all_dynamic_intermediate_dts(
 #     obs_indices = jnp.array(obs_indices)
 
 #     return jnp.array(all_dts), obs_indices - 1
+
+
+def generate_perturber_chebyshev_coeffs(
+    obs_time: Time, ephem: Ephemeris
+) -> jnp.ndarray:
+    """Generate a localized set of Chebyshev coefficients for light travel time corrections.
+
+    Usually we can just query an ephemeris for a set of coefficients, but here we want
+    to cache as much information as possible to make repeated evaluations fast. But,
+    since we don't know the light travel time correction a priori, we still need a
+    continuous function to approximate the perturber's position over a small time
+    window. I'd take the relevant chunk of Chebyshev coefficients from an ephemeris,
+    but there's a chance that the correction spans two piecewise chunks, so instead
+    we just fit a new set of Chebyshev polynomials over a small window around the
+    observation time.
+
+    Assumes the light travel time is < 6 days, meaning it will break beyond ~1000 AU.
+
+    Args:
+        obs_time (Time):
+            The time of the observation. The light travel time correction will evolve
+            the system backwards from this.
+        ephem (Ephemeris):
+            The ephemeris to use for generating the Chebyshev coefficients.
+
+    Returns:
+        tuple:
+            position_coeffs (jnp.ndarray):
+                Chebyshev coefficients for the positions of the perturbers, shape
+                (deg + 1, N_perturbers, 3)
+            velocity_coeffs (jnp.ndarray):
+                Chebyshev coefficients for the velocities of the perturbers, shape
+                (deg + 1, N_perturbers, 3)
+
+    """
+    times = (
+        obs_time + jnp.linspace(-6, 2, 1000) * u.day
+    )  # should be good for ~250 AU light travel time
+    actual_xs, actual_vs = jax.vmap(ephem.processor.state)(times.tdb.jd)
+
+    deg = 9
+    t = times.tdb.jd
+    t0, t1 = t[0], t[-1]
+    x = 2 * (t - t0) / (t1 - t0) - 1
+
+    def internal(data: jnp.ndarray) -> jnp.ndarray:
+        coeffs_list = []
+        for obj in range(data.shape[1]):
+            obj_coeffs = []
+            for dim in range(3):
+                A = jnp.column_stack([eval_chebyt(k, x) for k in range(deg + 1)])
+                coeffs, *_ = jnp.linalg.lstsq(A, data[:, obj, dim], rcond=None)
+                obj_coeffs.append(coeffs)
+            coeffs_list.append(jnp.stack(obj_coeffs))
+        coeffs_list = jnp.array(coeffs_list)
+        return jnp.moveaxis(coeffs_list, 2, 0)
+
+    position_coeffs = internal(actual_xs)[::-1]
+    velocity_coeffs = internal(actual_vs)[::-1]
+
+    return position_coeffs, velocity_coeffs

@@ -243,3 +243,88 @@ def create_static_default_acceleration_func() -> jax.tree_util.Partial:
         return gr_acc + newtonian_acc
 
     return jax.tree_util.Partial(func)
+
+
+def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
+    """Create a function that adds gravity from fixed perturbers over a small time range for on-sky calculations.
+
+    This is sort of a hybrid between the fully continuous
+    default_ephemeris_acceleration_func and the static_default_acceleration_func.
+    The final acceleration function can be queried at continuous times, but you have to
+    pre-compute the Chebyshev coefficients for the perturber positions and velocities
+    over a small time range and store them in the SystemState's
+    acceleration_func_kwargs. It's essentially the same as limiting yourself to one
+    ephemeris interval, but with the flexibility to create your own intervals that might
+    span several DE intervals.
+
+    Returns:
+        A jax.tree_util.Partial function that takes a SystemState and returns the
+            accelerations due to the perturbers.
+    """
+
+    def static_on_sky_acc(inputs: SystemState) -> jnp.ndarray:
+        num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
+        # num_newtonian_perturbers = 16  # the asteroids
+
+        def eval_cheby(coefficients: jnp.ndarray, x: float) -> tuple:
+            b_ii = 0.0
+            b_i = 0.0
+
+            def scan_func(X: tuple, a: jnp.ndarray) -> tuple:
+                b_i, b_ii = X
+                tmp = b_i
+                b_i = a + 2 * x * b_i - b_ii
+                b_ii = tmp
+                return (b_i, b_ii), None
+
+            (b_i, b_ii), _ = jax.lax.scan(scan_func, (b_i, b_ii), coefficients[:-1])
+            return coefficients[-1] + x * b_i - b_ii
+
+        x_coeffs = inputs.acceleration_func_kwargs["perturber_position_cheby_coeffs"]
+        v_coeffs = inputs.acceleration_func_kwargs["perturber_velocity_cheby_coeffs"]
+        cheby_t0 = inputs.acceleration_func_kwargs["cheby_t0"]
+        cheby_t1 = inputs.acceleration_func_kwargs["cheby_t1"]
+
+        x = 2 * (inputs.time - cheby_t0) / (cheby_t1 - cheby_t0) - 1
+
+        perturber_xs = jax.vmap(
+            jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)
+        )(x_coeffs, x)
+        perturber_vs = jax.vmap(
+            jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)
+        )(v_coeffs, x)
+
+        # from here out it looks like create_static_default_acceleration_func
+        perturber_log_gms = inputs.fixed_perturber_log_gms
+
+        gr_state = SystemState(
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
+            tracer_positions=inputs.tracer_positions,
+            tracer_velocities=inputs.tracer_velocities,
+            log_gms=inputs.log_gms[:num_gr_perturbers],
+            time=inputs.time,
+            fixed_perturber_positions=perturber_xs[:num_gr_perturbers],
+            fixed_perturber_velocities=perturber_vs[:num_gr_perturbers],
+            fixed_perturber_log_gms=perturber_log_gms[:num_gr_perturbers],
+            acceleration_func_kwargs=inputs.acceleration_func_kwargs,
+        )
+        gr_acc = static_ppn_gravity(gr_state)
+
+        newtonian_state = SystemState(
+            massive_positions=inputs.massive_positions,
+            massive_velocities=inputs.massive_velocities,
+            tracer_positions=inputs.tracer_positions,
+            tracer_velocities=inputs.tracer_velocities,
+            log_gms=inputs.log_gms[num_gr_perturbers:],
+            time=inputs.time,
+            fixed_perturber_positions=perturber_xs[num_gr_perturbers:],
+            fixed_perturber_velocities=perturber_vs[num_gr_perturbers:],
+            fixed_perturber_log_gms=perturber_log_gms[num_gr_perturbers:],
+            acceleration_func_kwargs=inputs.acceleration_func_kwargs,
+        )
+        newtonian_acc = newtonian_gravity(newtonian_state)
+
+        return gr_acc + newtonian_acc
+
+    return jax.tree_util.Partial(static_on_sky_acc)

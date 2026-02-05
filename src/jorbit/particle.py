@@ -581,6 +581,10 @@ class Particle:
         """
         if state is None:
             state = self._cartesian_state
+            integrator_state = self._integrator_state
+        else:
+            a0 = self.gravity(state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
 
         if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
@@ -598,7 +602,7 @@ class Particle:
                 state,
                 self.gravity,
                 self._integrator,
-                self._integrator_state,
+                integrator_state,
                 inds,
             )
         )
@@ -640,6 +644,10 @@ class Particle:
 
         if state is None:
             state = self._cartesian_state
+            integrator_state = self._integrator_state
+        else:
+            a0 = self.gravity(state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
 
         if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
@@ -656,7 +664,7 @@ class Particle:
             state,
             self.gravity,
             self._integrator,
-            self._integrator_state,
+            integrator_state,
             observer_positions,
             inds,
         )
