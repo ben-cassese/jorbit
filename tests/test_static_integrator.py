@@ -11,6 +11,8 @@ from jorbit import Ephemeris, Particle
 from jorbit.accelerations import (
     create_default_ephemeris_acceleration_func,
     create_static_default_acceleration_func,
+)
+from jorbit.accelerations.static_helpers import (
     get_all_dynamic_intermediate_dts,
     precompute_perturber_positions,
 )
