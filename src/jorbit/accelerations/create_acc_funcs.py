@@ -5,6 +5,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from jorbit import Ephemeris
 from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
 from jorbit.accelerations.grav_harmonics import grav_harmonics
 from jorbit.accelerations.newtonian import (
@@ -12,6 +13,15 @@ from jorbit.accelerations.newtonian import (
 )
 from jorbit.ephemeris.ephemeris_processors import EphemerisProcessor
 from jorbit.utils.states import SystemState
+
+__all__ = [
+    "create_default_ephemeris_acceleration_func",
+    "create_ephem_grav_harmonics_acceleration_func",
+    "create_gr_ephemeris_acceleration_func",
+    "create_newtonian_ephemeris_acceleration_func",
+    "create_static_default_acceleration_func",
+    "create_static_default_on_sky_acc_func",
+]
 
 
 def create_newtonian_ephemeris_acceleration_func(
@@ -245,7 +255,7 @@ def create_static_default_acceleration_func() -> jax.tree_util.Partial:
     return jax.tree_util.Partial(func)
 
 
-def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
+def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
     """Create a function that adds gravity from fixed perturbers over a small time range for on-sky calculations.
 
     This is sort of a hybrid between the fully continuous
@@ -261,6 +271,8 @@ def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
         A jax.tree_util.Partial function that takes a SystemState and returns the
             accelerations due to the perturbers.
     """
+    eph = Ephemeris(ssos="default solar system")
+    log_gms = eph.processor.log_gms
 
     def static_on_sky_acc(inputs: SystemState) -> jnp.ndarray:
         num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
@@ -295,7 +307,6 @@ def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
         )(v_coeffs, x)
 
         # from here out it looks like create_static_default_acceleration_func
-        perturber_log_gms = inputs.fixed_perturber_log_gms
 
         gr_state = SystemState(
             massive_positions=inputs.massive_positions,
@@ -306,7 +317,7 @@ def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
             time=inputs.time,
             fixed_perturber_positions=perturber_xs[:num_gr_perturbers],
             fixed_perturber_velocities=perturber_vs[:num_gr_perturbers],
-            fixed_perturber_log_gms=perturber_log_gms[:num_gr_perturbers],
+            fixed_perturber_log_gms=log_gms[:num_gr_perturbers],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
         gr_acc = static_ppn_gravity(gr_state)
@@ -320,7 +331,7 @@ def create_static_default_on_sky_acc_function() -> jax.tree_util.Partial:
             time=inputs.time,
             fixed_perturber_positions=perturber_xs[num_gr_perturbers:],
             fixed_perturber_velocities=perturber_vs[num_gr_perturbers:],
-            fixed_perturber_log_gms=perturber_log_gms[num_gr_perturbers:],
+            fixed_perturber_log_gms=log_gms[num_gr_perturbers:],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
         newtonian_acc = newtonian_gravity(newtonian_state)

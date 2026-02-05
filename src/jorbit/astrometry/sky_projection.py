@@ -99,7 +99,7 @@ def on_sky(
     v: jnp.ndarray,
     time: float,
     observer_position: jnp.ndarray,
-    acc_func: callable,
+    acc_func: jax.tree_util.Partial,
     acc_func_kwargs: dict = {},
 ) -> tuple[float, float]:
     """Compute the on-sky position of a particle from a given observer position.
@@ -119,8 +119,8 @@ def on_sky(
         v (jnp.ndarray): Velocity of the particle, shape (3,).
         time (float): Time at which to compute the on-sky position, JD, tdb.
         observer_position (jnp.ndarray): Position of the observer, shape (3,).
-        acc_func (callable): Acceleration function to use during light travel time
-            correction
+        acc_func (jax.tree_util.Partial): Acceleration function to use during light
+            travel time correction
         acc_func_kwargs (dict, optional): Additional arguments for the acceleration
             function.
 
@@ -157,28 +157,6 @@ def on_sky(
             )
         )
         xz = final_system_state.tracer_positions[0]
-    # def scan_func(carry: tuple, scan_over: None) -> tuple[tuple, None]:
-    #     xz = carry
-    #     earth_distance = jnp.linalg.norm(xz - observer_position)
-    #     light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
-
-    #     _positions, _velocities, final_system_state, _final_integrator_state = (
-    #         ias15_evolve(
-    #             state,
-    #             acc_func,
-    #             jnp.array([state.time - light_travel_time]),
-    #             initial_integrator_state,
-    #         )
-    #     )
-
-    #     return final_system_state.tracer_positions[0], None
-
-    # xz, _ = jax.lax.scan(
-    #     scan_func,
-    #     state.tracer_positions[0],
-    #     None,
-    #     length=3,
-    # )
 
     X = xz - observer_position
     calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)

@@ -310,15 +310,15 @@ class Observations:
         cov_log_dets = jnp.log(jnp.array([jnp.linalg.det(c) for c in cov_matrices]))
 
         return (
-            ra,
-            dec,
+            jnp.array(ra),
+            jnp.array(dec),
             times,
             observatories,
             astrometric_uncertainties,
-            observer_positions,
-            cov_matrices,
-            inv_cov_matrices,
-            cov_log_dets,
+            jnp.array(observer_positions),
+            jnp.array(cov_matrices),
+            jnp.array(inv_cov_matrices),
+            jnp.array(cov_log_dets),
         )
 
     def _final_init_checks(self) -> None:

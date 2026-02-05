@@ -13,6 +13,12 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import ias15_step
 from jorbit.utils.states import IAS15IntegratorState
 
+__all__ = [
+    "generate_perturber_chebyshev_coeffs",
+    "get_all_dynamic_intermediate_dts",
+    "precompute_perturber_positions",
+]
+
 
 def precompute_perturber_positions(
     t0: Time, dts: jnp.ndarray, de_ephemeris_version: str = "440"
@@ -88,7 +94,7 @@ def precompute_perturber_positions(
     )
 
 
-def get_dynamic_intermediate_dts(
+def _get_dynamic_intermediate_dts(
     initial_system_state: IAS15IntegratorState,
     acceleration_func: jax.tree_util.Partial,
     final_time: float,
@@ -197,7 +203,7 @@ def get_all_dynamic_intermediate_dts(
     integrator_state = initial_integrator_state
 
     for final_time in times:
-        dts, num_steps, system_state, integrator_state = get_dynamic_intermediate_dts(
+        dts, num_steps, system_state, integrator_state = _get_dynamic_intermediate_dts(
             system_state,
             acceleration_func,
             final_time,
