@@ -16,13 +16,11 @@ from jorbit.utils.states import SystemState
 
 __all__ = [
     "create_default_ephemeris_acceleration_func",
-    # "create_dynamic_on_sky_helper",
     "create_ephem_grav_harmonics_acceleration_func",
     "create_gr_ephemeris_acceleration_func",
     "create_newtonian_ephemeris_acceleration_func",
     "create_static_default_acceleration_func",
     "create_static_default_on_sky_acc_func",
-    # "create_static_on_sky_helper",
 ]
 
 
@@ -347,19 +345,21 @@ def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
 #     eph_processor: EphemerisProcessor,
 # ) -> jax.tree_util.Partial:
 
-#     def func(t0: float, dt: float, *args) -> tuple:
+#     gms = eph_processor.log_gms
+
+#     def func(t0: float, dt: float, x_coeffs: None, v_coeffs: None) -> tuple:
 #         subtimes = t0 + dt * jnp.concatenate([IAS15_H, jnp.array([1.0])])
 #         perturber_xs, perturber_vs = jax.vmap(eph_processor.state)(subtimes)
-#         return perturber_xs, perturber_vs
+#         return perturber_xs, perturber_vs, gms
 
 #     return jax.tree_util.Partial(func)
 
 
-# def create_static_on_sky_helper() -> jax.tree_util.Partial:
+# def create_static_on_sky_helper(eph_processor: EphemerisProcessor) -> jax.tree_util.Partial:
 
-#     def func(
-#         t0: float, dt: float, x_coeffs: jnp.ndarray, v_coeffs: jnp.ndarray
-#     ) -> tuple:
+#     gms = eph_processor.log_gms
+
+#     def func(t0: float, dt: float, x_coeffs: jnp.ndarray, v_coeffs: jnp.ndarray) -> tuple:
 #         def eval_cheby(coefficients: jnp.ndarray, x: float) -> tuple:
 #             b_ii = 0.0
 #             b_i = 0.0
@@ -379,12 +379,15 @@ def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
 #         # jorbit.accelerations.static_helpers.generate_perturber_chebyshev_coeffs
 #         x = 2 * (subtimes - (t0 - 6.0)) / ((t0 + 2) - (t0 - 6.0)) - 1
 
+#         # vmap over xs -> perturbers -> cartesian components
 #         perturber_xs = jax.vmap(
-#             jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)
+#             jax.vmap(jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)),
+#             in_axes=(None, 0),
 #         )(x_coeffs, x)
 #         perturber_vs = jax.vmap(
-#             jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)
+#             jax.vmap(jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)),
+#             in_axes=(None, 0),
 #         )(v_coeffs, x)
-#         return perturber_xs, perturber_vs
+#         return perturber_xs, perturber_vs, gms
 
 #     return jax.tree_util.Partial(func)

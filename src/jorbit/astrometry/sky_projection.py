@@ -6,7 +6,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jorbit.data.constants import INV_SPEED_OF_LIGHT
-from jorbit.integrators import ias15_evolve, initialize_ias15_integrator_state
+from jorbit.integrators import ias15_static_step, initialize_ias15_integrator_state
 from jorbit.utils.states import SystemState
 
 
@@ -100,10 +100,7 @@ def on_sky(
     time: float,
     observer_position: jnp.ndarray,
     acc_func: jax.tree_util.Partial,
-    perturber_state_func: jax.tree_util.Partial,
     acc_func_kwargs: dict = {},
-    perturber_x_coeffs: jnp.ndarray = None,
-    perturber_v_coeffs: jnp.ndarray = None,
 ) -> tuple[float, float]:
     """Compute the on-sky position of a particle from a given observer position.
 
@@ -122,18 +119,12 @@ def on_sky(
         v (jnp.ndarray): Velocity of the particle, shape (3,).
         time (float): Time at which to compute the on-sky position, JD, tdb.
         observer_position (jnp.ndarray): Position of the observer, shape (3,).
-        acc_func (jax.tree_util.Partial): Acceleration function to use during light
-            travel time correction
-        perturber_state_func (jax.tree_util.Partial):
-            Function to compute the position/velocity of any fixed perturbers.
+        acc_func (jax.tree_util.Partial):
+            Acceleration function to use during light travel time correction. Must be a
+            continuous function that can evaluate the positions of any fixed perturbers
+            at arbitrary times.
         acc_func_kwargs (dict, optional): Additional arguments for the acceleration
             function.
-        perturber_x_coeffs (jnp.ndarray, optional):
-            Chebyshev coefficients for the perturber positions. Optional, only needed if
-            the acceleration function requires fixed perturbers.
-        perturber_v_coeffs (jnp.ndarray, optional):
-            Chebyshev coefficients for the perturber velocities. Optional, only needed
-            if the acceleration function requires fixed perturbers.
 
     Returns:
         tuple[float, float]:
@@ -141,10 +132,6 @@ def on_sky(
     """
     # has to be one particle at one time to get the light travel time right
 
-    # get initial perturber positions/velocities via a dummy call w/ 0.1 day dt
-    fixed_perturber_x0, fixed_perturber_v0, fixed_perturber_log_gms = (
-        perturber_state_func(time, 0.1, perturber_x_coeffs, perturber_v_coeffs)
-    )
     state = SystemState(
         massive_positions=jnp.empty((0, 3)),
         massive_velocities=jnp.empty((0, 3)),
@@ -152,9 +139,11 @@ def on_sky(
         tracer_velocities=jnp.array([v]),
         log_gms=jnp.empty(0),
         time=time,
-        fixed_perturber_positions=fixed_perturber_x0[0],  # only taking the first time
-        fixed_perturber_velocities=fixed_perturber_v0[0],
-        fixed_perturber_log_gms=fixed_perturber_log_gms,
+        fixed_perturber_positions=jnp.empty(
+            (0, 3)
+        ),  # these will be overwritten by the acc_func, which has to be continuous
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty(0),
         acceleration_func_kwargs=acc_func_kwargs,
     )
     a0 = acc_func(state)
@@ -164,21 +153,20 @@ def on_sky(
     for _ in range(3):
         earth_distance = jnp.linalg.norm(xz - observer_position)
         light_travel_time = earth_distance * INV_SPEED_OF_LIGHT
-        # dt = -light_travel_time
+        initial_integrator_state.dt = -light_travel_time
 
-        # fixed_perturber_xs, fixed_perturber_vs, fixed_perturber_log_gms = (
-        #     perturber_state_func(time, dt, perturber_x_coeffs, perturber_v_coeffs)
-        # )
-
-        _positions, _velocities, final_system_state, _final_integrator_state = (
-            ias15_evolve(
-                state,
-                acc_func,
-                jnp.array([state.time - light_travel_time]),
-                initial_integrator_state,
-            )
+        new_system_state, _new_integrator_state = ias15_static_step(
+            state,
+            acc_func,
+            initial_integrator_state,
+            fixed_perturber_positions=jnp.empty(
+                (8, 0, 3)
+            ),  # dummy shapes, the acc_func will handle the perturbers
+            fixed_perturber_velocities=jnp.empty((8, 0, 3)),
+            fixed_perturber_log_gms=jnp.empty(0),
         )
-        xz = final_system_state.tracer_positions[0]
+
+        xz = new_system_state.tracer_positions[0]
 
     X = xz - observer_position
     calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
