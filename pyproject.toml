@@ -26,7 +26,6 @@ dependencies = [
     "astropy>=6.0.1",
     "astroquery>=0.4.7",
     "chex>=0.1.88",
-    "emcee>=3.1.6",
     "ipykernel>=6.29.5",
     "jax>=0.4.30",
     "jplephem>=2.22",
@@ -68,6 +67,8 @@ dev = [
     "rebound>=4.4.10",
     "reboundx>=4.4.1",
     "lxml>=6.0.2",
+    "emcee>=3.1.6",
+    "corner>=2.2.3",
 ]
 
 [project.urls]
