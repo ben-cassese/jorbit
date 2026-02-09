@@ -218,6 +218,17 @@ wheels = [
 ]
 
 [[package]]
+name = "assist"
+version = "1.1.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.1.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "rebound" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/25/14/735eb9a7e716d2ca9dbcefef57899cf582a09396073bac00f8b5441f9955/assist-1.1.11.tar.gz", hash = "sha256:f70bfc8d18f0537dae930bebe24ef4e67b57cafc9965b3898072338484feefc2", size = 49109, upload-time = "2025-04-29T22:01:45.835Z" }
+
+[[package]]
 name = "astropy"
 version = "6.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1711,6 +1722,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "assist" },
     { name = "black", extra = ["jupyter"] },
     { name = "codespell" },
     { name = "corner" },
@@ -1763,6 +1775,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "assist", specifier = ">=1.1.11" },
     { name = "black", extras = ["jupyter"], specifier = ">=24.10.0" },
     { name = "codespell", specifier = ">=2.4.1" },
     { name = "corner", specifier = ">=2.2.3" },
