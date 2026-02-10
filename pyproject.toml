@@ -70,7 +70,6 @@ dev = [
     "emcee>=3.1.6",
     "corner>=2.2.3",
     "assist>=1.1.11",
-    "setuptools>=75.6.0",
 ]
 
 [project.urls]
@@ -94,7 +93,7 @@ exclude = [
 pydocstyle.convention = "google"
 
 [tool.uv]
-no-build-isolation-package = ["reboundx"]
+no-build-isolation-package = ["rebound", "reboundx"]
 
 [tool.codespell]
 skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"

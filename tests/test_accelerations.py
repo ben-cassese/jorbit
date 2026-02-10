@@ -5,6 +5,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
+
+# NOTE: The reboundx comparison tests below are commented out because they
+# require rebound/reboundx which can segfault in some environments. They are
+# retained for reference and can be run manually when needed.
 import rebound
 import reboundx
 from astropy.time import Time
@@ -162,3 +166,136 @@ def test_static_gr_convergence() -> None:
 
     diff = g1 - g2
     assert jnp.allclose(diff, 0.0, atol=1e-14, rtol=1e-14)
+
+
+def _make_state(
+    n_massive: int, n_tracer: int, n_perturber: int, c2: float, seed: int
+) -> SystemState:
+    """Create a SystemState with random positions/velocities for testing."""
+    rng = np.random.RandomState(seed)
+    m_pos = (
+        jnp.array(rng.normal(0, 10, (n_massive, 3)))
+        if n_massive > 0
+        else jnp.empty((0, 3))
+    )
+    m_vel = (
+        jnp.array(rng.normal(0, 1, (n_massive, 3)))
+        if n_massive > 0
+        else jnp.empty((0, 3))
+    )
+    m_gms = (
+        jnp.array(rng.uniform(0.1, 1.0, n_massive))
+        if n_massive > 0
+        else jnp.empty((0,))
+    )
+    t_pos = (
+        jnp.array(rng.normal(0, 10, (n_tracer, 3)))
+        if n_tracer > 0
+        else jnp.empty((0, 3))
+    )
+    t_vel = (
+        jnp.array(rng.normal(0, 1, (n_tracer, 3)))
+        if n_tracer > 0
+        else jnp.empty((0, 3))
+    )
+    p_pos = (
+        jnp.array(rng.normal(0, 10, (n_perturber, 3)))
+        if n_perturber > 0
+        else jnp.empty((0, 3))
+    )
+    p_vel = (
+        jnp.array(rng.normal(0, 1, (n_perturber, 3)))
+        if n_perturber > 0
+        else jnp.empty((0, 3))
+    )
+    p_gms = (
+        jnp.array(rng.uniform(0.1, 1.0, n_perturber))
+        if n_perturber > 0
+        else jnp.empty((0,))
+    )
+
+    return SystemState(
+        massive_positions=m_pos,
+        massive_velocities=m_vel,
+        tracer_positions=t_pos,
+        tracer_velocities=t_vel,
+        log_gms=jnp.log(m_gms) if n_massive > 0 else jnp.empty((0,)),
+        time=0.0,
+        fixed_perturber_positions=p_pos,
+        fixed_perturber_velocities=p_vel,
+        fixed_perturber_log_gms=jnp.log(p_gms) if n_perturber > 0 else jnp.empty((0,)),
+        acceleration_func_kwargs={"c2": c2},
+    )
+
+
+def test_ppn_static_convergence() -> None:
+    """Test that static_ppn_gravity converges to ppn_gravity across configurations."""
+    configs = [
+        (5, 0, 0),  # massive only
+        (5, 3, 0),  # massive + tracers
+        (5, 3, 4),  # perturbers + massive + tracers
+        (0, 3, 4),  # perturbers + tracers only
+    ]
+    for n_m, n_t, n_p in configs:
+        state = _make_state(n_m, n_t, n_p, c2=100.0, seed=42)
+        res_ppn = ppn_gravity(state)
+        res_static = static_ppn_gravity(state, 10)
+        assert jnp.allclose(res_ppn, res_static, atol=1e-15), (
+            f"P={n_p},M={n_m},T={n_t}: ppn vs static max diff="
+            f"{float(jnp.max(jnp.abs(res_ppn - res_static)))}"
+        )
+
+
+def test_ppn_fixed_perturber_equivalence() -> None:
+    """Test that moving particles from massive to fixed_perturber gives same tracer accel.
+
+    When massive bodies are moved to fixed_perturber fields, the tracer
+    accelerations should match to machine precision. The massive particle
+    accelerations are not returned in the perturber configuration, so only
+    the tracer portion is compared.
+    """
+    rng = np.random.RandomState(123)
+    n_bodies = 5
+    n_tracers = 3
+
+    body_pos = jnp.array(rng.normal(0, 10, (n_bodies, 3)))
+    body_vel = jnp.array(rng.normal(0, 1, (n_bodies, 3)))
+    body_gms = jnp.array(rng.uniform(0.1, 1.0, n_bodies))
+    tracer_pos = jnp.array(rng.normal(0, 10, (n_tracers, 3)))
+    tracer_vel = jnp.array(rng.normal(0, 1, (n_tracers, 3)))
+
+    # Config A: bodies as massive particles
+    state_a = SystemState(
+        massive_positions=body_pos,
+        massive_velocities=body_vel,
+        tracer_positions=tracer_pos,
+        tracer_velocities=tracer_vel,
+        log_gms=jnp.log(body_gms),
+        time=0.0,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
+        acceleration_func_kwargs={"c2": 100.0},
+    )
+    res_a = ppn_gravity(state_a)
+    tracer_acc_a = res_a[n_bodies:]  # tracer portion
+
+    # Config B: same bodies as fixed perturbers
+    state_b = SystemState(
+        massive_positions=jnp.empty((0, 3)),
+        massive_velocities=jnp.empty((0, 3)),
+        tracer_positions=tracer_pos,
+        tracer_velocities=tracer_vel,
+        log_gms=jnp.empty((0,)),
+        time=0.0,
+        fixed_perturber_positions=body_pos,
+        fixed_perturber_velocities=body_vel,
+        fixed_perturber_log_gms=jnp.log(body_gms),
+        acceleration_func_kwargs={"c2": 100.0},
+    )
+    tracer_acc_b = ppn_gravity(state_b)
+
+    assert jnp.allclose(tracer_acc_a, tracer_acc_b, atol=1e-15), (
+        f"Tracer accel mismatch: max diff="
+        f"{float(jnp.max(jnp.abs(tracer_acc_a - tracer_acc_b)))}"
+    )

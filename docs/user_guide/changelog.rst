@@ -5,6 +5,8 @@ Changelog
 
 - Added option to select DE ephemeris version (DE430 or DE440) when creating `Ephemeris` and `Particle` objects. Updated relevant tutorials/tests.
 - Major refactor of ias15.py, no longer resembles the original REBOUND implementation. Removed IAS15Helper, but otherwise no API changes.
+- Addition of `fixed_perturber_positions`, `fixed_perturber_velocities`, and `fixed_perturber_log_gms` to `SystemState`. These quantities can be used in different acceleration functions to indicate that perturber-perturber interactions should be ignored and that gradients with respect to these quantities don't need to be tracked.
+- Major refactor of ppn_gravity, the outputs are unchanged but now unnecessary perturber-perturber interactions are excluded.
 
 **1.1.0 (01/2026)**
 
