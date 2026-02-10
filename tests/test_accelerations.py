@@ -6,11 +6,6 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
 
-# NOTE: The reboundx comparison tests below are commented out because they
-# require rebound/reboundx which can segfault in some environments. They are
-# retained for reference and can be run manually when needed.
-import rebound
-import reboundx
 from astropy.time import Time
 
 from jorbit import Ephemeris
@@ -22,6 +17,9 @@ from jorbit.utils.states import SystemState
 
 def _gr_agreement_w_reboundx(n_tracer: int, n_massive: int, seed: int) -> None:
     """Test that the jorbit GR acceleration is consistent with reboundx."""
+    import rebound
+    import reboundx
+
     np.random.seed(seed)
     massive_x = []
     massive_v = []
@@ -75,6 +73,8 @@ def _gr_agreement_w_reboundx(n_tracer: int, n_massive: int, seed: int) -> None:
 
 def _newton_agreement_w_rebound(n_tracer: int, n_massive: int, seed: int) -> None:
     """Test that the jorbit Newtonian acceleration is consistent with rebound."""
+    import rebound
+
     np.random.seed(seed)
     massive_x = []
     massive_v = []

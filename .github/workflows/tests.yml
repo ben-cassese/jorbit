@@ -33,12 +33,12 @@ jobs:
       # don't love this, but the reboundx-tests just broke at some point and this fixed it
       - name: Clean uv cache
         run: uv cache clean
-      - name: Remove tox environments
-        run: rm -rf .tox
 
-      - name: Run tests # dependencies are installed by tox
-        run: |
-          uv run tox
+      - name: Sync dependencies
+        run: uv sync --all-groups
+
+      - name: Run tests
+        run: uv run pytest tests --cov --cov-config=pyproject.toml --cov-report=xml
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
         if: ${{ matrix.python-version == '3.13' && matrix.os == 'macos-latest' }}
