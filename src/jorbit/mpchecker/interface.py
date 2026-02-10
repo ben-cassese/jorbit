@@ -7,6 +7,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from collections.abc import Callable
+
 import astropy.units as u
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -36,7 +38,7 @@ def mpchecker(
     radius: u.Quantity = 20 * u.arcmin,
     extra_precision: bool = False,
     observer: str = "geocentric",
-    extra_precision_gravity: str | callable = "newtonian solar system",
+    extra_precision_gravity: str | Callable = "newtonian solar system",
     chunk_coefficients: jnp.ndarray | None = None,
 ) -> Table:
     """Find the minor planets within a given radius of a coordinate at a given time.
@@ -69,7 +71,7 @@ def mpchecker(
         observer (str):
             The observatory from which the observations are made. Can be a string name
             or Horizons-style @399 code.
-        extra_precision_gravity (str | callable):
+        extra_precision_gravity (str | Callable):
             The gravity model to use for the extra precision search. Must be a valid
             argument for "gravity" in System. Default is "newtonian solar system".
         chunk_coefficients (jnp.ndarray | None):
@@ -163,7 +165,7 @@ def nearest_asteroid(
     radius: u.Quantity = 2 * u.arcmin,
     compute_contamination: bool = False,
     observer: str = "geocentric",
-    extra_precision_gravity: str | callable = "newtonian solar system",
+    extra_precision_gravity: str | Callable = "newtonian solar system",
 ) -> tuple:
     """Identify minor planets passing through a region of the sky at a series of times.
 
@@ -198,7 +200,7 @@ def nearest_asteroid(
         observer (str):
             The observatory from which the observations are made. Can be a string name
             or Horizons-style @399 code.
-        extra_precision_gravity (str | callable):
+        extra_precision_gravity (str | Callable):
             The gravity model to use for the extra precision search. Must be a valid
             argument for "gravity" in System. Default is "newtonian solar system".
 

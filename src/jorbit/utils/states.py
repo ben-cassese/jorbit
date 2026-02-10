@@ -62,7 +62,7 @@ class KeplerianState:
     # to produce correct accelerations later
     time: float
 
-    def to_cartesian(self) -> CartesianState:
+    def to_cartesian(self) -> "CartesianState":
         """Converts the Keplerian state to Cartesian coordinates."""
         x, v = elements_to_cartesian(
             self.semi,
@@ -82,7 +82,7 @@ class KeplerianState:
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
-    def to_keplerian(self) -> KeplerianState:
+    def to_keplerian(self) -> "KeplerianState":
         """Convert to a Keplerian state.
 
         Does nothing- this is already a Keplerian state. Included so that both
@@ -135,7 +135,7 @@ class CartesianState:
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
-    def to_cartesian(self) -> CartesianState:
+    def to_cartesian(self) -> "CartesianState":
         """Convert to a Cartesian state.
 
         Does nothing- this is already a Cartesian state. Included so that both
