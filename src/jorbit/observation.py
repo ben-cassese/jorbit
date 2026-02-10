@@ -86,7 +86,7 @@ class Observations:
         """Return the number of observations."""
         return len(self._ra)
 
-    def __add__(self, newobs: Observations) -> Observations:
+    def __add__(self, newobs: "Observations") -> "Observations":
         """Add two Observations objects together."""
         t = jnp.concatenate([self._times, newobs.times])
         ra = jnp.concatenate([self._ra, newobs.ra])
@@ -107,7 +107,7 @@ class Observations:
             mpc_file=None,
         )
 
-    def __getitem__(self, index: int) -> Observations:
+    def __getitem__(self, index: int) -> "Observations":
         """Return a new Observations object from a slice of the current one."""
         return Observations(
             observed_coordinates=SkyCoord(
