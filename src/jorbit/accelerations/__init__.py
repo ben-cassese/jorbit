@@ -12,7 +12,11 @@ from jorbit.accelerations.create_acc_funcs import (
     create_static_default_acceleration_func,
     create_static_default_on_sky_acc_func,
 )
-from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
+from jorbit.accelerations.gr import (
+    ppn_gravity,
+    static_ppn_gravity,
+    static_ppn_gravity_tracer,
+)
 from jorbit.accelerations.grav_harmonics import grav_harmonics
 from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.accelerations.nongrav import nongrav_acceleration
@@ -30,4 +34,5 @@ __all__ = [
     "ppn_gravity",
     "precompute_perturber_positions",
     "static_ppn_gravity",
+    "static_ppn_gravity_tracer",
 ]

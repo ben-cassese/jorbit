@@ -359,6 +359,16 @@ IAS15_c6 = jnp.concatenate([IAS15_C[10:15], jnp.array([1.0])])
 IAS15_c7 = jnp.concatenate([IAS15_C[15:21], jnp.array([1.0])])
 IAS15_sub_cs = (IAS15_c1, IAS15_c2, IAS15_c3, IAS15_c4, IAS15_c5, IAS15_c6, IAS15_c7)
 
+_PADDED_RS = jnp.zeros((7, 7))
+_PADDED_CS = jnp.zeros((7, 7))
+for _i, (_r, _c) in enumerate(zip(IAS15_sub_rs, IAS15_sub_cs, strict=False)):
+    _PADDED_RS = _PADDED_RS.at[_i, : len(_r)].set(_r)
+    _PADDED_CS = _PADDED_CS.at[_i, : len(_c)].set(_c)
+IAS15_PADDED_RS = _PADDED_RS
+"""Padded version of the IAS15 sub_rs for easier use in jax.vmap and jax.lax.scan."""
+IAS15_PADDED_CS = _PADDED_CS
+"""Padded version of the IAS15 sub_cs for easier use in jax.vmap and jax.lax.scan."""
+
 # https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c
 IAS15_D = jnp.array(
     [

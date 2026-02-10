@@ -6,11 +6,13 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jorbit import Ephemeris
-from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
-from jorbit.accelerations.grav_harmonics import grav_harmonics
-from jorbit.accelerations.newtonian import (
-    newtonian_gravity,
+from jorbit.accelerations.gr import (
+    ppn_gravity,
+    static_ppn_gravity,
+    static_ppn_gravity_tracer,
 )
+from jorbit.accelerations.grav_harmonics import grav_harmonics
+from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.ephemeris.ephemeris_processors import EphemerisProcessor
 from jorbit.utils.states import SystemState
 
@@ -194,7 +196,8 @@ def create_ephem_grav_harmonics_acceleration_func(
     return jax.tree_util.Partial(func)
 
 
-def create_static_default_acceleration_func() -> jax.tree_util.Partial:
+def create_static_default_acceleration_func(
+) -> jax.tree_util.Partial:
     """Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
 
     This adds GR corrections for the 10 planets and newtonian corrections for the 16
@@ -206,8 +209,6 @@ def create_static_default_acceleration_func() -> jax.tree_util.Partial:
     This *can* be used for multi-particle systems that include massive particles,
     but the perturbers themselves are assumed fixed.
 
-    Args:
-        None
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
             accelerations due to the perturbers.
@@ -234,7 +235,7 @@ def create_static_default_acceleration_func() -> jax.tree_util.Partial:
             fixed_perturber_log_gms=perturber_log_gms[:num_gr_perturbers],
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        gr_acc = static_ppn_gravity(gr_state)
+        gr_acc = static_ppn_gravity_tracer(gr_state)
 
         newtonian_state = SystemState(
             massive_positions=inputs.massive_positions,
@@ -266,6 +267,9 @@ def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
     acceleration_func_kwargs. It's essentially the same as limiting yourself to one
     ephemeris interval, but with the flexibility to create your own intervals that might
     span several DE intervals.
+
+    Note: Uses Newtonian gravity only, which hopefully is ok for ~hours timescales for
+    on-sky calculations.
 
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
@@ -306,37 +310,19 @@ def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
             jax.vmap(eval_cheby, in_axes=(1, None)), in_axes=(1, None)
         )(v_coeffs, x)
 
-        # from here out it looks like create_static_default_acceleration_func
-
-        gr_state = SystemState(
+        state = SystemState(
             massive_positions=inputs.massive_positions,
             massive_velocities=inputs.massive_velocities,
             tracer_positions=inputs.tracer_positions,
             tracer_velocities=inputs.tracer_velocities,
-            log_gms=inputs.log_gms[:num_gr_perturbers],
+            log_gms=inputs.log_gms,
             time=inputs.time,
-            fixed_perturber_positions=perturber_xs[:num_gr_perturbers],
-            fixed_perturber_velocities=perturber_vs[:num_gr_perturbers],
-            fixed_perturber_log_gms=log_gms[:num_gr_perturbers],
+            fixed_perturber_positions=perturber_xs,
+            fixed_perturber_velocities=perturber_vs,
+            fixed_perturber_log_gms=log_gms,
             acceleration_func_kwargs=inputs.acceleration_func_kwargs,
         )
-        gr_acc = static_ppn_gravity(gr_state)
-
-        newtonian_state = SystemState(
-            massive_positions=inputs.massive_positions,
-            massive_velocities=inputs.massive_velocities,
-            tracer_positions=inputs.tracer_positions,
-            tracer_velocities=inputs.tracer_velocities,
-            log_gms=inputs.log_gms[num_gr_perturbers:],
-            time=inputs.time,
-            fixed_perturber_positions=perturber_xs[num_gr_perturbers:],
-            fixed_perturber_velocities=perturber_vs[num_gr_perturbers:],
-            fixed_perturber_log_gms=log_gms[num_gr_perturbers:],
-            acceleration_func_kwargs=inputs.acceleration_func_kwargs,
-        )
-        newtonian_acc = newtonian_gravity(newtonian_state)
-
-        return gr_acc + newtonian_acc
+        return newtonian_gravity(state)
 
     return jax.tree_util.Partial(static_on_sky_acc)
 
