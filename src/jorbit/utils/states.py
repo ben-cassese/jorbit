@@ -1,7 +1,4 @@
 """A collection of Chex dataclasses for representing the state of a system of particles."""
-
-from __future__ import annotations
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
