@@ -34,6 +34,13 @@ jobs:
       - name: Clean uv cache
         run: uv cache clean
 
+      # reboundx uses no-build-isolation, so setuptools must be present
+      # in the venv before uv sync tries to build it
+      - name: Bootstrap build dependencies
+        run: |
+          uv venv
+          uv pip install setuptools
+
       - name: Sync dependencies
         run: uv sync --all-groups
 
