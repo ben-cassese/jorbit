@@ -10,7 +10,6 @@ from glob import glob
 
 from jorbit.mpchecker.contribute_to_ephem import mpc_code_to_number
 
-
 ##########
 # merge all of the individually-generated databases into one
 ##########
@@ -20,16 +19,14 @@ def combine_databases(input_pattern, output_db):
     with sqlite3.connect(output_db) as output_conn:
         output_cursor = output_conn.cursor()
 
-        output_cursor.execute(
-            """
+        output_cursor.execute("""
             CREATE TABLE IF NOT EXISTS results (
                 target_name TEXT PRIMARY KEY,
                 chebyshev_coefficients BLOB,
                 x0 BLOB,
                 v0 BLOB
             )
-            """
-        )
+            """)
 
         for db_file in tqdm(glob(input_pattern)):
             # print(f"Processing {db_file}")
