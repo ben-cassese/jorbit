@@ -1,4 +1,4 @@
-# Python-generated files
+# python-generated files
 __pycache__/
 *.py[oc]
 build/
@@ -6,7 +6,7 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments/testing
+# virtual environments/testing
 .venv
 .tox
 coverage.xml
@@ -18,9 +18,13 @@ coverage.xml
 # Docs
 docs/_build/
 
+# misc
 *.DS_Store
 
-**/mpchecker/*.DAT
-**/mpchecker/*.db
-**/mpchecker/*.npy
+.claude
+
+# project specific
+mpchecker/*.DAT
+mpchecker/*.db
+mpchecker/*.npy
 *slurm*

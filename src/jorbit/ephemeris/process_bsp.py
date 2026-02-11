@@ -8,7 +8,6 @@ the implementation in the `jplephem package <https://github.com/brandon-rhodes/p
 import jax
 
 jax.config.update("jax_enable_x64", True)
-import astropy.units as u
 import jax.numpy as jnp
 from astropy.time import Time
 from astropy.utils.data import download_file
@@ -46,10 +45,6 @@ def extract_data(
             (init, intlen, coeff), where init is the initial time of the segment,
             intlen is the interval length, and coeff is the Chebyshev coefficients.
     """
-    earliest_time = earliest_time - 100 * u.day  # add a buffer to avoid edge issues
-    latest_time = (
-        latest_time + 100 * u.day
-    )  # buffer should be longer than chunk lengths
     spk = SPK.open(download_file(ephem_file, cache=True))
 
     target_found = False

@@ -30,4 +30,4 @@ repos:
     hooks:
     - id: codespell
       # having trouble getting it to read the skips from pyproject.toml...
-      args: ["--skip=scratch.ipynb,**/*.ipynb,src/jorbit/data/observatory_codes.py"]
+      args: ["--skip=scratch.ipynb,**/*.ipynb,src/jorbit/data/observatory_codes.py,static_integration_scratch.ipynb"]

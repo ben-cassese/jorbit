@@ -1,7 +1,5 @@
 """A collection of Chex dataclasses for representing the state of a system of particles."""
 
-from __future__ import annotations
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -36,6 +34,11 @@ class SystemState:
     massive_velocities: jnp.ndarray
     log_gms: jnp.ndarray
     time: float
+    fixed_perturber_positions: (
+        jnp.ndarray
+    )  # need a leading axis! (n_substeps, n_perturbers, 3)
+    fixed_perturber_velocities: jnp.ndarray
+    fixed_perturber_log_gms: jnp.ndarray
     acceleration_func_kwargs: dict  # at a minimum, {"c2": SPEED_OF_LIGHT**2}
 
 
@@ -60,7 +63,7 @@ class KeplerianState:
     # to produce correct accelerations later
     time: float
 
-    def to_cartesian(self) -> CartesianState:
+    def to_cartesian(self) -> "CartesianState":
         """Converts the Keplerian state to Cartesian coordinates."""
         x, v = elements_to_cartesian(
             self.semi,
@@ -80,7 +83,7 @@ class KeplerianState:
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
-    def to_keplerian(self) -> KeplerianState:
+    def to_keplerian(self) -> "KeplerianState":
         """Convert to a Keplerian state.
 
         Does nothing- this is already a Keplerian state. Included so that both
@@ -98,6 +101,9 @@ class KeplerianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty((0,)),
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
@@ -130,7 +136,7 @@ class CartesianState:
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
-    def to_cartesian(self) -> CartesianState:
+    def to_cartesian(self) -> "CartesianState":
         """Convert to a Cartesian state.
 
         Does nothing- this is already a Cartesian state. Included so that both
@@ -147,6 +153,9 @@ class CartesianState:
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
             time=self.time,
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty((0,)),
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 

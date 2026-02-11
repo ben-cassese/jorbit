@@ -1,7 +1,5 @@
 """The user-facing ephemeris class and wrapper around EphemerisProcessor."""
 
-from __future__ import annotations
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -92,6 +90,10 @@ class Ephemeris:
                 f"Unsupported planet DE version: {de_ephemeris_version}. "
                 "Supported versions are '440' and '430'."
             )
+        earliest_time = earliest_time - 100 * u.day  # add a buffer to avoid edge issues
+        latest_time = (
+            latest_time + 100 * u.day
+        )  # buffer should be longer than chunk lengths
 
         if ssos == "default planets":
             ssos = [
@@ -164,7 +166,9 @@ class Ephemeris:
         ephs = []
         for sso_group in ssos:
             inits, intlens, coeffs = [], [], []
-            for target, center in zip(sso_group["targets"], sso_group["centers"]):
+            for target, center in zip(
+                sso_group["targets"], sso_group["centers"], strict=True
+            ):
                 init, intlen, coeff = extract_data(
                     center, target, sso_group["ephem_file"], earliest_time, latest_time
                 )

@@ -8,7 +8,7 @@ are pre-computed using routines below and stored in jorbit.data.constants).
 import jax
 
 jax.config.update("jax_enable_x64", True)
-from typing import Callable
+from collections.abc import Callable
 
 # import warnings
 import jax.numpy as jnp
@@ -59,6 +59,9 @@ def leapfrog_step(
         c, d = mid_step_coeffs
         x = x + c * v * dt
         tau = tau + c
+        # potential to do: modify this to be more like ias15_static_step where you can
+        # pass perturber positions and velocities at each substep. For now, just pass
+        # empty arrays and hope the acceleration function isn't banking on them.
         acc = acceleration_func(
             SystemState(
                 massive_positions=x[:num_massive],
@@ -67,6 +70,9 @@ def leapfrog_step(
                 tracer_velocities=v[num_massive:],
                 log_gms=initial_system_state.log_gms,
                 acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+                fixed_perturber_positions=jnp.empty((0, 3)),
+                fixed_perturber_velocities=jnp.empty((0, 3)),
+                fixed_perturber_log_gms=jnp.empty((0,)),
                 time=t0 + tau * dt,
             )
         )
@@ -83,6 +89,9 @@ def leapfrog_step(
         log_gms=initial_system_state.log_gms,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
         time=t0 + dt,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
     )
 
 

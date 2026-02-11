@@ -1,7 +1,5 @@
 """The helper functions for the mpchecker."""
 
-from __future__ import annotations
-
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")
@@ -421,6 +419,9 @@ def extra_precision_calcs(
         log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={},
         time=Time("2020-01-01").tdb.jd,
+        fixed_perturber_positions=jnp.empty((0, 3)),
+        fixed_perturber_velocities=jnp.empty((0, 3)),
+        fixed_perturber_log_gms=jnp.empty((0,)),
     )
 
     sy = System(

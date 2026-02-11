@@ -3,7 +3,12 @@ Changelog
 
 **development version**
 
+- Major refactor of ias15.py, no longer resembles the original REBOUND implementation. Removed IAS15Helper, but otherwise no API changes.
+- Major refactor of ppn_gravity, the outputs are unchanged but now unnecessary perturber-perturber interactions are excluded.
+- Added a "static" version of IAS15 that uses fixed step sizes and a fixed number of predictor-corrector iteratins. Also added the ability to pre-compute perturber positions/velocities/ppn-specific acceleration terms at every (sub)time step prior to integrating. These features are intended to speed up likelihood evaluations in orbit fitting applications where we expect only small changes to the initial conditions of a test particle. This dramatically accelerates both likelihood and gradient evaluations. The "integrate", "loglike", and "ephemeris" attributes of Particle remain unchanged for now, but a new method called "static_residuals" has been added that uses these new tools.
+- Addition of `fixed_perturber_positions`, `fixed_perturber_velocities`, and `fixed_perturber_log_gms` to `SystemState`. These quantities can be used in different acceleration functions to indicate that perturber-perturber interactions should be ignored and that gradients with respect to these quantities don't need to be tracked.
 - Added option to select DE ephemeris version (DE430 or DE440) when creating `Ephemeris` and `Particle` objects. Updated relevant tutorials/tests.
+- Dropped support for Python 3.9.
 
 **1.1.0 (01/2026)**
 

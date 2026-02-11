@@ -1,7 +1,5 @@
 """The System class and its supporting functions."""
 
-from __future__ import annotations
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -113,6 +111,9 @@ class System:
                 massive_velocities=jnp.empty((0, 3)),
                 log_gms=jnp.empty((0,)),
                 time=t0,
+                fixed_perturber_positions=jnp.empty((0, 3)),
+                fixed_perturber_velocities=jnp.empty((0, 3)),
+                fixed_perturber_log_gms=jnp.empty((0,)),
                 acceleration_func_kwargs={},
             )
         else:

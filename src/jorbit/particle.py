@@ -32,6 +32,10 @@ from jorbit.integrators import (
     initialize_ias15_integrator_state,
     leapfrog_evolve,
 )
+from jorbit.likelihoods.setup_static_likelihood import (
+    create_default_static_residuals_func,
+    precompute_likelihood_data,
+)
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
 from jorbit.utils.states import (
     CartesianState,
@@ -178,6 +182,8 @@ class Particle:
             self.scipy_objective,
             self.scipy_objective_grad,
         ) = self._setup_likelihood()
+
+        self.static_residuals = self._setup_default_static_residuals()
 
     def __repr__(self) -> str:
         """Return a string representation of the Particle object."""
@@ -462,6 +468,13 @@ class Particle:
 
         return residuals, loglike, scipy_objective, scipy_grad
 
+    def _setup_default_static_residuals(self) -> Callable:
+        if self._observations is None:
+            return None
+        precomputed_data = precompute_likelihood_data(self)
+        static_residuals_func = create_default_static_residuals_func(precomputed_data)
+        return static_residuals_func
+
     ################
     # PUBLIC METHODS
     ################
@@ -581,6 +594,10 @@ class Particle:
         """
         if state is None:
             state = self._cartesian_state
+            integrator_state = self._integrator_state
+        else:
+            a0 = self.gravity(state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
 
         if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
@@ -598,7 +615,7 @@ class Particle:
                 state,
                 self.gravity,
                 self._integrator,
-                self._integrator_state,
+                integrator_state,
                 inds,
             )
         )
@@ -640,6 +657,10 @@ class Particle:
 
         if state is None:
             state = self._cartesian_state
+            integrator_state = self._integrator_state
+        else:
+            a0 = self.gravity(state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
 
         if isinstance(times, Time):
             times = jnp.array(times.tdb.jd)
@@ -656,7 +677,7 @@ class Particle:
             state,
             self.gravity,
             self._integrator,
-            self._integrator_state,
+            integrator_state,
             observer_positions,
             inds,
         )

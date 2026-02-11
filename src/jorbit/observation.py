@@ -1,7 +1,5 @@
 """Module for the Observations class."""
 
-from __future__ import annotations
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -89,7 +87,7 @@ class Observations:
         """Return the number of observations."""
         return len(self._ra)
 
-    def __add__(self, newobs: Observations) -> Observations:
+    def __add__(self, newobs: "Observations") -> "Observations":
         """Add two Observations objects together."""
         t = jnp.concatenate([self._times, newobs.times])
         ra = jnp.concatenate([self._ra, newobs.ra])
@@ -110,7 +108,7 @@ class Observations:
             mpc_file=None,
         )
 
-    def __getitem__(self, index: int) -> Observations:
+    def __getitem__(self, index: int) -> "Observations":
         """Return a new Observations object from a slice of the current one."""
         return Observations(
             observed_coordinates=SkyCoord(
@@ -310,15 +308,15 @@ class Observations:
         cov_log_dets = jnp.log(jnp.array([jnp.linalg.det(c) for c in cov_matrices]))
 
         return (
-            ra,
-            dec,
+            jnp.array(ra),
+            jnp.array(dec),
             times,
             observatories,
             astrometric_uncertainties,
-            observer_positions,
-            cov_matrices,
-            inv_cov_matrices,
-            cov_log_dets,
+            jnp.array(observer_positions),
+            jnp.array(cov_matrices),
+            jnp.array(inv_cov_matrices),
+            jnp.array(cov_log_dets),
         )
 
     def _final_init_checks(self) -> None:
