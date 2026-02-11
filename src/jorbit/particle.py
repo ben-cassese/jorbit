@@ -183,7 +183,7 @@ class Particle:
             self.scipy_objective_grad,
         ) = self._setup_likelihood()
 
-        self.static_residuals = self._setup_default_static_likelihood()
+        self.static_residuals = self._setup_default_static_residuals()
 
     def __repr__(self) -> str:
         """Return a string representation of the Particle object."""
@@ -468,7 +468,7 @@ class Particle:
 
         return residuals, loglike, scipy_objective, scipy_grad
 
-    def _setup_default_static_likelihood(self) -> Callable:
+    def _setup_default_static_residuals(self) -> Callable:
         if self._observations is None:
             return None
         precomputed_data = precompute_likelihood_data(self)
