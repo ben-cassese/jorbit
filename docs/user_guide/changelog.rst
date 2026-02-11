@@ -1,7 +1,7 @@
 Changelog
 +++++++++
 
-**development version**
+**1.2.0 (02/2026)**
 
 - Major refactor of ias15.py, no longer resembles the original REBOUND implementation. Removed IAS15Helper, but otherwise no API changes.
 - Major refactor of ppn_gravity, the outputs are unchanged but now unnecessary perturber-perturber interactions are excluded.
