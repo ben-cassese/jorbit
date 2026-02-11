@@ -1,4 +1,5 @@
 """The public interface to the mpchecker functions."""
+
 import warnings
 
 warnings.filterwarnings("ignore", module="erfa")

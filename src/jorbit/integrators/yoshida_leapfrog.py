@@ -8,7 +8,7 @@ are pre-computed using routines below and stored in jorbit.data.constants).
 import jax
 
 jax.config.update("jax_enable_x64", True)
-from typing import Callable
+from collections.abc import Callable
 
 # import warnings
 import jax.numpy as jnp

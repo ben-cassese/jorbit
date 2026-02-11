@@ -1,4 +1,5 @@
 """The user-facing ephemeris class and wrapper around EphemerisProcessor."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)

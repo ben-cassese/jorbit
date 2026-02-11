@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from jorbit import Ephemeris
 from jorbit.accelerations.gr import (
     ppn_gravity,
-    static_ppn_gravity,
     static_ppn_gravity_tracer,
 )
 from jorbit.accelerations.grav_harmonics import grav_harmonics
@@ -196,8 +195,7 @@ def create_ephem_grav_harmonics_acceleration_func(
     return jax.tree_util.Partial(func)
 
 
-def create_static_default_acceleration_func(
-) -> jax.tree_util.Partial:
+def create_static_default_acceleration_func() -> jax.tree_util.Partial:
     """Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
 
     This adds GR corrections for the 10 planets and newtonian corrections for the 16
