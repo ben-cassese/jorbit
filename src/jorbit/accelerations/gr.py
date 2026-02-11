@@ -404,7 +404,7 @@
 #     The non-constant PPN term uses Newtonian (rather than GR-corrected)
 #     perturber accelerations. This introduces an O(c⁻⁴) error (~0.003 mas
 #     at 1 AU), well below the 0.1 mas accuracy requirement, while avoiding
-#     the expensive P×P perturber-perturber PPN computation + iteration.
+#     the expensive PxP perturber-perturber PPN computation + iteration.
 
 #     Args:
 #         inputs (SystemState): The instantaneous state of the system.
@@ -922,6 +922,104 @@ def static_ppn_gravity(inputs: SystemState, fixed_iterations: int = 3) -> jnp.nd
     return (a_newt_all + a_final_gr)[P:]
 
 
+def precompute_perturber_ppn(
+    p_pos: jnp.ndarray,
+    p_vel: jnp.ndarray,
+    p_gms: jnp.ndarray,
+    c2: float = SPEED_OF_LIGHT**2,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Pre-compute perturber-perturber PPN quantities for a single substep.
+
+    Computes the P*P perturber-perturber geometry, Newtonian accelerations,
+    gravitational potential sums (a2), and fully converged GR corrections.
+    These can then be passed to static_ppn_gravity_tracer via
+    acceleration_func_kwargs to avoid redundant P*P work in the hot loop.
+
+    Args:
+        p_pos: Perturber positions, shape (P, 3).
+        p_vel: Perturber velocities, shape (P, 3).
+        p_gms: Perturber GM values (not log), shape (P,).
+        c2: Speed of light squared.
+
+    Returns:
+        pp_a2: Gravitational potential sum per perturber, shape (P,).
+            Σ_{k≠j} GM_k / (c² r_jk) for each perturber j.
+        pp_a_newt: Newtonian acceleration on each perturber from others, shape (P, 3).
+        pp_a_gr: Fully converged total GR correction on each perturber, shape (P, 3).
+    """
+    P = p_pos.shape[0]
+
+    # Perturber-perturber geometry
+    p_dx = p_pos[:, None, :] - p_pos[None, :, :]  # (P, P, 3)
+    p_r2 = jnp.sum(p_dx * p_dx, axis=-1)  # (P, P)
+    p_r = jnp.sqrt(p_r2)  # (P, P)
+    p_r3 = p_r2 * p_r  # (P, P)
+    p_mask = ~jnp.eye(P, dtype=bool)
+
+    # a2: gravitational potential sum per perturber
+    pp_a2 = jnp.sum((1.0 / c2) * p_gms[None, :] / p_r, axis=1, where=p_mask)  # (P,)
+
+    # Newtonian acceleration on each perturber from others
+    p_prefac = jnp.where(p_mask, 1.0 / p_r3, 0.0)
+    pp_a_newt = -jnp.sum(
+        p_prefac[:, :, None] * p_dx * p_gms[None, :, None], axis=1
+    )  # (P, 3)
+
+    # COM frame
+    total_gm = jnp.sum(p_gms)
+    v_com = jnp.sum(p_vel * p_gms[:, None], axis=0) / total_gm
+    p_vel_com = p_vel - v_com
+    p_v2 = jnp.sum(p_vel_com * p_vel_com, axis=-1)  # (P,)
+
+    # Constant PPN terms for perturber-perturber
+    pp_vdot = jnp.sum(p_vel_com[:, None, :] * p_vel_com[None, :, :], axis=-1)  # (P, P)
+    pp_a1 = jnp.sum((4.0 / c2) * p_gms[None, :] / p_r, axis=1, where=p_mask)  # (P,)
+    pp_a1 = jnp.broadcast_to(pp_a1[:, None], (P, P))
+    pp_a2_bc = jnp.broadcast_to(pp_a2[None, :], (P, P))
+    pp_a3 = jnp.broadcast_to(-p_v2[:, None] / c2, (P, P))
+    pp_a4 = jnp.broadcast_to(-2.0 * p_v2[None, :] / c2, (P, P))
+    pp_a5 = (4.0 / c2) * pp_vdot
+    pp_dv = p_vel_com[:, None, :] - p_vel_com[None, :, :]  # (P, P, 3)
+    pp_a6_0 = jnp.sum(p_dx * p_vel_com[None, :, :], axis=-1)  # (P, P)
+    pp_a6 = (3.0 / (2 * c2)) * (pp_a6_0**2) / p_r2
+    pp_a7 = jnp.sum(p_dx * pp_a_newt[None, :, :], axis=-1) / (2 * c2)  # (P, P)
+
+    pp_factor1 = pp_a1 + pp_a2_bc + pp_a3 + pp_a4 + pp_a5 + pp_a6 + pp_a7
+    pp_part1 = p_gms[None, :, None] * p_dx * pp_factor1[:, :, None] / p_r3[:, :, None]
+    pp_factor2 = jnp.sum(
+        p_dx * (4 * p_vel_com[:, None, :] - 3 * p_vel_com[None, :, :]), axis=-1
+    )  # (P, P)
+    pp_part2 = (
+        p_gms[None, :, None]
+        * (
+            pp_factor2[:, :, None] * pp_dv / p_r3[:, :, None]
+            + 7.0 / 2.0 * pp_a_newt[None, :, :] / p_r[:, :, None]
+        )
+        / c2
+    )
+    pp_a_const = jnp.sum(
+        pp_part1 + pp_part2, axis=1, where=p_mask[:, :, None]
+    )  # (P, 3)
+
+    # Iterate non-constant terms to convergence (3 iterations)
+    def pp_scan_fn(a_curr_gr: jnp.ndarray, _: None) -> tuple:
+        pp_rdota = jnp.sum(p_dx * a_curr_gr[None, :, :], axis=-1)  # (P, P)
+        pp_non_const = jnp.sum(
+            (p_gms[None, :, None] / (2.0 * c2))
+            * (
+                p_dx * pp_rdota[:, :, None] / p_r3[:, :, None]
+                + 7.0 * a_curr_gr[None, :, :] / p_r[:, :, None]
+            ),
+            axis=1,
+            where=p_mask[:, :, None],
+        )  # (P, 3)
+        return pp_a_const + pp_non_const, None
+
+    pp_a_gr, _ = jax.lax.scan(pp_scan_fn, pp_a_const, None, length=3)
+
+    return pp_a2, pp_a_newt, pp_a_gr
+
+
 @jax.jit
 def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
     """Compute PPN gravity on tracers from perturbers only, avoiding N² scaling.
@@ -986,15 +1084,15 @@ def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
     a1 = jnp.sum((4.0 / c2) * p_gms[None, :] / r, axis=1)  # (T,)
     a1 = jnp.broadcast_to(a1[:, None], (t_pos.shape[0], p_pos.shape[0]))
 
-    # a2: sum over k!=j of gm_k/r_jk for each perturber j
-    p_dx = p_pos[:, None, :] - p_pos[None, :, :]  # (P, P, 3)
-    p_r2 = jnp.sum(p_dx * p_dx, axis=-1)  # (P, P)
-    p_r = jnp.sqrt(p_r2)  # (P, P)
-    p_mask = ~jnp.eye(p_pos.shape[0], dtype=bool)
-    a2_per_perturber = jnp.sum(
-        (1.0 / c2) * p_gms[None, :] / p_r, axis=1, where=p_mask
-    )  # (P,)
-    # Also add tracer->perturber contribution (but tracer gm=0, so this is 0)
+    # Read pre-computed perturber-perturber quantities from kwargs.
+    # These are computed once during preprocessing by precompute_perturber_ppn
+    # and placed into acceleration_func_kwargs by the integrator.
+    a2_per_perturber = jax.lax.stop_gradient(inputs.acceleration_func_kwargs["pp_a2"])
+    a_newt_perturbers = jax.lax.stop_gradient(
+        inputs.acceleration_func_kwargs["pp_a_newt"]
+    )
+    a_gr_perturbers = jax.lax.stop_gradient(inputs.acceleration_func_kwargs["pp_a_gr"])
+
     a2 = jnp.broadcast_to(a2_per_perturber[None, :], (t_pos.shape[0], p_pos.shape[0]))
 
     a3 = jnp.broadcast_to(-t_v2[:, None] / c2, (t_pos.shape[0], p_pos.shape[0]))
@@ -1003,12 +1101,6 @@ def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
 
     a6_0 = jnp.sum(dx * p_vel_com[None, :, :], axis=-1)  # (T, P)
     a6 = (3.0 / (2 * c2)) * (a6_0**2) / r2
-
-    # Newtonian acceleration on each perturber from other perturbers
-    p_prefac = jnp.where(p_mask, 1.0 / (p_r2 * p_r), 0.0)
-    a_newt_perturbers = -jnp.sum(
-        p_prefac[:, :, None] * p_dx * p_gms[None, :, None], axis=1
-    )  # (P, 3)
 
     a7 = jnp.sum(dx * a_newt_perturbers[None, :, :], axis=-1) / (2 * c2)  # (T, P)
 
@@ -1029,62 +1121,7 @@ def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
 
     a_const = jnp.sum(part1 + part2, axis=1)  # (T, 3)
 
-    # Non-constant correction: depends on perturber GR accelerations a_j.
-    # Since tracers are massless, perturber GR corrections don't depend on tracer
-    # state, so we compute converged perturber-perturber GR corrections first.
-
-    # --- Compute converged GR correction on perturbers from other perturbers ---
-    # All perturber quantities are already stop_gradient'd at the source,
-    # so no interior stop_gradient calls are needed here.
-    P = p_pos.shape[0]
-    pp_vdot = jnp.sum(p_vel_com[:, None, :] * p_vel_com[None, :, :], axis=-1)  # (P, P)
-    pp_a1 = jnp.sum((4.0 / c2) * p_gms[None, :] / p_r, axis=1, where=p_mask)  # (P,)
-    pp_a1 = jnp.broadcast_to(pp_a1[:, None], (P, P))
-    pp_a2 = jnp.broadcast_to(a2_per_perturber[None, :], (P, P))
-    pp_a3 = jnp.broadcast_to(-p_v2[:, None] / c2, (P, P))
-    pp_a4 = jnp.broadcast_to(-2.0 * p_v2[None, :] / c2, (P, P))
-    pp_a5 = (4.0 / c2) * pp_vdot
-    pp_dv = p_vel_com[:, None, :] - p_vel_com[None, :, :]  # (P, P, 3)
-    pp_a6_0 = jnp.sum(p_dx * p_vel_com[None, :, :], axis=-1)  # (P, P)
-    pp_a6 = (3.0 / (2 * c2)) * (pp_a6_0**2) / p_r2
-    pp_a7 = jnp.sum(p_dx * a_newt_perturbers[None, :, :], axis=-1) / (2 * c2)  # (P, P)
-
-    pp_factor1 = pp_a1 + pp_a2 + pp_a3 + pp_a4 + pp_a5 + pp_a6 + pp_a7
-    pp_part1 = (
-        p_gms[None, :, None] * p_dx * pp_factor1[:, :, None] / (p_r2 * p_r)[:, :, None]
-    )
-    pp_factor2 = jnp.sum(
-        p_dx * (4 * p_vel_com[:, None, :] - 3 * p_vel_com[None, :, :]), axis=-1
-    )  # (P, P)
-    pp_part2 = (
-        p_gms[None, :, None]
-        * (
-            pp_factor2[:, :, None] * pp_dv / (p_r2 * p_r)[:, :, None]
-            + 7.0 / 2.0 * a_newt_perturbers[None, :, :] / p_r[:, :, None]
-        )
-        / c2
-    )
-    pp_a_const = jnp.sum(
-        pp_part1 + pp_part2, axis=1, where=p_mask[:, :, None]
-    )  # (P, 3)
-
-    # Iterate non-constant terms for perturber-perturber to convergence (3 iterations)
-    def pp_scan_fn(a_curr_gr: jnp.ndarray, _: None) -> tuple:
-        pp_rdota = jnp.sum(p_dx * a_curr_gr[None, :, :], axis=-1)  # (P, P)
-        pp_non_const = jnp.sum(
-            (p_gms[None, :, None] / (2.0 * c2))
-            * (
-                p_dx * pp_rdota[:, :, None] / (p_r2 * p_r)[:, :, None]
-                + 7.0 * a_curr_gr[None, :, :] / p_r[:, :, None]
-            ),
-            axis=1,
-            where=p_mask[:, :, None],
-        )  # (P, 3)
-        return pp_a_const + pp_non_const, None
-
-    a_gr_perturbers, _ = jax.lax.scan(pp_scan_fn, pp_a_const, None, length=3)
-
-    # Non-constant correction on tracers using converged perturber GR corrections
+    # Non-constant correction on tracers using pre-computed converged perturber GR
     rdota = jnp.sum(dx * a_gr_perturbers[None, :, :], axis=-1)  # (T, P)
     non_const = jnp.sum(
         (p_gms[None, :, None] / (2.0 * c2))

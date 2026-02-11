@@ -14,6 +14,7 @@ from jorbit.accelerations.create_acc_funcs import (
 )
 from jorbit.accelerations.gr import (
     ppn_gravity,
+    precompute_perturber_ppn,
     static_ppn_gravity,
     static_ppn_gravity_tracer,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "nongrav_acceleration",
     "ppn_gravity",
     "precompute_perturber_positions",
+    "precompute_perturber_ppn",
     "static_ppn_gravity",
     "static_ppn_gravity_tracer",
 ]

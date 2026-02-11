@@ -1,4 +1,5 @@
 """Helper functions to set up rapid likelihood evaluations using cached pertubers."""
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -13,12 +14,14 @@ from jorbit.accelerations import (
     create_static_default_acceleration_func,
     create_static_default_on_sky_acc_func,
 )
+from jorbit.accelerations.gr import precompute_perturber_ppn
 from jorbit.accelerations.static_helpers import (
     generate_perturber_chebyshev_coeffs,
     get_all_dynamic_intermediate_dts,
     precompute_perturber_positions,
 )
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
+from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import ias15_static_evolve, initialize_ias15_integrator_state
 from jorbit.utils.states import CartesianState, KeplerianState
 
@@ -117,6 +120,13 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
     perturber_pos = jnp.concatenate((planet_pos, asteroid_pos), axis=2)
     perturber_vel = jnp.concatenate((planet_vel, asteroid_vel), axis=2)
 
+    # Pre-compute perturber-perturber PPN quantities (P=11 GR perturbers only)
+    planet_gms = jnp.exp(gms[:11])
+    pp_a2, pp_a_newt, pp_a_gr = jax.vmap(
+        jax.vmap(precompute_perturber_ppn, in_axes=(0, 0, None, None)),
+        in_axes=(0, 0, None, None),
+    )(planet_pos, planet_vel, planet_gms, SPEED_OF_LIGHT**2)
+
     observer_positions = p.observations.observer_positions
 
     return (
@@ -130,6 +140,9 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
         times,
         p.observations.ra,
         p.observations.dec,
+        pp_a2,
+        pp_a_newt,
+        pp_a_gr,
     )
 
 
@@ -162,6 +175,9 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
         obs_times,
         obs_ras,
         obs_decs,
+        pp_a2,
+        pp_a_newt,
+        pp_a_gr,
     ) = inputs
 
     static_acc_func = create_static_default_acceleration_func()
@@ -174,6 +190,12 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
         state.fixed_perturber_positions = perturber_pos[0, 0]
         state.fixed_perturber_velocities = perturber_vel[0, 0]
         state.fixed_perturber_log_gms = log_gms
+        state.acceleration_func_kwargs = {
+            **state.acceleration_func_kwargs,
+            "pp_a2": pp_a2[0, 0],
+            "pp_a_newt": pp_a_newt[0, 0],
+            "pp_a_gr": pp_a_gr[0, 0],
+        }
         a0 = static_acc_func(state)
         integrator_init = initialize_ias15_integrator_state(a0)
         integrator_init.dt = dts[0]
@@ -187,6 +209,9 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
                 perturber_positions=perturber_pos,
                 perturber_velocities=perturber_vel,
                 perturber_log_gms=log_gms,
+                pp_a2=pp_a2,
+                pp_a_newt=pp_a_newt,
+                pp_a_gr=pp_a_gr,
             )
         )
 

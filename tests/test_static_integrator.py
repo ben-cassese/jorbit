@@ -12,11 +12,13 @@ from jorbit.accelerations import (
     create_default_ephemeris_acceleration_func,
     create_static_default_acceleration_func,
 )
+from jorbit.accelerations.gr import precompute_perturber_ppn
 from jorbit.accelerations.static_helpers import (
     get_all_dynamic_intermediate_dts,
     precompute_perturber_positions,
 )
 from jorbit.astrometry.sky_projection import on_sky, sky_sep
+from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
     ias15_evolve,
     ias15_static_evolve,
@@ -68,9 +70,22 @@ def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
     perturber_pos = jnp.concatenate((planet_pos, asteroid_pos), axis=2)
     perturber_vel = jnp.concatenate((planet_vel, asteroid_vel), axis=2)
 
+    # Pre-compute perturber-perturber PPN quantities
+    planet_gms_linear = jnp.exp(gms[:11])
+    pp_a2, pp_a_newt, pp_a_gr = jax.vmap(
+        jax.vmap(precompute_perturber_ppn, in_axes=(0, 0, None, None)),
+        in_axes=(0, 0, None, None),
+    )(planet_pos, planet_vel, planet_gms_linear, SPEED_OF_LIGHT**2)
+
     state.fixed_perturber_positions = perturber_pos[0, 0]
     state.fixed_perturber_velocities = perturber_vel[0, 0]
     state.fixed_perturber_log_gms = gms
+    state.acceleration_func_kwargs = {
+        **state.acceleration_func_kwargs,
+        "pp_a2": pp_a2[0, 0],
+        "pp_a_newt": pp_a_newt[0, 0],
+        "pp_a_gr": pp_a_gr[0, 0],
+    }
 
     a0_static = acc_func_static(state)
     integrator_init = initialize_ias15_integrator_state(a0_static)
@@ -85,6 +100,9 @@ def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
         perturber_positions=perturber_pos,
         perturber_velocities=perturber_vel,
         perturber_log_gms=gms,
+        pp_a2=pp_a2,
+        pp_a_newt=pp_a_newt,
+        pp_a_gr=pp_a_gr,
     )
 
     return static_x[inds], static_v[inds]

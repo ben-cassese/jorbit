@@ -155,6 +155,7 @@ def on_sky(
     calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
     return calc_ra, calc_dec
 
+
 # ########################################################################################
 # # old version for testing/benchmarking
 # """Various tools for projecting positions onto the sky."""

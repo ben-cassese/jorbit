@@ -64,6 +64,9 @@ def ias15_static_step(
     fixed_perturber_positions: jnp.ndarray = jnp.empty((8, 0, 3)),
     fixed_perturber_velocities: jnp.ndarray = jnp.empty((8, 0, 3)),
     fixed_perturber_log_gms: jnp.ndarray = jnp.empty((0,)),
+    pp_a2: jnp.ndarray = jnp.empty((8, 0)),
+    pp_a_newt: jnp.ndarray = jnp.empty((8, 0, 3)),
+    pp_a_gr: jnp.ndarray = jnp.empty((8, 0, 3)),
 ) -> SystemState:
     """Take a single step using the IAS15 integraton with no checks for convergence or adaptivity.
 
@@ -87,6 +90,15 @@ def ias15_static_step(
         fixed_perturber_log_gms (jnp.ndarray):
             The log GM values for the fixed perturbers. Shape (n_perturbers,).
             Default is empty array of shape (0,).
+        pp_a2 (jnp.ndarray):
+            Pre-computed perturber-perturber a2 potential sums.
+            Shape (n_substeps, n_perturbers).
+        pp_a_newt (jnp.ndarray):
+            Pre-computed Newtonian acceleration on each perturber from others.
+            Shape (n_substeps, n_perturbers, 3).
+        pp_a_gr (jnp.ndarray):
+            Pre-computed converged GR correction on each perturber.
+            Shape (n_substeps, n_perturbers, 3).
 
     Returns:
         tuple[SystemState, IAS15IntegratorState]:
@@ -129,6 +141,12 @@ def ias15_static_step(
             dt=dt,
             bp=b[::-1],
         )
+        substep_kwargs = {
+            **initial_system_state.acceleration_func_kwargs,
+            "pp_a2": pp_a2[n],
+            "pp_a_newt": pp_a_newt[n],
+            "pp_a_gr": pp_a_gr[n],
+        }
         acc_state = SystemState(
             massive_positions=x[:M],
             massive_velocities=v[:M],
@@ -139,7 +157,7 @@ def ias15_static_step(
             fixed_perturber_positions=fixed_perturber_positions[n],
             fixed_perturber_velocities=fixed_perturber_velocities[n],
             fixed_perturber_log_gms=fixed_perturber_log_gms,
-            acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+            acceleration_func_kwargs=substep_kwargs,
         )
         at = acceleration_func(acc_state)
 
@@ -161,6 +179,7 @@ def ias15_static_step(
     substep_indices = jnp.arange(1, 8)
     scan_inputs = (substep_indices, IAS15_H[1:], IAS15_PADDED_RS, IAS15_PADDED_CS)
 
+    @jax.checkpoint
     def _predictor_corrector_iteration(carry: tuple, _: None) -> tuple:
         b, csb, g = carry
         (b, csb, g), _ = jax.lax.scan(_substep_body, (b, csb, g), scan_inputs)
@@ -192,6 +211,12 @@ def ias15_static_step(
     # Zeroing out the perturber positions so that hopefully it's obvious something
     # has gone wrong if these are reused for the next time step. These are only valid
     # for the time given at the start of the step
+    end_kwargs = {
+        **initial_system_state.acceleration_func_kwargs,
+        "pp_a2": pp_a2[-1],
+        "pp_a_newt": pp_a_newt[-1],
+        "pp_a_gr": pp_a_gr[-1],
+    }
     new_system_state = SystemState(
         massive_positions=x0[:M],
         massive_velocities=v0[:M],
@@ -202,7 +227,7 @@ def ias15_static_step(
         fixed_perturber_positions=fixed_perturber_positions[-1],
         fixed_perturber_velocities=fixed_perturber_velocities[-1],
         fixed_perturber_log_gms=fixed_perturber_log_gms,
-        acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
+        acceleration_func_kwargs=end_kwargs,
     )
 
     new_integrator_state = IAS15IntegratorState(
@@ -228,6 +253,9 @@ def ias15_static_evolve(
     perturber_velocities: jnp.ndarray,
     perturber_log_gms: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
+    pp_a2: jnp.ndarray = jnp.empty((0, 8, 0)),
+    pp_a_newt: jnp.ndarray = jnp.empty((0, 8, 0, 3)),
+    pp_a_gr: jnp.ndarray = jnp.empty((0, 8, 0, 3)),
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     """Take multiple steps using ias15_static_step to evolve without safety checks.
 
@@ -249,6 +277,15 @@ def ias15_static_evolve(
             The velocities of the perturbers. Same shape as perturber_positions.
         perturber_log_gms (jnp.ndarray):
             The log gravitational parameters of the perturbers. Shape (n_perturbers,).
+        pp_a2 (jnp.ndarray):
+            Pre-computed perturber-perturber a2 potential sums.
+            Shape (n_dts, 8, P).
+        pp_a_newt (jnp.ndarray):
+            Pre-computed Newtonian acceleration on each perturber from others.
+            Shape (n_dts, 8, P, 3).
+        pp_a_gr (jnp.ndarray):
+            Pre-computed converged GR correction on each perturber.
+            Shape (n_dts, 8, P, 3).
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
@@ -256,9 +293,17 @@ def ias15_static_evolve(
             the final state of the system, and the final state of the integrator.
     """
 
+    @jax.checkpoint
     def scan_func(carry: tuple, scan_over: float) -> tuple:
         system_state, integrator_state = carry
-        dt, perturber_positions, perturber_velocities = scan_over
+        (
+            dt,
+            perturber_positions,
+            perturber_velocities,
+            step_pp_a2,
+            step_pp_a_newt,
+            step_pp_a_gr,
+        ) = scan_over
         integrator_state.dt = dt
         new_system_state, new_integrator_state = ias15_static_step(
             system_state,
@@ -267,6 +312,9 @@ def ias15_static_evolve(
             perturber_positions,
             perturber_velocities,
             perturber_log_gms,
+            step_pp_a2,
+            step_pp_a_newt,
+            step_pp_a_gr,
         )
         return (new_system_state, new_integrator_state), (
             jnp.concatenate(
@@ -289,10 +337,11 @@ def ias15_static_evolve(
         jax.lax.scan(
             scan_func,
             (initial_system_state, initial_integrator_state),
-            (dts, perturber_positions, perturber_velocities),
+            (dts, perturber_positions, perturber_velocities, pp_a2, pp_a_newt, pp_a_gr),
         )
     )
     return positions, velocities, final_system_state, final_integrator_state
+
 
 ########################################################################################
 # # old version for reference/benchmarking experiments

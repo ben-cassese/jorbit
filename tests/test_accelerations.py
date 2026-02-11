@@ -8,7 +8,12 @@ import numpy as np
 from astropy.time import Time
 
 from jorbit import Ephemeris
-from jorbit.accelerations.gr import ppn_gravity, static_ppn_gravity
+from jorbit.accelerations.gr import (
+    ppn_gravity,
+    precompute_perturber_ppn,
+    static_ppn_gravity,
+    static_ppn_gravity_tracer,
+)
 from jorbit.accelerations.newtonian import newtonian_gravity
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.utils.states import SystemState
@@ -298,3 +303,54 @@ def test_ppn_fixed_perturber_equivalence() -> None:
         f"Tracer accel mismatch: max diff="
         f"{float(jnp.max(jnp.abs(tracer_acc_a - tracer_acc_b)))}"
     )
+
+
+def _tracer_agreement(n_tracer: int, n_perturber: int, seed: int) -> None:
+    """Check that static_ppn_gravity_tracer agrees with static_ppn_gravity."""
+    state = _make_state(
+        n_massive=0, n_tracer=n_tracer, n_perturber=n_perturber, c2=100.0, seed=seed
+    )
+
+    # Pre-compute perturber-perturber PPN quantities
+    p_gms = jnp.exp(state.fixed_perturber_log_gms)
+    pp_a2, pp_a_newt, pp_a_gr = precompute_perturber_ppn(
+        state.fixed_perturber_positions,
+        state.fixed_perturber_velocities,
+        p_gms,
+        c2=100.0,
+    )
+
+    # Build state with pre-computed kwargs for tracer function
+    state_precomputed = SystemState(
+        massive_positions=state.massive_positions,
+        massive_velocities=state.massive_velocities,
+        tracer_positions=state.tracer_positions,
+        tracer_velocities=state.tracer_velocities,
+        log_gms=state.log_gms,
+        time=state.time,
+        fixed_perturber_positions=state.fixed_perturber_positions,
+        fixed_perturber_velocities=state.fixed_perturber_velocities,
+        fixed_perturber_log_gms=state.fixed_perturber_log_gms,
+        acceleration_func_kwargs={
+            "c2": 100.0,
+            "pp_a2": pp_a2,
+            "pp_a_newt": pp_a_newt,
+            "pp_a_gr": pp_a_gr,
+        },
+    )
+
+    ref = static_ppn_gravity(state, 10)
+    res = static_ppn_gravity_tracer(state_precomputed)
+
+    assert jnp.allclose(ref, res, atol=1e-15), (
+        f"T={n_tracer},P={n_perturber}: tracer vs static max diff="
+        f"{float(jnp.max(jnp.abs(ref - res)))}"
+    )
+
+
+def test_ppn_tracer_agreement() -> None:
+    """Test that static_ppn_gravity_tracer agrees with static_ppn_gravity."""
+    _tracer_agreement(n_tracer=1, n_perturber=3, seed=10)
+    _tracer_agreement(n_tracer=5, n_perturber=3, seed=20)
+    _tracer_agreement(n_tracer=3, n_perturber=8, seed=30)
+    _tracer_agreement(n_tracer=20, n_perturber=10, seed=40)
