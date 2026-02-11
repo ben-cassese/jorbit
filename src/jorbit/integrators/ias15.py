@@ -239,7 +239,9 @@ def ias15_step(
     ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
-        for n, h, c, r in zip(range(1, 8), IAS15_H[1:], IAS15_sub_cs, IAS15_sub_rs):
+        for n, h, c, r in zip(
+            range(1, 8), IAS15_H[1:], IAS15_sub_cs, IAS15_sub_rs, strict=True
+        ):
             step_time = t_beginning + dt * h
             x, v = _estimate_x_v_from_b(
                 a0=a0,

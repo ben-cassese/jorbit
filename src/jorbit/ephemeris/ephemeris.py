@@ -166,7 +166,9 @@ class Ephemeris:
         ephs = []
         for sso_group in ssos:
             inits, intlens, coeffs = [], [], []
-            for target, center in zip(sso_group["targets"], sso_group["centers"]):
+            for target, center in zip(
+                sso_group["targets"], sso_group["centers"], strict=True
+            ):
                 init, intlen, coeff = extract_data(
                     center, target, sso_group["ephem_file"], earliest_time, latest_time
                 )

@@ -73,7 +73,7 @@ def precompute(n_internal_points: int) -> tuple:
 
     d_matrix = mpm.zeros(n_internal_points, n_internal_points)
     indices = np.tril_indices(n_internal_points, k=-1)
-    for z, (i, j) in enumerate(zip(*indices)):
+    for z, (i, j) in enumerate(zip(*indices, strict=True)):
         d_matrix[i, j] = d[z]
     for i in range(n_internal_points):
         d_matrix[i, i] = 1.0

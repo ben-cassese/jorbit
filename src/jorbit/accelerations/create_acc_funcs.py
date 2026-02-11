@@ -277,7 +277,7 @@ def create_static_default_on_sky_acc_func() -> jax.tree_util.Partial:
     log_gms = eph.processor.log_gms
 
     def static_on_sky_acc(inputs: SystemState) -> jnp.ndarray:
-        num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
+        # num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
         # num_newtonian_perturbers = 16  # the asteroids
 
         def eval_cheby(coefficients: jnp.ndarray, x: float) -> tuple:
