@@ -85,15 +85,13 @@ def write_result(target_name, chebyshev_coefficients, x0, v0):
 
     with sqlite3.connect(TEMP_DB, timeout=30.0) as conn:
         # Create the table if it doesn't exist
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS results
             (target_name TEXT PRIMARY KEY,
              chebyshev_coefficients BLOB,
              x0 BLOB,
              v0 BLOB)
-        """
-        )
+        """)
 
         # Convert arrays to binary
         cheby_binary = adapt_array(chebyshev_coefficients)
@@ -110,15 +108,13 @@ def write_result(target_name, chebyshev_coefficients, x0, v0):
 def setup_db():
     with sqlite3.connect(TEMP_DB, timeout=30.0) as conn:
         # Create the table if it doesn't exist
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS results
             (target_name TEXT PRIMARY KEY,
              chebyshev_coefficients BLOB,
              x0 BLOB,
              v0 BLOB)
-        """
-        )
+        """)
 
 
 def contribute_to_ephem(target_indecies):

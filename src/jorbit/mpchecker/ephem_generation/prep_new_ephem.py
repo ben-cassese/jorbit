@@ -152,15 +152,13 @@ perturbers = {
 def write_result(target_name, chebyshev_coefficients, x0, v0):
     with sqlite3.connect("perturbers.db", timeout=30.0) as conn:
         # Create the table if it doesn't exist
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS results
             (target_name TEXT PRIMARY KEY,
              chebyshev_coefficients BLOB,
              x0 BLOB,
              v0 BLOB)
-        """
-        )
+        """)
 
         # Convert arrays to binary
         cheby_binary = chebyshev_coefficients.tobytes()
