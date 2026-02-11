@@ -6,6 +6,9 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from jorbit.data.constants import INV_SPEED_OF_LIGHT
+from jorbit.integrators.iasnn_dd_prec import setup_iasnn_integrator
+from jorbit.integrators.iasnn_dd_prec import step as dd_step
+from jorbit.utils.doubledouble import DoubleDouble, dd_norm
 from jorbit.utils.states import SystemState
 
 
@@ -151,6 +154,60 @@ def on_sky(
         xz = x + v * dt + 0.5 * a0 * dt * dt
 
     X = xz - observer_position
+    calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
+    calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
+    return calc_ra, calc_dec
+
+
+@jax.jit
+def on_sky_dd(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    observer_position: jnp.ndarray,
+    acc_func: jax.tree_util.Partial,
+    n_internal_points: int = 7,
+) -> tuple[float, float]:
+    """Compute on-sky position with DoubleDouble precision LTT correction using IAS15.
+
+    Uses the DD precision IAS15 integrator to propagate the particle backward by the
+    light travel time. Three iterations of the LTT correction are applied, each taking
+    a single IAS15 step backward. The acceleration function must accept DoubleDouble
+    position and velocity arrays and return DoubleDouble accelerations.
+
+    Args:
+        x (jnp.ndarray): Position of the particle, shape (3,).
+        v (jnp.ndarray): Velocity of the particle, shape (3,).
+        observer_position (jnp.ndarray): Position of the observer, shape (3,).
+        acc_func (jax.tree_util.Partial):
+            DoubleDouble acceleration function with signature (x_dd, v_dd) -> a_dd,
+            where x_dd and v_dd are (n_particles, 3) DoubleDouble arrays.
+        n_internal_points (int): Number of internal IAS15 substeps (default 7).
+
+    Returns:
+        tuple[float, float]:
+            The right ascension and declination of the particle in radians, ICRS.
+    """
+    precomputed = setup_iasnn_integrator(n_internal_points)
+
+    x_dd = DoubleDouble(jnp.array([x]))  # (1, 3)
+    v_dd = DoubleDouble(jnp.array([v]))  # (1, 3)
+    obs_dd = DoubleDouble(jnp.array([observer_position]))  # (1, 3)
+
+    inv_c = DoubleDouble.from_string(str(INV_SPEED_OF_LIGHT))
+
+    b = DoubleDouble(jnp.zeros((n_internal_points, 1, 3)))
+
+    xz = x_dd
+    for _ in range(3):
+        dist = dd_norm(xz - obs_dd, axis=1)  # scalar DD
+        dt = -(dist * inv_c)  # negative = backward in time
+
+        xz, _v_retarded, b = dd_step(x_dd, v_dd, b, dt, precomputed, acc_func)
+        # Reset b for fresh step with new dt
+        b = DoubleDouble(jnp.zeros((n_internal_points, 1, 3)))
+
+    # Extract retarded position relative to observer (float64)
+    X = xz.hi[0] - observer_position
     calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
     calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
     return calc_ra, calc_dec

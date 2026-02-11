@@ -19,14 +19,16 @@ from jorbit.utils.generate_coefficients import create_iasnn_constants
 
 
 @jax.jit
-def acceleration_func(x: jnp.ndarray) -> jnp.ndarray:
-    """A dummy acceleration function for testing purposes, unit central potential.
+def central_potential(x: DoubleDouble, v: DoubleDouble) -> DoubleDouble:
+    """A simple unit central potential acceleration function.
 
     Args:
-        x: (n_particles, 3) array of positions
+        x: (n_particles, 3) DoubleDouble array of positions.
+        v: (n_particles, 3) DoubleDouble array of velocities (unused, but required
+            by the acceleration function interface).
 
     Returns:
-        a: (n_particles, 3) array of accelerations
+        a: (n_particles, 3) DoubleDouble array of accelerations.
     """
     r = dd_norm(x, axis=1)
     return -x / (r * r * r)
@@ -282,26 +284,31 @@ def step(
     b: DoubleDouble,
     dt: DoubleDouble,
     precomputed_setup: tuple,
+    acceleration_func: jax.tree_util.Partial,
     convergence_threshold: DoubleDouble = DoubleDouble.from_string("1e-40"),
 ) -> tuple:
     """Take a single step with an IASNN-style integrator.
 
     This does all of the same predictor-corrector iteration as the default IAS15
-    integrator, but does *not* do any of the time validity checking, and currently does
-    not accept actual acceleration functions (need to write DoubleDouble versions of
-    those).
+    integrator, but does *not* do any of the time validity checking. Accepts an
+    arbitrary acceleration function that takes (x, v) DoubleDouble arrays and returns
+    DoubleDouble accelerations.
 
     Args:
         x0 (DoubleDouble):
-            The initial position.
+            The initial position, shape (n_particles, 3).
         v0 (DoubleDouble):
-            The initial velocity.
+            The initial velocity, shape (n_particles, 3).
         b (DoubleDouble):
-            The b coefficients.
+            The b coefficients, shape (n_internal_points, n_particles, 3).
         dt (DoubleDouble):
             The timestep.
         precomputed_setup (tuple):
             The precomputed constants from setup_iasnn_integrator.
+        acceleration_func (jax.tree_util.Partial):
+            Acceleration function with signature (x: DD, v: DD) -> DD, where x and v
+            are (n_particles, 3) DoubleDouble arrays. Can close over any additional
+            data (e.g., perturber positions, GMs) via jax.tree_util.Partial.
         convergence_threshold (DoubleDouble):
             The convergence threshold for the predictor-corrector iteration.
 
@@ -309,15 +316,12 @@ def step(
         tuple:
             The new position, velocity, and b coefficients.
     """
-    # these are all just DoubleDouble here- no IAS15Helpers
     # x0, v0, a0 are all (n_particles, 3)
     # b is (n_internal_points, n_particles, 3)
 
     b_x_denoms, b_v_denoms, h, r, c, d_matrix = precomputed_setup
 
-    # TODO: time-variable acceleration functions
-    # t_beginning = DoubleDouble(0.0)
-    a0 = acceleration_func(x0)
+    a0 = acceleration_func(x0, v0)
 
     # misc setup, make partialized versions of the helpers that bake in the constants
     n_internal_points = b.hi.shape[0]
@@ -329,39 +333,28 @@ def step(
     # initialize the g coefficients
     g = dd_sum((b[None, :, :, :] * d_matrix[:, :, None, None]), axis=1)
 
-    # get the initial acceleration
-    a0 = acceleration_func(x0)
-
     # set up the predictor-corrector loop
     def do_nothing(
         b: DoubleDouble, g: DoubleDouble, predictor_corrector_error: DoubleDouble
     ) -> tuple:
-        # jax.debug.print("just chillin")
         return b, g, predictor_corrector_error, predictor_corrector_error
 
     def predictor_corrector_iteration(
         b: DoubleDouble, g: DoubleDouble, predictor_corrector_error: DoubleDouble
     ) -> tuple:
         predictor_corrector_error_last = predictor_corrector_error
-        predictor_corrector_error = 0.0
+        predictor_corrector_error = DoubleDouble(0.0)
 
         # loop over each subinterval
-        ################################################################################
-        # really not loving this as a for loop, worried about compile times
-        # but, struggled too long to get it to work with scan, even if things are marked
-        # static in the subfunctions the scan doesn't like that
         for n in range(1, n_internal_points):
-            # step_time = t_beginning + dt * h[n] # come back to this for time-variable acceleration functions
-            x, _v = estimate_x_v_from_b(h[n], b)
-            at = acceleration_func(x)
+            x, v = estimate_x_v_from_b(h[n], b)
+            at = acceleration_func(x, v)
             b, g = refine_b_and_g(b, g, at, a0, n, False)
 
-        # last iteration is different only so we can get the change in the last g value
-        # to evaluate convergence
+        # last iteration: get g_diff for convergence check
         n = n_internal_points
-        # step_time = t_beginning + dt * h[n]
-        x, _v = estimate_x_v_from_b(h[n], b)
-        at = acceleration_func(x)
+        x, v = estimate_x_v_from_b(h[n], b)
+        at = acceleration_func(x, v)
         b, g, g_diff = refine_b_and_g(
             b=b, g=g, at=at, a0=a0, substep_num=n, return_g_diff=True
         )
@@ -389,7 +382,6 @@ def step(
             predictor_corrector_error,
         )
 
-        carry = predictor_corrector_iteration(b, g, predictor_corrector_error)
         return carry, None
 
     predictor_corrector_error = DoubleDouble(1e300)

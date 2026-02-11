@@ -92,6 +92,9 @@ exclude = [
 ]
 pydocstyle.convention = "google"
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ANN001"]  # typing fixture/parametrize args as Any adds no value
+
 [tool.uv]
 no-build-isolation-package = ["rebound", "reboundx"]
 
