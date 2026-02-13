@@ -12,11 +12,9 @@ repos:
     rev: 26.1.0
     hooks:
       - id: black
-        # It is recommended to specify the latest version of Python
-        # supported by your project here, or alternatively use
-        # pre-commit's default_language_version, see
-        # https://pre-commit.com/#top_level-default_language_version
         language_version: python3.13
+        additional_dependencies: ["black[jupyter]"]
+        types_or: [python, jupyter]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: "v6.0.0"
@@ -24,10 +22,11 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
         exclude_types: [json, binary]
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1
     hooks:
     - id: codespell
-      # having trouble getting it to read the skips from pyproject.toml...
-      args: ["--skip=scratch.ipynb,**/*.ipynb,src/jorbit/data/observatory_codes.py,static_integration_scratch.ipynb"]
+      exclude: '\.ipynb$|^src/jorbit/data/observatory_codes\.py$'
