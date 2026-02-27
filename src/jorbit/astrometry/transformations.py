@@ -130,7 +130,8 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
     Relies on the total mass of the solar system, which is assumed to be the sum of all
     GM values of the sun, planets, and 16 most massive asteroids as assumed by DE440.
 
-    This is the inverse of elements_to_cartesian.
+    This is the inverse of elements_to_cartesian. If the eccentricity falls below a
+    hard-coded threshold of 1e-10, it and omega are both set to zero.
 
     Args:
         x (jnp.ndarray): Position in AU.
@@ -173,7 +174,9 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
     )
     Omega = jnp.where(n_mag == 0, 0, Omega)
 
-    omega = jnp.where(
+    # ── omega (argument of periapsis) ──
+    # Standard computation from eccentricity vector
+    omega_standard = jnp.where(
         n_mag > 0,
         jnp.where(
             e_vec[:, 2] >= 0,
@@ -202,7 +205,9 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
         0,
     )
 
-    nu = jnp.where(
+    # ── nu (true anomaly) ──
+    # Standard computation from eccentricity vector
+    nu_standard = jnp.where(
         jnp.sum(x * v, axis=1) >= 0,
         jnp.arccos(jnp.clip(jnp.sum(e_vec * x, axis=1) / (ecc * r_mag), -1, 1))
         * 180
@@ -212,5 +217,21 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
         * 180
         / jnp.pi,
     )
+
+    # ── Circular orbit fallback: omega=0, nu=argument of latitude ──
+    # u = angle from ascending node to position, measured in the orbital plane
+    # cos(u) = (n . x) / (n_mag * r_mag)
+    # sin(u) sign from x[2]: positive when above the reference plane
+    cos_u = jnp.sum(n * x, axis=1) / (n_mag * r_mag)
+    u_deg = jnp.where(
+        x[:, 2] >= 0,
+        jnp.arccos(jnp.clip(cos_u, -1, 1)) * 180 / jnp.pi,
+        360 - jnp.arccos(jnp.clip(cos_u, -1, 1)) * 180 / jnp.pi,
+    )
+
+    is_circular = ecc < 1e-10  # Threshold for circular orbits, can be tuned
+    omega = jnp.where(is_circular, 0.0, omega_standard)
+    nu = jnp.where(is_circular, u_deg, nu_standard)
+    ecc = jnp.where(is_circular, 0.0, ecc)
 
     return a, ecc, nu, inc, Omega, omega
