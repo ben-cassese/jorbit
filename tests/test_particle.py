@@ -208,3 +208,121 @@ def test_properties() -> None:
     _ = repr(p)
     _ = p.cartesian_state
     _ = p.keplerian_state
+
+
+def test_keplerian_integrate() -> None:
+    """Test that keplerian propagation is self-consistent (forward-backward roundtrip)."""
+    p = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="keplerian"
+    )
+
+    # Forward propagation
+    times_fwd = Time("2025-01-01") + np.arange(1, 31) * u.day
+    positions, velocities = p.integrate(times_fwd)
+    assert positions.shape == (30, 3)
+    assert velocities.shape == (30, 3)
+
+    # Roundtrip: propagate forward 10 days then back to epoch
+    pos_fwd, vel_fwd = p.integrate(Time("2025-01-11"))
+    from jorbit.utils.states import CartesianState
+
+    state_fwd = CartesianState(
+        x=pos_fwd,
+        v=vel_fwd,
+        time=Time("2025-01-11").tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+    )
+    pos_back, vel_back = p.integrate(Time("2025-01-01"), state=state_fwd)
+
+    assert jnp.linalg.norm(pos_back[0] - p._x) * u.au.to(u.m) < 1 * u.m
+    assert (
+        jnp.linalg.norm(vel_back[0] - p._v) * (u.au / u.day).to(u.m / u.s)
+        < 1e-4 * u.m / u.s
+    )
+
+
+def test_keplerian_ephemeris() -> None:
+    """Test that keplerian ephemeris is close to Horizons for short timescales."""
+    p_nbody = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="default solar system"
+    )
+    p_kepler = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="keplerian"
+    )
+
+    times = Time("2025-01-01") + np.array([1, 5, 10]) * u.day
+    eph_nbody = p_nbody.ephemeris(times, "kitt peak")
+    eph_kepler = p_kepler.ephemeris(times, "kitt peak")
+
+    seps = eph_nbody.separation(eph_kepler).to(u.arcsec)
+    # keplerian should be within a few arcsec of N-body over 10 days
+    assert np.all(seps < 10 * u.arcsec)
+
+
+def test_keplerian_max_likelihood() -> None:
+    """Test that max_likelihood works for keplerian particles with self-consistent obs."""
+    p_true = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="keplerian"
+    )
+
+    # Generate self-consistent keplerian observations
+    times = Time("2025-01-01") + [1, 3, 5, 7, 10, 14, 20, 30] * u.day
+    eph = p_true.ephemeris(times, "kitt peak")
+    obs = Observations(
+        observed_coordinates=eph,
+        times=times,
+        observatories="kitt peak",
+        astrometric_uncertainties=1 * u.arcsec,
+    )
+
+    # Perturbed particle
+    p_perturbed = Particle(
+        x=p_true._x + jnp.ones(3) * 1e-4,
+        v=p_true._v - jnp.ones(3) * 1e-6,
+        time=Time("2025-01-01"),
+        observations=obs,
+        gravity="keplerian",
+    )
+
+    p_fit = p_perturbed.max_likelihood(verbose=False)
+    res_fit = p_fit.residuals(p_fit._cartesian_state)
+    res_mags = jnp.linalg.norm(res_fit, axis=1) * u.arcsec
+
+    assert np.all(res_mags < 1 * u.mas)
+    assert p_fit._is_keplerian
+
+
+def test_keplerian_properties() -> None:
+    """Test properties and init for keplerian particles."""
+    p = Particle(
+        name="test_keplerian",
+        x=jnp.array([-2.0, 1.78, 0.52]),
+        v=jnp.array([-0.0067, -0.0066, -0.002]),
+        time=Time("2025-01-01"),
+        gravity="keplerian",
+    )
+
+    assert "Particle" in repr(p)
+    assert p._is_keplerian
+    assert p.gravity == "keplerian"
+    _ = p.cartesian_state
+    _ = p.keplerian_state
+
+    # No observations → no likelihood
+    assert p.loglike is None
+    assert p.residuals is None
+    assert p.static_residuals is None
+
+    # Init from KeplerianState
+    k = KeplerianState(
+        semi=jnp.array([2.3785863410573236]),
+        ecc=jnp.array([0.14924976664546713]),
+        inc=jnp.array([6.733641114294506]),
+        Omega=jnp.array([183.37291068678854]),
+        omega=jnp.array([140.26341029272996]),
+        nu=jnp.array([173.59627946476093]),
+        time=Time("2025-01-01").tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+    )
+    p2 = Particle(name="from_elements", state=k, gravity="keplerian")
+    _ = p2.integrate(Time("2025-01-02"))
