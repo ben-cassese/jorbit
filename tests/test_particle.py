@@ -13,6 +13,7 @@ from astroquery.jplhorizons import Horizons
 
 from jorbit import Observations, Particle
 from jorbit.data.constants import SPEED_OF_LIGHT
+from jorbit.system import System
 from jorbit.utils.horizons import (
     horizons_bulk_astrometry_query,
     horizons_bulk_vector_query,
@@ -326,3 +327,52 @@ def test_keplerian_properties() -> None:
     )
     p2 = Particle(name="from_elements", state=k, gravity="keplerian")
     _ = p2.integrate(Time("2025-01-02"))
+
+
+def test_system_keplerian_integrate() -> None:
+    """Test that System keplerian integration has correct shapes and roundtrips."""
+    p1 = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="keplerian"
+    )
+    p2 = Particle.from_horizons(name="1", time=Time("2025-01-01"), gravity="keplerian")
+    sys = System(particles=[p1, p2], gravity="keplerian")
+
+    assert sys._is_keplerian
+    assert sys.gravity == "keplerian"
+
+    times_fwd = Time("2025-01-01") + np.arange(1, 11) * u.day
+    positions, velocities = sys.integrate(times_fwd)
+    assert positions.shape == (10, 2, 3)
+    assert velocities.shape == (10, 2, 3)
+
+    # Verify positions at epoch match initial state
+    pos_back, _ = sys.integrate(Time("2025-01-01"))
+
+    for i, p in enumerate([p1, p2]):
+        assert jnp.linalg.norm(pos_back[0, i] - p._x) * u.au.to(u.m) < 1.0
+
+
+def test_system_keplerian_ephemeris() -> None:
+    """Test System keplerian ephemeris matches individual Particle ephemerides."""
+    p1 = Particle.from_horizons(
+        name="274301", time=Time("2025-01-01"), gravity="keplerian"
+    )
+    p2 = Particle.from_horizons(name="1", time=Time("2025-01-01"), gravity="keplerian")
+    sys = System(particles=[p1, p2], gravity="keplerian")
+
+    times = Time("2025-01-01") + np.array([1, 5, 10]) * u.day
+    eph_sys = sys.ephemeris(times, "kitt peak")
+
+    # Compare against individual particle ephemerides
+    eph_p1 = p1.ephemeris(times, "kitt peak")
+    eph_p2 = p2.ephemeris(times, "kitt peak")
+
+    # System shape should be (N_particles, N_times)
+    assert eph_sys.ra.shape == (2, 3)
+
+    # Each particle's ephemeris should match exactly
+    for t_idx in range(3):
+        sep1 = eph_sys[0, t_idx].separation(eph_p1[t_idx]).to(u.arcsec)
+        sep2 = eph_sys[1, t_idx].separation(eph_p2[t_idx]).to(u.arcsec)
+        assert sep1 < 0.001 * u.arcsec
+        assert sep2 < 0.001 * u.arcsec
