@@ -1,6 +1,11 @@
 Changelog
 +++++++++
 
+**development**
+
+- Added option for Keplerian-only motion to `Particle` and `System`
+- Add the `.is_observable` method to `Particle` objects which checks whether the particle is at least a certain angular distance from the Sun at given times from given observatories.
+
 **1.2.0 (02/2026)**
 
 - Major refactor of ias15.py, no longer resembles the original REBOUND implementation. Removed IAS15Helper, but otherwise no API changes.

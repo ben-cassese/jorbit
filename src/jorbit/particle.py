@@ -24,7 +24,21 @@ from jorbit.accelerations import (
 )
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
-from jorbit.data.constants import SPEED_OF_LIGHT, Y4_C, Y4_D, Y6_C, Y6_D, Y8_C, Y8_D
+from jorbit.astrometry.transformations import (
+    horizons_ecliptic_to_icrs,
+    icrs_to_horizons_ecliptic,
+)
+from jorbit.data.constants import (
+    INV_SPEED_OF_LIGHT,
+    SPEED_OF_LIGHT,
+    TOTAL_SOLAR_SYSTEM_GM,
+    Y4_C,
+    Y4_D,
+    Y6_C,
+    Y6_D,
+    Y8_C,
+    Y8_D,
+)
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
@@ -37,6 +51,7 @@ from jorbit.likelihoods.setup_static_likelihood import (
     precompute_likelihood_data,
 )
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
+from jorbit.utils.kepler import keplerian_propagate
 from jorbit.utils.states import (
     CartesianState,
     IAS15IntegratorState,
@@ -118,17 +133,18 @@ class Particle:
                 asteroids in the asteroids_de441/sb441-n16.bsp ephemeris. Can also be
                 a jax.tree_util.Partial object that follows the same signature as the
                 acceleration functions in jorbit.accelerations. Other string options are
-                "newtonian planets", "newtonian solar system", "gr planets", and "gr
-                solar system".
+                "newtonian planets", "newtonian solar system", "gr planets", "gr
+                solar system", and "keplerian" (pure 2-body Keplerian propagation with
+                no ephemeris or integrator setup).
             de_ephemeris_version (str | None):
                 Which version of the JPL DE ephemeris to use for perturber positions
                 when using one of the built-in gravity models. Accepts either "440" or
-                "430", default is "440".
+                "430", default is "440". Ignored when gravity is "keplerian".
             integrator (str):
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
                 are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
-                step sizes. Defaults to "ias15".
+                step sizes. Defaults to "ias15". Ignored when gravity is "keplerian".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -153,6 +169,7 @@ class Particle:
         self._earliest_time = earliest_time
         self._latest_time = latest_time
         self._de_ephemeris_version = de_ephemeris_version
+        self._is_keplerian = gravity == "keplerian"
 
         self.gravity = gravity
 
@@ -166,13 +183,19 @@ class Particle:
             self._acc_func_kwargs,
         ) = self._setup_state(x, v, state, time, name)
 
-        self.gravity = self._setup_acceleration_func(gravity)
-
-        self._integrator_state, self._integrator = self._setup_integrator(
-            integrator, max_step_size
-        )
-        self._integrator_method = integrator
-        self._max_step_size = max_step_size
+        if self._is_keplerian:
+            self.gravity = "keplerian"
+            self._integrator_state = None
+            self._integrator = None
+            self._integrator_method = "keplerian"
+            self._max_step_size = None
+        else:
+            self.gravity = self._setup_acceleration_func(gravity)
+            self._integrator_state, self._integrator = self._setup_integrator(
+                integrator, max_step_size
+            )
+            self._integrator_method = integrator
+            self._max_step_size = max_step_size
 
         self._fit_seed = self._setup_fit_seed(fit_seed)
 
@@ -385,66 +408,92 @@ class Particle:
         if self._observations is None:
             return None, None, None, None
 
-        if self._integrator_method == "ias15":
+        if self._is_keplerian:
             times = self._observations.times
-            inds = jnp.arange(len(self._observations.times))
 
-        elif self._integrator_method in ["Y4", "Y6", "Y8"]:
-            times, inds = create_leapfrog_times(
-                self._cartesian_state.time,
-                self._observations.times,
-                self._max_step_size,
+            residuals = jax.tree_util.Partial(
+                _keplerian_residuals,
+                times,
+                self._observations.observer_positions,
+                self._observations.ra,
+                self._observations.dec,
             )
 
-        residuals = jax.tree_util.Partial(
-            _residuals,
-            times,
-            self.gravity,
-            self._integrator,
-            self._integrator_state,
-            self._observations.observer_positions,
-            self._observations.ra,
-            self._observations.dec,
-            inds,
-        )
+            ll = jax.tree_util.Partial(
+                _keplerian_loglike,
+                times,
+                self._observations.observer_positions,
+                self._observations.ra,
+                self._observations.dec,
+                self._observations.inv_cov_matrices,
+                self._observations.cov_log_dets,
+            )
 
-        ll = jax.tree_util.Partial(
-            _loglike,
-            times,
-            self.gravity,
-            self._integrator,
-            self._integrator_state,
-            self._observations.observer_positions,
-            self._observations.ra,
-            self._observations.dec,
-            self._observations.inv_cov_matrices,
-            self._observations.cov_log_dets,
-            inds,
-        )
+            # Keplerian propagation is fully JIT-able, reverse mode works natively
+            residuals = jax.jit(residuals)
+            loglike = jax.jit(ll)
 
-        # since we've gone with the while loop version of the ias15 integrator, can no
-        # longer use reverse mode. But, actually specifying forward mode everywhere is
-        # annoying, so we're going to re-define a custom vjp for "reverse" mode that's
-        # actually just forward mode
+        else:
+            if self._integrator_method == "ias15":
+                times = self._observations.times
+                inds = jnp.arange(len(self._observations.times))
 
-        @jax.custom_vjp
-        def loglike(params: CartesianState | KeplerianState) -> float:
-            return ll(params)
+            elif self._integrator_method in ["Y4", "Y6", "Y8"]:
+                times, inds = create_leapfrog_times(
+                    self._cartesian_state.time,
+                    self._observations.times,
+                    self._max_step_size,
+                )
 
-        def loglike_fwd(params: CartesianState | KeplerianState) -> tuple:
-            output = ll(params)
-            jac = jax.jacfwd(ll)(params)
-            return output, (jac,)
+            residuals = jax.tree_util.Partial(
+                _residuals,
+                times,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                self._observations.observer_positions,
+                self._observations.ra,
+                self._observations.dec,
+                inds,
+            )
 
-        def loglike_bwd(res: tuple, g: float) -> float:
-            jac = res
-            val = jax.tree.map(lambda x: x * g, jac)
-            return val
+            ll = jax.tree_util.Partial(
+                _loglike,
+                times,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                self._observations.observer_positions,
+                self._observations.ra,
+                self._observations.dec,
+                self._observations.inv_cov_matrices,
+                self._observations.cov_log_dets,
+                inds,
+            )
 
-        loglike.defvjp(loglike_fwd, loglike_bwd)
+            # since we've gone with the while loop version of the ias15 integrator,
+            # can no longer use reverse mode. But, actually specifying forward mode
+            # everywhere is annoying, so we're going to re-define a custom vjp for
+            # "reverse" mode that's actually just forward mode
 
-        residuals = jax.jit(residuals)
-        loglike = jax.jit(loglike)
+            @jax.custom_vjp
+            def loglike(params: CartesianState | KeplerianState) -> float:
+                return ll(params)
+
+            def loglike_fwd(params: CartesianState | KeplerianState) -> tuple:
+                output = ll(params)
+                jac = jax.jacfwd(ll)(params)
+                return output, (jac,)
+
+            def loglike_bwd(res: tuple, g: float) -> float:
+                jac = res
+                val = jax.tree.map(lambda x: x * g, jac)
+                return val
+
+            loglike.defvjp(loglike_fwd, loglike_bwd)
+
+            residuals = jax.jit(residuals)
+            loglike = jax.jit(loglike)
 
         def scipy_objective(x: jnp.ndarray) -> float:
             c = CartesianState(
@@ -469,7 +518,7 @@ class Particle:
         return residuals, loglike, scipy_objective, scipy_grad
 
     def _setup_default_static_residuals(self) -> Callable:
-        if self._observations is None:
+        if self._observations is None or self._is_keplerian:
             return None
         precomputed_data = precompute_likelihood_data(self)
         static_residuals_func = create_default_static_residuals_func(precomputed_data)
@@ -592,6 +641,20 @@ class Particle:
                 The positions of the particle at the given times, in AU, and the
                 The velocities of the particle at the given times, in AU/day.
         """
+        if self._is_keplerian:
+            if state is not None:
+                state = state.to_cartesian()
+                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
+            else:
+                x, v, t0 = self._x, self._v, self._time
+
+            if isinstance(times, Time):
+                times = jnp.array(times.tdb.jd)
+            if times.shape == ():
+                times = jnp.array([times])
+
+            return _keplerian_integrate(x, v, t0, times)
+
         if state is None:
             state = self._cartesian_state
             integrator_state = self._integrator_state
@@ -655,6 +718,21 @@ class Particle:
         else:
             observer_positions = observer
 
+        if self._is_keplerian:
+            if state is not None:
+                state = state.to_cartesian()
+                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
+            else:
+                x, v, t0 = self._x, self._v, self._time
+
+            if isinstance(times, Time):
+                times = jnp.array(times.tdb.jd)
+            if times.shape == ():
+                times = jnp.array([times])
+
+            ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
+            return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+
         if state is None:
             state = self._cartesian_state
             integrator_state = self._integrator_state
@@ -708,25 +786,57 @@ class Particle:
         if fit_seed is None:
             fit_seed = self._fit_seed
 
-        result = minimize(
-            fun=lambda x: self.scipy_objective(x),
-            x0=jnp.concatenate(
-                [
-                    fit_seed.to_cartesian().x.flatten(),
-                    fit_seed.to_cartesian().v.flatten(),
-                ]
-            ),
-            jac=lambda x: self.scipy_objective_grad(x),
-            method="L-BFGS-B",
-            options={
-                "disp": verbose,
-                "maxls": 100,
-                "maxcor": 100,
-                "maxfun": 5000,
-                "maxiter": 1000,
-                "ftol": 1e-14,
-            },
+        x0 = jnp.concatenate(
+            [
+                fit_seed.to_cartesian().x.flatten(),
+                fit_seed.to_cartesian().v.flatten(),
+            ]
         )
+
+        if self._is_keplerian:
+            # Keplerian propagation produces NaN for hyperbolic orbits, so we
+            # guard the objective and gradient. We also scale the parameters so
+            # the initial identity-Hessian step in L-BFGS-B is well-sized.
+            scale = jnp.abs(x0) + 1e-10
+
+            def _scaled_objective(x_scaled: jnp.ndarray) -> float:
+                val = self.scipy_objective(x_scaled * scale)
+                return float(jnp.where(jnp.isnan(val), 1e30, val))
+
+            def _scaled_grad(x_scaled: jnp.ndarray) -> jnp.ndarray:
+                g = self.scipy_objective_grad(x_scaled * scale) * scale
+                return jnp.where(jnp.isnan(g), 0.0, g)
+
+            result = minimize(
+                fun=_scaled_objective,
+                x0=x0 / scale,
+                jac=_scaled_grad,
+                method="L-BFGS-B",
+                options={
+                    "disp": verbose,
+                    "maxls": 100,
+                    "maxcor": 100,
+                    "maxfun": 5000,
+                    "maxiter": 1000,
+                    "ftol": 1e-14,
+                },
+            )
+            result.x = result.x * scale
+        else:
+            result = minimize(
+                fun=lambda x: self.scipy_objective(x),
+                x0=x0,
+                jac=lambda x: self.scipy_objective_grad(x),
+                method="L-BFGS-B",
+                options={
+                    "disp": verbose,
+                    "maxls": 100,
+                    "maxcor": 100,
+                    "maxfun": 5000,
+                    "maxiter": 1000,
+                    "ftol": 1e-14,
+                },
+            )
 
         if result.success:
             c = CartesianState(
@@ -757,6 +867,73 @@ class Particle:
             )
         else:
             raise ValueError("Failed to converge")
+
+    def is_observable(
+        self,
+        times: Time,
+        observer: str | jnp.ndarray,
+        sun_limit: float = 20.0,
+        ephem: SkyCoord | None = None,
+        return_angle: bool = False,
+    ) -> jnp.ndarray:
+        """Check whether a particle is observable or too close to the Sun.
+
+        Args:
+            times (Time):
+                The times to check the observability.
+            observer (str | jnp.ndarray):
+                The observer/observatory making the observations. Can be a string for
+                the name/code of an observatory, or a jnp.array of 3D barycentric ICRS
+                positions in AU.
+            sun_limit (float):
+                The minimum allowed angular separation from the Sun, in degrees.
+                Defaults to 20 degrees.
+            ephem (SkyCoord | None, optional):
+                Optionally, the ephemeris of the particle at the given times. If not
+                provided, will be computed using the ephemeris method. Helpful if you've
+                already computed the ephemeris and want to avoid doing it twice.
+            return_angle (bool, optional):
+                If True, will return the angles to the Sun in degrees, not the mask.
+                Default is False.
+
+        Returns:
+            jnp.ndarray:
+                A boolean array indicating whether the particle is observable at each
+                time (True) or too close to the Sun (False).
+        """
+        if isinstance(observer, str):
+            observer_pos = get_observer_positions(
+                times, observer, self._de_ephemeris_version
+            )
+        else:
+            observer_pos = observer
+
+        if ephem is None:
+            ephem = self.ephemeris(times, observer)
+
+        if isinstance(times, Time):
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        eph = Ephemeris(
+            earliest_time=self._earliest_time,
+            latest_time=self._latest_time,
+        )
+        sun_pos = jax.vmap(eph.processor.state)(times)[0][:, 0, :]
+
+        eph_unit_vec = jnp.array(ephem.cartesian.xyz).T
+
+        # want the angle between the eph_unit_vec, with its tail on the observer, and the vector from the observer to the sun
+        obs_to_sun_vec = sun_pos - observer_pos
+        obs_to_sun_unit_vec = (
+            obs_to_sun_vec / jnp.linalg.norm(obs_to_sun_vec, axis=1)[:, None]
+        )
+        angle = jnp.arccos(jnp.sum(obs_to_sun_unit_vec * eph_unit_vec, axis=1))
+        if return_angle:
+            return jnp.rad2deg(angle)
+        else:
+            return angle > jnp.deg2rad(sun_limit)
 
 
 ###########################
@@ -893,4 +1070,106 @@ def _loglike(
 
     ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
 
+    return ll
+
+
+###################################
+# KEPLERIAN EXTERNAL JITTED FUNCTIONS
+###################################
+
+
+@jax.jit
+def _keplerian_integrate(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    x_ecl = icrs_to_horizons_ecliptic(x[None, :])
+    v_ecl = icrs_to_horizons_ecliptic(v[None, :])
+
+    positions_ecl, velocities_ecl = keplerian_propagate(
+        x_ecl, v_ecl, t0, times, TOTAL_SOLAR_SYSTEM_GM
+    )
+
+    positions = horizons_ecliptic_to_icrs(positions_ecl)
+    velocities = horizons_ecliptic_to_icrs(velocities_ecl)
+    return positions, velocities
+
+
+@jax.jit
+def _keplerian_on_sky(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    time: float,
+    observer_position: jnp.ndarray,
+) -> tuple[float, float]:
+    r = jnp.linalg.norm(x)
+    a0 = -TOTAL_SOLAR_SYSTEM_GM * x / (r**3)
+
+    xz = x
+    for _ in range(3):
+        earth_distance = jnp.linalg.norm(xz - observer_position)
+        dt = -earth_distance * INV_SPEED_OF_LIGHT
+        xz = x + v * dt + 0.5 * a0 * dt * dt
+
+    X = xz - observer_position
+    calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
+    calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
+    return calc_ra, calc_dec
+
+
+@jax.jit
+def _keplerian_ephem(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    positions, velocities = _keplerian_integrate(x, v, t0, times)
+
+    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
+        position, velocity, time, observer_position = scan_over
+        ra, dec = _keplerian_on_sky(position, velocity, time, observer_position)
+        return None, (ra, dec)
+
+    _, (ras, decs) = jax.lax.scan(
+        scan_func,
+        None,
+        (positions, velocities, times, observer_positions),
+    )
+    return ras, decs
+
+
+@jax.jit
+def _keplerian_residuals(
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    ra: jnp.ndarray,
+    dec: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+) -> jnp.ndarray:
+    x = particle_state.to_cartesian().x.flatten()
+    v = particle_state.to_cartesian().v.flatten()
+    t0 = particle_state.time
+
+    ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
+    xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
+    return xis_etas
+
+
+@jax.jit
+def _keplerian_loglike(
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    ra: jnp.ndarray,
+    dec: jnp.ndarray,
+    inv_cov_matrices: jnp.ndarray,
+    cov_log_dets: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+) -> float:
+    xis_etas = _keplerian_residuals(times, observer_positions, ra, dec, particle_state)
+    quad = jnp.einsum("bi,bij,bj->b", xis_etas, inv_cov_matrices, xis_etas)
+    ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
     return ll

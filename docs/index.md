@@ -58,6 +58,7 @@ tutorials/apophis_flyby.ipynb
 tutorials/general_n_body.ipynb
 tutorials/pick_an_integrator.ipynb
 tutorials/heliocentric_barycentric.ipynb
+tutorials/keplerian_vs_nbody.ipynb
 ```
 
 

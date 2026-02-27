@@ -26,6 +26,7 @@ from jorbit.integrators import (
     initialize_ias15_integrator_state,
     leapfrog_evolve,
 )
+from jorbit.particle import _keplerian_integrate, _keplerian_on_sky
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.states import (
     IAS15IntegratorState,
@@ -95,6 +96,7 @@ class System:
         self._earliest_time = earliest_time
         self._latest_time = latest_time
         self._de_ephemeris_version = de_ephemeris_version
+        self._is_keplerian = gravity == "keplerian"
 
         if state is None:
             assert particles is not None
@@ -119,13 +121,19 @@ class System:
         else:
             self._state = state
 
-        self.gravity = self._setup_acceleration_func(gravity)
-
-        self._integrator_state, self._integrator = self._setup_integrator(
-            integrator, max_step_size
-        )
-        self._integrator_method = integrator
-        self._max_step_size = max_step_size
+        if self._is_keplerian:
+            self.gravity = "keplerian"
+            self._integrator_state = None
+            self._integrator = None
+            self._integrator_method = "keplerian"
+            self._max_step_size = None
+        else:
+            self.gravity = self._setup_acceleration_func(gravity)
+            self._integrator_state, self._integrator = self._setup_integrator(
+                integrator, max_step_size
+            )
+            self._integrator_method = integrator
+            self._max_step_size = max_step_size
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
@@ -236,6 +244,14 @@ class System:
         if times.shape == ():
             times = jnp.array([times])
 
+        if self._is_keplerian:
+            return _keplerian_system_integrate(
+                self._state.tracer_positions,
+                self._state.tracer_velocities,
+                self._state.time,
+                times,
+            )
+
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
             # For leapfrog, need to create intermediate times
             times, inds = create_leapfrog_times(
@@ -291,6 +307,16 @@ class System:
             times = jnp.array(times.tdb.jd)
         if times.shape == ():
             times = jnp.array([times])
+
+        if self._is_keplerian:
+            ras, decs = _keplerian_system_ephem(
+                self._state.tracer_positions,
+                self._state.tracer_velocities,
+                self._state.time,
+                times,
+                observer_positions,
+            )
+            return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
             # For leapfrog, need to create intermediate times
@@ -367,4 +393,40 @@ def _ephem(
         return ras, decs
 
     ras, decs = jax.vmap(interior, in_axes=(1, 1))(positions, velocities)
+    return ras, decs
+
+
+@jax.jit
+def _keplerian_system_integrate(
+    xs: jnp.ndarray,
+    vs: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    # vmap _keplerian_integrate over particles: (N,T,3) for each
+    positions, velocities = jax.vmap(_keplerian_integrate, in_axes=(0, 0, None, None))(
+        xs, vs, t0, times
+    )
+    # transpose to (T,N,3) to match existing convention
+    positions = jnp.transpose(positions, (1, 0, 2))
+    velocities = jnp.transpose(velocities, (1, 0, 2))
+    return positions, velocities
+
+
+@jax.jit
+def _keplerian_system_ephem(
+    xs: jnp.ndarray,
+    vs: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    positions, velocities = _keplerian_system_integrate(xs, vs, t0, times)
+
+    # _keplerian_on_sky operates on a single (position, velocity, time, observer)
+    # vmap over times (axis 0 of positions[n]), then over particles (axis 1)
+    _on_sky_over_times = jax.vmap(_keplerian_on_sky, in_axes=(0, 0, 0, 0))
+    _on_sky_over_particles = jax.vmap(_on_sky_over_times, in_axes=(1, 1, None, None))
+
+    ras, decs = _on_sky_over_particles(positions, velocities, times, observer_positions)
     return ras, decs
