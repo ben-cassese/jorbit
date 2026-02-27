@@ -376,3 +376,28 @@ def test_system_keplerian_ephemeris() -> None:
         sep2 = eph_sys[1, t_idx].separation(eph_p2[t_idx]).to(u.arcsec)
         assert sep1 < 0.001 * u.arcsec
         assert sep2 < 0.001 * u.arcsec
+
+
+def test_elongation_angle() -> None:
+    """Test that the elongation angle calculation is correct."""
+    # make sure it agrees with Horizons
+    t = Time("2026-01-01")
+    obj = Horizons(id="274301", location="695@399", epochs=t.utc.jd)
+    eph = obj.ephemerides(quantities="1,23")
+    horizons_angle = eph["elong"][0]
+
+    # now use jorbit
+    p = Particle.from_horizons(
+        name="274301",
+        time=t,
+    )
+    angles = p.is_observable(times=t, observer="kitt peak", return_angle=True)
+
+    assert np.isclose(angles[0], horizons_angle, atol=0.01)
+
+    # also make sure an array of times doesn't crash
+    times = Time(jnp.linspace(t.tdb.jd, t.tdb.jd + 10, 5), format="jd", scale="tdb")
+    ephem = p.ephemeris(times=times, observer="kitt peak")
+    mask = p.is_observable(times=times, observer="kitt peak", ephem=ephem)
+    assert mask.shape == (5,)
+    assert mask[0] == (angles[0] > np.deg2rad(20))

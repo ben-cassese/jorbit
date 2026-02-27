@@ -868,6 +868,73 @@ class Particle:
         else:
             raise ValueError("Failed to converge")
 
+    def is_observable(
+        self,
+        times: Time,
+        observer: str | jnp.ndarray,
+        sun_limit: float = 20.0,
+        ephem: SkyCoord | None = None,
+        return_angle: bool = False,
+    ) -> jnp.ndarray:
+        """Check whether a particle is observable or too close to the Sun.
+
+        Args:
+            times (Time):
+                The times to check the observability.
+            observer (str | jnp.ndarray):
+                The observer/observatory making the observations. Can be a string for
+                the name/code of an observatory, or a jnp.array of 3D barycentric ICRS
+                positions in AU.
+            sun_limit (float):
+                The minimum allowed angular separation from the Sun, in degrees.
+                Defaults to 20 degrees.
+            ephem (SkyCoord | None, optional):
+                Optionally, the ephemeris of the particle at the given times. If not
+                provided, will be computed using the ephemeris method. Helpful if you've
+                already computed the ephemeris and want to avoid doing it twice.
+            return_angle (bool, optional):
+                If True, will return the angles to the Sun in degrees, not the mask.
+                Default is False.
+
+        Returns:
+            jnp.ndarray:
+                A boolean array indicating whether the particle is observable at each
+                time (True) or too close to the Sun (False).
+        """
+        if isinstance(observer, str):
+            observer_pos = get_observer_positions(
+                times, observer, self._de_ephemeris_version
+            )
+        else:
+            observer_pos = observer
+
+        if ephem is None:
+            ephem = self.ephemeris(times, observer)
+
+        if isinstance(times, Time):
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        eph = Ephemeris(
+            earliest_time=self._earliest_time,
+            latest_time=self._latest_time,
+        )
+        sun_pos = jax.vmap(eph.processor.state)(times)[0][:, 0, :]
+
+        eph_unit_vec = jnp.array(ephem.cartesian.xyz).T
+
+        # want the angle between the eph_unit_vec, with its tail on the observer, and the vector from the observer to the sun
+        obs_to_sun_vec = sun_pos - observer_pos
+        obs_to_sun_unit_vec = (
+            obs_to_sun_vec / jnp.linalg.norm(obs_to_sun_vec, axis=1)[:, None]
+        )
+        angle = jnp.arccos(jnp.sum(obs_to_sun_unit_vec * eph_unit_vec, axis=1))
+        if return_angle:
+            return jnp.rad2deg(angle)
+        else:
+            return angle > jnp.deg2rad(sun_limit)
+
 
 ###########################
 # EXTERNAL JITTED FUNCTIONS
