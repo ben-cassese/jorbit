@@ -30,10 +30,12 @@ jobs:
           cache-suffix: ${{ matrix.python-version }}
           python-version: ${{ matrix.python-version }}
 
+      # reboundx's setup.py imports rebound at build time, so rebound
+      # must already be installed before uv sync tries to build reboundx
       - name: Bootstrap build dependencies
         run: |
           uv venv
-          uv pip install setuptools
+          uv pip install setuptools "rebound>=4.5.1,<4.6.0"
 
       - name: Sync dependencies
         run: uv sync --all-groups
