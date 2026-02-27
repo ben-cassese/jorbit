@@ -40,8 +40,8 @@ jobs:
         run: |
           uv venv
           uv pip install setuptools
-          uv pip install "rebound<4.6.0" # temporarily needed to avoid reboundx installation issues, see https://github.com/dtamayo/reboundx/issues/166
-          uv pip install reboundx
+          uv pip install "rebound==4.5.0" # temporarily needed to avoid reboundx installation issues, see https://github.com/dtamayo/reboundx/issues/166
+          uv pip install "reboundx==4.6.0"
 
       - name: Sync dependencies
         run: uv sync --all-groups
