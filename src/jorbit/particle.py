@@ -24,7 +24,21 @@ from jorbit.accelerations import (
 )
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
-from jorbit.data.constants import SPEED_OF_LIGHT, Y4_C, Y4_D, Y6_C, Y6_D, Y8_C, Y8_D
+from jorbit.astrometry.transformations import (
+    horizons_ecliptic_to_icrs,
+    icrs_to_horizons_ecliptic,
+)
+from jorbit.data.constants import (
+    INV_SPEED_OF_LIGHT,
+    SPEED_OF_LIGHT,
+    TOTAL_SOLAR_SYSTEM_GM,
+    Y4_C,
+    Y4_D,
+    Y6_C,
+    Y6_D,
+    Y8_C,
+    Y8_D,
+)
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
@@ -37,6 +51,7 @@ from jorbit.likelihoods.setup_static_likelihood import (
     precompute_likelihood_data,
 )
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
+from jorbit.utils.kepler import keplerian_propagate
 from jorbit.utils.states import (
     CartesianState,
     IAS15IntegratorState,
@@ -46,7 +61,81 @@ from jorbit.utils.states import (
 )
 
 
-class Particle:
+class BaseParticle:
+    """Base class with shared state setup for Particle and KeplerianParticle."""
+
+    def __repr__(self) -> str:
+        """Return a string representation of the particle."""
+        return f"{self.__class__.__name__}: {self._name}"
+
+    @property
+    def cartesian_state(self) -> CartesianState:
+        """Return the Cartesian state of the particle."""
+        return self._cartesian_state
+
+    @property
+    def keplerian_state(self) -> KeplerianState:
+        """Return the Keplerian state of the particle."""
+        return self._keplerian_state
+
+    def _setup_state(
+        self,
+        x: jnp.ndarray | None,
+        v: jnp.ndarray | None,
+        state: CartesianState | KeplerianState | None,
+        time: Time,
+        name: str,
+    ) -> tuple:
+
+        if state is not None:
+            assert time is None, "Cannot provide both state and time"
+            time = state.time
+
+        assert time is not None, "Must provide an epoch for the particle"
+        if isinstance(time, type(Time("2023-01-01"))):
+            time = jnp.array(time.tdb.jd)
+
+        if state is not None:
+            assert x is None and v is None, "Cannot provide both state and x, v"
+
+            state = state.to_cartesian()
+            if state.x.ndim != 2:
+                state.x = state.x[None, :]
+                state.v = state.v[None, :]
+            state.time = time
+            keplerian_state = state.to_keplerian()
+            cartesian_state = state.to_cartesian()
+
+            x = state.x.flatten()
+            v = state.v.flatten()
+
+        elif x is not None:
+            assert v is not None, "Must provide both x and v"
+
+            x = x.flatten()
+            v = v.flatten()
+            cartesian_state = CartesianState(
+                x=jnp.array([x]),
+                v=jnp.array([v]),
+                time=time,
+                acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+            )
+            keplerian_state = cartesian_state.to_keplerian()
+
+        else:
+            raise ValueError(
+                "time must be either astropy.time.Time or float (interpreted as JD in"
+                " TDB)"
+            )
+
+        if name == "":
+            name = "unnamed"
+
+        acc_func_kwargs = cartesian_state.acceleration_func_kwargs
+        return x, v, time, cartesian_state, keplerian_state, name, acc_func_kwargs
+
+
+class Particle(BaseParticle):
     """An object representing a single particle in the solar system.
 
     This class is used to represent and manipulate a single particle moving within the
@@ -185,20 +274,6 @@ class Particle:
 
         self.static_residuals = self._setup_default_static_residuals()
 
-    def __repr__(self) -> str:
-        """Return a string representation of the Particle object."""
-        return f"Particle: {self._name}"
-
-    @property
-    def cartesian_state(self) -> CartesianState:
-        """Return the Cartesian state of the particle."""
-        return self._cartesian_state
-
-    @property
-    def keplerian_state(self) -> KeplerianState:
-        """Return the Keplerian state of the particle."""
-        return self._keplerian_state
-
     @property
     def observations(self) -> Observations | None:
         """Return the observations associated with the particle."""
@@ -207,62 +282,6 @@ class Particle:
     ###############
     # SETUP METHODS
     ###############
-
-    def _setup_state(
-        self,
-        x: jnp.ndarray | None,
-        v: jnp.ndarray | None,
-        state: CartesianState | KeplerianState | None,
-        time: Time,
-        name: str,
-    ) -> tuple:
-
-        if state is not None:
-            assert time is None, "Cannot provide both state and time"
-            time = state.time
-
-        assert time is not None, "Must provide an epoch for the particle"
-        if isinstance(time, type(Time("2023-01-01"))):
-            time = jnp.array(time.tdb.jd)
-
-        if state is not None:
-            assert x is None and v is None, "Cannot provide both state and x, v"
-
-            state = state.to_cartesian()
-            if state.x.ndim != 2:
-                state.x = state.x[None, :]
-                state.v = state.v[None, :]
-            state.time = time
-            keplerian_state = state.to_keplerian()
-            cartesian_state = state.to_cartesian()
-
-            x = state.x.flatten()
-            v = state.v.flatten()
-
-        elif x is not None:
-            assert v is not None, "Must provide both x and v"
-
-            x = x.flatten()
-            v = v.flatten()
-            cartesian_state = CartesianState(
-                x=jnp.array([x]),
-                v=jnp.array([v]),
-                time=time,
-                acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
-            )
-            keplerian_state = cartesian_state.to_keplerian()
-
-        else:
-            raise ValueError(
-                "time must be either astropy.time.Time or float (interpreted as JD in"
-                " TDB)"
-            )
-
-        if name == "":
-            name = "unnamed"
-
-        acc_func_kwargs = cartesian_state.acceleration_func_kwargs
-        return x, v, time, cartesian_state, keplerian_state, name, acc_func_kwargs
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
 
@@ -894,3 +913,244 @@ def _loglike(
     ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
 
     return ll
+
+
+class KeplerianParticle(BaseParticle):
+    """A particle that uses 2-body Keplerian propagation.
+
+    This class provides a lightweight alternative to Particle for cases where
+    full N-body integration is not needed. It uses Keplerian (2-body) orbit
+    propagation assuming the total solar system GM.
+
+    Note: none of the methods associated with this class will alter the underlying
+    state of the particle.
+
+    Attributes:
+        state: The state of the particle, either in Cartesian or Keplerian coordinates.
+        time: The time of the particle's state.
+        x: The position of the particle in Cartesian coordinates.
+        v: The velocity of the particle in Cartesian coordinates.
+        name: The name of the particle.
+    """
+
+    def __init__(
+        self,
+        state: KeplerianState | CartesianState | None = None,
+        time: Time | None = None,
+        x: jnp.ndarray | None = None,
+        v: jnp.ndarray | None = None,
+        name: str = "",
+        de_ephemeris_version: str = "440",
+    ) -> None:
+        """Initialize a KeplerianParticle object.
+
+        Args:
+            state (KeplerianState | CartesianState | None):
+                The state of the particle. None if x and v are provided.
+            time (Time | None):
+                The time of the particle's state. None if state is provided.
+            x (jnp.ndarray | None):
+                The 3D barycentric cartesian position of the particle in AU.
+            v (jnp.ndarray | None):
+                The 3D barycentric cartesian velocity of the particle in AU/day.
+            name (str):
+                The name of the particle. Defaults to "".
+            de_ephemeris_version (str):
+                Which version of the JPL DE ephemeris to use for observer
+                positions in ephemeris(). Defaults to "440".
+        """
+        self._de_ephemeris_version = de_ephemeris_version
+
+        (
+            self._x,
+            self._v,
+            self._time,
+            self._cartesian_state,
+            self._keplerian_state,
+            self._name,
+            self._acc_func_kwargs,
+        ) = self._setup_state(x, v, state, time, name)
+
+    @classmethod
+    def from_horizons(
+        cls,
+        name: str,
+        time: Time,
+        de_ephemeris_version: str = "440",
+    ) -> KeplerianParticle:
+        """Query JPL Horizons for an SSO's state and create a KeplerianParticle.
+
+        Args:
+            name (str):
+                The name of the SSO to query.
+            time (Time):
+                The time to query the SSO at.
+            de_ephemeris_version (str):
+                Which version of the JPL DE ephemeris to use for observer
+                positions in ephemeris(). Defaults to "440".
+
+        Returns:
+            KeplerianParticle:
+                A KeplerianParticle representing the SSO at the given time.
+        """
+        data = horizons_bulk_vector_query(target=name, center="500@0", times=time)
+        x0 = jnp.array([data["x"][0], data["y"][0], data["z"][0]])
+        v0 = jnp.array([data["vx"][0], data["vy"][0], data["vz"][0]])
+
+        return cls(
+            x=x0,
+            v=v0,
+            time=time,
+            name=name,
+            de_ephemeris_version=de_ephemeris_version,
+        )
+
+    def integrate(
+        self, times: Time, state: CartesianState | KeplerianState | None = None
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Propagate the Keplerian orbit to given times.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to propagate to. If provided as a jnp.array, entries
+                are assumed to be in TDB JD.
+            state (CartesianState | KeplerianState | None):
+                The state to propagate from. If None, uses the particle's
+                current state.
+
+        Returns:
+            tuple[jnp.ndarray, jnp.ndarray]:
+                Positions (N, 3) in AU and velocities (N, 3) in AU/day.
+        """
+        if state is not None:
+            state = state.to_cartesian()
+            x = state.x.flatten()
+            v = state.v.flatten()
+            t0 = state.time
+        else:
+            x = self._x
+            v = self._v
+            t0 = self._time
+
+        if isinstance(times, Time):
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        return _keplerian_integrate(x, v, t0, times)
+
+    def ephemeris(
+        self,
+        times: Time,
+        observer: str | jnp.ndarray,
+        state: CartesianState | KeplerianState | None = None,
+    ) -> SkyCoord:
+        """Compute an ephemeris for the particle using Keplerian propagation.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to compute the ephemeris for. If provided as a
+                jnp.array, entries are assumed to be in TDB JD.
+            observer (str | jnp.ndarray):
+                The observer position. Can be a string observatory name or a
+                3D position array in AU.
+            state (CartesianState | KeplerianState | None):
+                The state to compute from. If None, uses the particle's
+                current state.
+
+        Returns:
+            SkyCoord: The ephemeris in ICRS coordinates.
+        """
+        if isinstance(observer, str):
+            observer_positions = get_observer_positions(
+                times, observer, self._de_ephemeris_version
+            )
+        else:
+            observer_positions = observer
+
+        if state is not None:
+            state = state.to_cartesian()
+            x = state.x.flatten()
+            v = state.v.flatten()
+            t0 = state.time
+        else:
+            x = self._x
+            v = self._v
+            t0 = self._time
+
+        if isinstance(times, Time):
+            times = jnp.array(times.tdb.jd)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
+        return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+
+
+###################################
+# KEPLERIAN EXTERNAL JITTED FUNCTIONS
+###################################
+
+
+@jax.jit
+def _keplerian_integrate(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    x_ecl = icrs_to_horizons_ecliptic(x[None, :])
+    v_ecl = icrs_to_horizons_ecliptic(v[None, :])
+
+    positions_ecl, velocities_ecl = keplerian_propagate(
+        x_ecl, v_ecl, t0, times, TOTAL_SOLAR_SYSTEM_GM
+    )
+
+    positions = horizons_ecliptic_to_icrs(positions_ecl)
+    velocities = horizons_ecliptic_to_icrs(velocities_ecl)
+    return positions, velocities
+
+
+@jax.jit
+def _keplerian_on_sky(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    time: float,
+    observer_position: jnp.ndarray,
+) -> tuple[float, float]:
+    r = jnp.linalg.norm(x)
+    a0 = -TOTAL_SOLAR_SYSTEM_GM * x / (r**3)
+
+    xz = x
+    for _ in range(3):
+        earth_distance = jnp.linalg.norm(xz - observer_position)
+        dt = -earth_distance * INV_SPEED_OF_LIGHT
+        xz = x + v * dt + 0.5 * a0 * dt * dt
+
+    X = xz - observer_position
+    calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
+    calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
+    return calc_ra, calc_dec
+
+
+@jax.jit
+def _keplerian_ephem(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    positions, velocities = _keplerian_integrate(x, v, t0, times)
+
+    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
+        position, velocity, time, observer_position = scan_over
+        ra, dec = _keplerian_on_sky(position, velocity, time, observer_position)
+        return None, (ra, dec)
+
+    _, (ras, decs) = jax.lax.scan(
+        scan_func,
+        None,
+        (positions, velocities, times, observer_positions),
+    )
+    return ras, decs

@@ -11,6 +11,11 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax.interpreters import ad
 
+from jorbit.astrometry.transformations import (
+    cartesian_to_elements,
+    elements_to_cartesian,
+)
+
 
 @jax.jit
 def kepler(M: float, ecc: float) -> float:
@@ -132,3 +137,45 @@ def M_from_f(f: float, ecc: float) -> float:
     E = jnp.arctan2(jnp.sqrt(1 - ecc**2) * jnp.sin(f), ecc + jnp.cos(f))
     M = E - ecc * jnp.sin(E)
     return jnp.where(M < 0, M + 2 * jnp.pi, M)
+
+
+@jax.jit
+def keplerian_propagate(
+    x0: jnp.ndarray,
+    v0: jnp.ndarray,
+    t0: float,
+    times: jnp.ndarray,
+    gm: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Propagate a Keplerian orbit to new times.
+
+    Args:
+        x0: Initial position (1, 3), ecliptic frame.
+        v0: Initial velocity (1, 3), ecliptic frame.
+        t0: Initial time (scalar, JD TDB).
+        times: Target times (N,), JD TDB.
+        gm: Gravitational parameter (GM) in AU^3/day^2.
+
+    Returns:
+        tuple: Positions (N, 3) and velocities (N, 3) in ecliptic frame.
+    """
+    a, ecc, nu, inc, Omega, omega = cartesian_to_elements(x0, v0, gm)
+
+    nu_rad = nu[0] * jnp.pi / 180
+    M0 = M_from_f(nu_rad, ecc[0])
+    n = jnp.sqrt(gm / a[0] ** 3)
+
+    M_new = M0 + n * (times - t0)
+    nu_new_rad = jax.vmap(kepler, in_axes=(0, None))(M_new, ecc[0])
+    nu_new_deg = nu_new_rad * 180 / jnp.pi
+
+    a_arr = jnp.full_like(times, a[0])
+    ecc_arr = jnp.full_like(times, ecc[0])
+    inc_arr = jnp.full_like(times, inc[0])
+    Omega_arr = jnp.full_like(times, Omega[0])
+    omega_arr = jnp.full_like(times, omega[0])
+
+    positions, velocities = elements_to_cartesian(
+        a_arr, ecc_arr, nu_new_deg, inc_arr, Omega_arr, omega_arr, gm
+    )
+    return positions, velocities
