@@ -108,6 +108,93 @@ def _estimate_x_v_from_b(
     return x, v
 
 
+def precompute_interpolation_indices(
+    t_step_starts: jnp.ndarray,
+    dts: jnp.ndarray,
+    query_times: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Precompute the step indices and fractional times for interpolation.
+
+    Call this once during setup, then pass the results into
+    interpolate_from_dense_output to avoid redundant searchsorted calls
+    inside the JIT'd residuals function.
+
+    Args:
+        t_step_starts (jnp.ndarray):
+            Start time of each step, shape (n_steps,).
+        dts (jnp.ndarray):
+            Per-step time step sizes, shape (n_steps,).
+        query_times (jnp.ndarray):
+            Times at which to interpolate, shape (n_queries,).
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            step_indices: Integer index of the containing step for each query time,
+                shape (n_queries,).
+            h_values: Fractional time within each step (0 to 1),
+                shape (n_queries,).
+    """
+    step_indices = jnp.searchsorted(t_step_starts, query_times, side="right") - 1
+    h_values = (query_times - t_step_starts[step_indices]) / dts[step_indices]
+    return step_indices, h_values
+
+
+@jax.jit
+def interpolate_from_dense_output(
+    b_all: jnp.ndarray,
+    a0_all: jnp.ndarray,
+    x0_all: jnp.ndarray,
+    v0_all: jnp.ndarray,
+    dts: jnp.ndarray,
+    step_indices: jnp.ndarray,
+    h_values: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Interpolate positions and velocities at arbitrary times from stored IAS15 polynomial data.
+
+    Uses the b coefficients from completed IAS15 steps to evaluate the 7th-order
+    polynomial at fractional times within each step, without re-integrating.
+
+    The step_indices and h_values should be precomputed via
+    precompute_interpolation_indices. Since they depend only on the fixed step
+    structure and observation times (not the particle state), precomputing them
+    keeps searchsorted out of the JIT graph and avoids redundant work on every
+    forward and backward pass.
+
+    Args:
+        b_all (jnp.ndarray):
+            Per-step b coefficients, shape (n_steps, 7, n_particles, 3).
+        a0_all (jnp.ndarray):
+            Per-step initial accelerations, shape (n_steps, n_particles, 3).
+        x0_all (jnp.ndarray):
+            Per-step initial positions, shape (n_steps, n_particles, 3).
+        v0_all (jnp.ndarray):
+            Per-step initial velocities, shape (n_steps, n_particles, 3).
+        dts (jnp.ndarray):
+            Per-step time step sizes, shape (n_steps,).
+        step_indices (jnp.ndarray):
+            Index of the containing step for each query time, shape (n_queries,).
+            From precompute_interpolation_indices.
+        h_values (jnp.ndarray):
+            Fractional time within each step (0 to 1), shape (n_queries,).
+            From precompute_interpolation_indices.
+
+    Returns:
+        tuple[jnp.ndarray, jnp.ndarray]:
+            Interpolated positions and velocities, each shape (n_queries, n_particles, 3).
+    """
+    b = b_all[step_indices]
+    a0 = a0_all[step_indices]
+    x0 = x0_all[step_indices]
+    v0 = v0_all[step_indices]
+    dt = dts[step_indices]
+
+    positions, velocities = jax.vmap(
+        lambda a, v, x, _h, _dt, _b: _estimate_x_v_from_b(a, v, x, _h, _dt, _b[::-1])
+    )(a0, v0, x0, h_values, dt, b)
+
+    return positions, velocities
+
+
 @jax.jit
 def _refine_sub_g(
     at: jnp.ndarray, a0: jnp.ndarray, previous_gs: jnp.ndarray, r: jnp.ndarray

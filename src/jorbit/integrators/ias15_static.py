@@ -67,6 +67,8 @@ def ias15_static_step(
     pp_a2: jnp.ndarray = jnp.empty((8, 0)),
     pp_a_newt: jnp.ndarray = jnp.empty((8, 0, 3)),
     pp_a_gr: jnp.ndarray = jnp.empty((8, 0, 3)),
+    concatenated_x0: jnp.ndarray | None = None,
+    concatenated_v0: jnp.ndarray | None = None,
 ) -> SystemState:
     """Take a single step using the IAS15 integraton with no checks for convergence or adaptivity.
 
@@ -99,6 +101,12 @@ def ias15_static_step(
         pp_a_gr (jnp.ndarray):
             Pre-computed converged GR correction on each perturber.
             Shape (n_substeps, n_perturbers, 3).
+        concatenated_x0 (jnp.ndarray | None):
+            Pre-concatenated (massive + tracer) positions. If provided, skips
+            the internal concatenation. Default is None.
+        concatenated_v0 (jnp.ndarray | None):
+            Pre-concatenated (massive + tracer) velocities. If provided, skips
+            the internal concatenation. Default is None.
 
     Returns:
         tuple[SystemState, IAS15IntegratorState]:
@@ -108,15 +116,22 @@ def ias15_static_step(
     t_beginning = initial_system_state.time
 
     M = initial_system_state.massive_positions.shape[0]
-    x0 = jnp.concatenate(
-        (initial_system_state.massive_positions, initial_system_state.tracer_positions)
-    )
-    v0 = jnp.concatenate(
-        (
-            initial_system_state.massive_velocities,
-            initial_system_state.tracer_velocities,
+    if concatenated_x0 is not None:
+        x0 = concatenated_x0
+        v0 = concatenated_v0
+    else:
+        x0 = jnp.concatenate(
+            (
+                initial_system_state.massive_positions,
+                initial_system_state.tracer_positions,
+            )
         )
-    )
+        v0 = jnp.concatenate(
+            (
+                initial_system_state.massive_velocities,
+                initial_system_state.tracer_velocities,
+            )
+        )
 
     dt = initial_integrator_state.dt
     a0 = initial_integrator_state.a0
@@ -288,14 +303,29 @@ def ias15_static_evolve(
             Shape (n_dts, 8, P, 3).
 
     Returns:
-        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-            The positions and velocities of the system at each timestep,
-            the final state of the system, and the final state of the integrator.
+        tuple:
+            A tuple of (dense_output, final_system_state, final_integrator_state) where
+            dense_output is a tuple of (b_all, a0_all, x0_all, v0_all) containing the
+            per-step polynomial data needed for interpolation:
+            - b_all: shape (n_steps, 7, n_particles, 3), converged b coefficients
+            - a0_all: shape (n_steps, n_particles, 3), initial accelerations
+            - x0_all: shape (n_steps, n_particles, 3), initial positions
+            - v0_all: shape (n_steps, n_particles, 3), initial velocities
     """
 
     @jax.checkpoint
     def scan_func(carry: tuple, scan_over: float) -> tuple:
         system_state, integrator_state = carry
+
+        # Capture start-of-step state for interpolation
+        x0_start = jnp.concatenate(
+            (system_state.massive_positions, system_state.tracer_positions)
+        )
+        v0_start = jnp.concatenate(
+            (system_state.massive_velocities, system_state.tracer_velocities)
+        )
+        a0_start = integrator_state.a0
+
         (
             dt,
             perturber_positions,
@@ -315,29 +345,27 @@ def ias15_static_evolve(
             step_pp_a2,
             step_pp_a_newt,
             step_pp_a_gr,
+            concatenated_x0=x0_start,
+            concatenated_v0=v0_start,
         )
         return (new_system_state, new_integrator_state), (
-            jnp.concatenate(
-                (
-                    new_system_state.massive_positions,
-                    new_system_state.tracer_positions,
-                )
-            ),
-            jnp.concatenate(
-                (
-                    new_system_state.massive_velocities,
-                    new_system_state.tracer_velocities,
-                )
-            ),
+            new_integrator_state.b,
+            a0_start,
+            x0_start,
+            v0_start,
         )
 
     initial_system_state.fixed_perturber_log_gms = perturber_log_gms
 
-    (final_system_state, final_integrator_state), (positions, velocities) = (
+    (final_system_state, final_integrator_state), (b_all, a0_all, x0_all, v0_all) = (
         jax.lax.scan(
             scan_func,
             (initial_system_state, initial_integrator_state),
             (dts, perturber_positions, perturber_velocities, pp_a2, pp_a_newt, pp_a_gr),
         )
     )
-    return positions, velocities, final_system_state, final_integrator_state
+    return (
+        (b_all, a0_all, x0_all, v0_all),
+        final_system_state,
+        final_integrator_state,
+    )

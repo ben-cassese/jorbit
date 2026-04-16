@@ -14,7 +14,7 @@ from jorbit.accelerations import (
 )
 from jorbit.accelerations.gr import precompute_perturber_ppn
 from jorbit.accelerations.static_helpers import (
-    get_all_dynamic_intermediate_dts,
+    get_natural_dynamic_dts,
     precompute_perturber_positions,
 )
 from jorbit.astrometry.sky_projection import on_sky, sky_sep
@@ -23,6 +23,8 @@ from jorbit.integrators import (
     ias15_evolve,
     ias15_static_evolve,
     initialize_ias15_integrator_state,
+    interpolate_from_dense_output,
+    precompute_interpolation_indices,
 )
 from jorbit.utils.horizons import get_observer_positions
 
@@ -52,17 +54,21 @@ def _get_dynamic_positions(asteroid: str, times: Time) -> jnp.ndarray:
 def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
     p = Particle.from_horizons(asteroid, times[0])
     state = p.keplerian_state.to_system()
+    t0 = times[0].tdb.jd
 
     a0_dynamic = acc_func_dynamic(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
     integrator_init.dt = jnp.diff(times.tdb.jd)[0]
 
-    dts, inds = get_all_dynamic_intermediate_dts(
+    # Use natural adaptive steps (no forced landings on observation times)
+    dts = get_natural_dynamic_dts(
         initial_system_state=state,
         acceleration_func=acc_func_dynamic,
-        times=times,
+        final_time=times[-1].tdb.jd,
         initial_integrator_state=integrator_init,
     )
+
+    t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
 
     planet_pos, planet_vel, asteroid_pos, asteroid_vel, gms = (
         precompute_perturber_positions(t0=times[0], dts=dts, de_ephemeris_version="440")
@@ -89,23 +95,32 @@ def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
 
     a0_static = acc_func_static(state)
     integrator_init = initialize_ias15_integrator_state(a0_static)
-
     integrator_init.dt = dts[0]
 
-    static_x, static_v, _static_state, _static_integrator_state = ias15_static_evolve(
-        initial_system_state=state,
-        acceleration_func=acc_func_static,
-        dts=dts,
-        initial_integrator_state=integrator_init,
-        perturber_positions=perturber_pos,
-        perturber_velocities=perturber_vel,
-        perturber_log_gms=gms,
-        pp_a2=pp_a2,
-        pp_a_newt=pp_a_newt,
-        pp_a_gr=pp_a_gr,
+    (b_all, a0_all, x0_all, v0_all), _static_state, _static_integrator_state = (
+        ias15_static_evolve(
+            initial_system_state=state,
+            acceleration_func=acc_func_static,
+            dts=dts,
+            initial_integrator_state=integrator_init,
+            perturber_positions=perturber_pos,
+            perturber_velocities=perturber_vel,
+            perturber_log_gms=gms,
+            pp_a2=pp_a2,
+            pp_a_newt=pp_a_newt,
+            pp_a_gr=pp_a_gr,
+        )
     )
 
-    return static_x[inds], static_v[inds]
+    # Interpolate at observation times
+    query_times = times.tdb.jd
+    step_indices, h_values = precompute_interpolation_indices(
+        t_step_starts, dts, query_times
+    )
+    interp_x, interp_v = interpolate_from_dense_output(
+        b_all, a0_all, x0_all, v0_all, dts, step_indices, h_values
+    )
+    return interp_x, interp_v
 
 
 def _test_agreement(asteroid: str, times: Time) -> None:

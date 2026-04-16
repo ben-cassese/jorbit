@@ -16,6 +16,7 @@ from jorbit.utils.states import IAS15IntegratorState
 __all__ = [
     "generate_perturber_chebyshev_coeffs",
     "get_all_dynamic_intermediate_dts",
+    "get_natural_dynamic_dts",
     "precompute_perturber_positions",
 ]
 
@@ -213,6 +214,71 @@ def get_all_dynamic_intermediate_dts(
         obs_inds.append(num_steps)
 
     return jnp.concatenate(all_dts), jnp.cumsum(jnp.array(obs_inds)) - 1
+
+
+def get_natural_dynamic_dts(
+    initial_system_state: IAS15IntegratorState,
+    acceleration_func: jax.tree_util.Partial,
+    final_time: float,
+    initial_integrator_state: IAS15IntegratorState,
+) -> jnp.ndarray:
+    """Use the adaptive IAS15 stepper to compute natural steps from start past final_time.
+
+    Unlike get_all_dynamic_intermediate_dts, this does NOT force steps to land on any
+    intermediate observation times. The integrator takes purely natural adaptive steps
+    until it overshoots final_time. This is used for the interpolation workflow where
+    positions at observation times are recovered by evaluating the IAS15 polynomial
+    within completed steps.
+
+    Args:
+        initial_system_state (IAS15IntegratorState):
+            The initial state of the system at the start of the integration.
+        acceleration_func (jax.tree_util.Partial):
+            The acceleration function to use for the integration.
+        final_time (float):
+            The time to integrate past. The last step will overshoot this.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        jnp.ndarray:
+            Array of all step sizes taken by the adaptive integrator.
+    """
+    t_start = initial_system_state.time
+    direction = jnp.sign(final_time - t_start)
+
+    args = (
+        initial_system_state,
+        initial_integrator_state,
+        0,
+    )
+    dts = []
+    while True:
+        system_state, integrator_state, iter_num = args
+        t = system_state.time
+
+        # Check if we've passed final_time
+        if direction > 0 and t >= final_time:
+            break
+        if direction < 0 and t <= final_time:
+            break
+        if iter_num >= 10_000:
+            break
+
+        # Take a natural step (no clamping to final_time)
+        integrator_state.dt = direction * jnp.abs(integrator_state.dt)
+        system_state, integrator_state = ias15_step(
+            system_state, acceleration_func, integrator_state
+        )
+
+        if integrator_state.dt_last_done != 0:
+            dts.append(integrator_state.dt_last_done)
+
+        args = (system_state, integrator_state, iter_num + 1)
+
+    if len(dts) == 0:
+        dts = jnp.array([0.0])
+    return jnp.array(dts)
 
 
 # not used for now- more efficient to just run the adaptive integrator once to get

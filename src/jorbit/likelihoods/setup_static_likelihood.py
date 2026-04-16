@@ -17,12 +17,17 @@ from jorbit.accelerations import (
 from jorbit.accelerations.gr import precompute_perturber_ppn
 from jorbit.accelerations.static_helpers import (
     generate_perturber_chebyshev_coeffs,
-    get_all_dynamic_intermediate_dts,
+    get_natural_dynamic_dts,
     precompute_perturber_positions,
 )
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.data.constants import SPEED_OF_LIGHT
-from jorbit.integrators import ias15_static_evolve, initialize_ias15_integrator_state
+from jorbit.integrators import (
+    ias15_static_evolve,
+    initialize_ias15_integrator_state,
+    interpolate_from_dense_output,
+    precompute_interpolation_indices,
+)
 from jorbit.utils.states import CartesianState, KeplerianState
 
 
@@ -42,8 +47,8 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
             - cheby_info: A dictionary containing Chebyshev coefficients for perturber
             positions and velocities.
             - dts: A JAX array of time steps for the dynamic integrator.
-            - inds: A JAX array of indices corresponding to observation times in the
-            dynamic integration.
+            - t_step_starts: A JAX array of the start time of each integration step,
+            used with searchsorted for interpolation.
             - perturber_pos: A JAX array of precomputed perturber positions at each
             intermediate step (and each IAS15 substep).
             - perturber_vel: A JAX array of precomputed perturber velocities at
@@ -51,8 +56,7 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
             - gms: A JAX array of gravitational parameters for the perturbers.
             - observer_positions: A JAX array of observer positions at each observation
             time.
-            - times: An Astropy Time object containing the times of all intermediate
-            steps between observations.
+            - obs_times: A JAX array of observation times (JD TDB).
             - obs_ras: A JAX array of observed right ascensions.
             - obs_decs: A JAX array of observed declinations.
     """
@@ -90,22 +94,24 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
         "cheby_t1": obs_times + 2.0,
     }
 
-    # get the times of all the intermediate steps between observations
-    times = Time(
-        jnp.concatenate([jnp.array([p.keplerian_state.time]), obs_times]),
-        format="jd",
-        scale="tdb",
-    )
+    # Use natural adaptive steps from start past the last observation time
+    t0 = p.keplerian_state.time
     state = p.keplerian_state.to_system()
     dynamic_acc_func = create_default_ephemeris_acceleration_func(ephem.processor)
     a0_dynamic = dynamic_acc_func(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
-    integrator_init.dt = jnp.diff(times.tdb.jd)[0]
-    dts, inds = get_all_dynamic_intermediate_dts(
+    integrator_init.dt = obs_times[0] - t0 if len(obs_times) > 0 else 10.0
+    dts = get_natural_dynamic_dts(
         initial_system_state=state,
         acceleration_func=dynamic_acc_func,
-        times=times,
+        final_time=jnp.max(obs_times),
         initial_integrator_state=integrator_init,
+    )
+
+    # Compute the start time of each step and precompute interpolation indices
+    t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
+    step_indices, h_values = precompute_interpolation_indices(
+        t_step_starts, dts, obs_times
     )
 
     # precompute the positions and velocities of all perturbers at each intermediate
@@ -132,12 +138,13 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
     return (
         cheby_info,
         dts,
-        inds,
+        step_indices,
+        h_values,
         perturber_pos,
         perturber_vel,
         gms,
         observer_positions,
-        times,
+        obs_times,
         p.observations.ra,
         p.observations.dec,
         pp_a2,
@@ -151,7 +158,9 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
 
     The returned function uses the "default" dynamical model, meaning GR effects for the
     Sun+planets, Newtonian gravity for the asteroids, and no non-gravitational
-    or gravitational harmonic effects.
+    or gravitational harmonic effects. Positions at observation times are obtained by
+    interpolating within IAS15 steps using stored polynomial coefficients, rather than
+    forcing steps to land on observation times.
 
     Args:
         inputs (tuple):
@@ -167,7 +176,8 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
     (
         cheby_info,
         dts,
-        inds,
+        step_indices,
+        h_values,
         perturber_pos,
         perturber_vel,
         log_gms,
@@ -182,8 +192,6 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
 
     static_acc_func = create_static_default_acceleration_func()
     on_sky_acc_func = create_static_default_on_sky_acc_func()
-
-    times = obs_times[1:].tdb.jd
 
     def static_residuals_func(state: CartesianState | KeplerianState) -> jnp.ndarray:
         state = state.to_system()
@@ -200,7 +208,7 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
         integrator_init = initialize_ias15_integrator_state(a0)
         integrator_init.dt = dts[0]
 
-        static_x, static_v, _static_state, _static_integrator_state = (
+        (b_all, a0_all, x0_all, v0_all), _static_state, _static_integrator_state = (
             ias15_static_evolve(
                 initial_system_state=state,
                 acceleration_func=static_acc_func,
@@ -215,15 +223,19 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
             )
         )
 
-        obs_xs = static_x[inds, 0, :][
-            1:
-        ]  # cut out the initial state, which we tacked on for a0
-        obs_vs = static_v[inds, 0, :][1:]
+        # Interpolate positions/velocities at observation times using
+        # precomputed indices (searchsorted is done once at setup, not here)
+        interp_x, interp_v = interpolate_from_dense_output(
+            b_all, a0_all, x0_all, v0_all, dts, step_indices, h_values
+        )
+        # Select the single tracer particle (index 0)
+        obs_xs = interp_x[:, 0, :]
+        obs_vs = interp_v[:, 0, :]
 
         model_ras, model_decs = jax.vmap(on_sky, in_axes=(0, 0, 0, 0, None, 0))(
             obs_xs,
             obs_vs,
-            times,
+            obs_times,
             observer_positions,
             on_sky_acc_func,
             cheby_info,
