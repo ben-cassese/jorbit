@@ -132,7 +132,7 @@ def _get_dynamic_intermediate_dts(
 
         integrator_state.dt = step_length
 
-        system_state, integrator_state = ias15_step(
+        system_state, integrator_state, _ = ias15_step(
             system_state, acceleration_func, integrator_state
         )
         return system_state, integrator_state, last_meaningful_dt, iter_num + 1
@@ -267,7 +267,7 @@ def get_natural_dynamic_dts(
 
         # Take a natural step (no clamping to final_time)
         integrator_state.dt = direction * jnp.abs(integrator_state.dt)
-        system_state, integrator_state = ias15_step(
+        system_state, integrator_state, _ = ias15_step(
             system_state, acceleration_func, integrator_state
         )
 

@@ -39,6 +39,12 @@ from jorbit.data.constants import (
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
+# Maximum number of accepted adaptive steps captured by ias15_evolve's dense-output
+# buffer. At ~30 IAS15 steps per circular orbit this covers ~60 orbits, comfortably
+# beyond typical observation-fitting workloads. Exceeding this silently truncates
+# the trajectory; queries inside the truncated region return the last captured step.
+IAS15_MAX_DYNAMIC_STEPS = 2048
+
 
 def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
     """Initializes the IAS15IntegratorState dataclass with zeros.
@@ -59,7 +65,7 @@ def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
         csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         a0=a0,
-        dt=10.0,  # 10 days
+        dt=0.001,
         dt_last_done=0.0,
     )
 
@@ -283,8 +289,11 @@ def ias15_step(
             The initial integrator state.
 
     Returns:
-        tuple[SystemState, IAS15IntegratorState]:
-            The new system state and new integrator state.
+        tuple[SystemState, IAS15IntegratorState, jnp.ndarray]:
+            The new system state, the new integrator state (with the *predicted*
+            next-step b coefficients), and the *converged* b coefficients for the
+            step just completed, shape (7, n_particles, 3). The converged b is
+            what should be stored when building dense output for interpolation.
     """
     t_beginning = initial_system_state.time
 
@@ -393,7 +402,7 @@ def ias15_step(
 
     initial_carry = (b, csb, g, 1e300, 2.0)
     (b, csb, g, _pc_error, _pc_error_last), _ = jax.lax.scan(
-        scan_func, initial_carry, jnp.arange(10)
+        scan_func, initial_carry, jnp.arange(12)
     )
 
     dt_done = dt
@@ -486,29 +495,26 @@ def ias15_step(
         dt_last_done=dt_done,
     )
 
-    return new_system_state, new_integrator_state
+    return new_system_state, new_integrator_state, b
 
 
 @jax.jit
-def ias15_evolve(
+def _ias15_evolve_forced_landing(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    """Evolve a system to multiple different timesteps using the IAS15 integrator.
+    """Forced-landing IAS15 evolve (internal testing reference only).
 
-    Chains multiple ias15_step calls together until each timestep is reached. Keeps
-    track of the second to last step before each arrival time to avoid setting dt to
-    small values representing the final jumps.
+    Clamps the adaptive step size so that a step always lands exactly on the next
+    entry of ``times``. Kept private because the public ``ias15_evolve`` (below)
+    uses dense-output polynomial interpolation instead, which avoids the small
+    final jumps that the forced-landing scheme is prone to. This function is
+    retained as an independent reference path for tests and benchmarks.
 
     .. warning::
-       To avoid potential infinite hangs or osciallating behavior, this function caps
-       the maximum number of steps taken between requested times at 10,000. For a
-       particle on a radius=1 circular orbit around an m=1 central object, that
-       corresponds to about 280 orbits. It will *not* error if the final time isn't
-       reached due to the step limit interruption, so keep the jump between times to be
-       less than ~200 dynamical times.
+       Caps the number of steps between requested times at 10,000.
 
     Args:
         initial_system_state (SystemState):
@@ -536,26 +542,14 @@ def ias15_evolve(
             system_state, integrator_state, last_meaningful_dt, iter_num = args
 
             t = system_state.time
-            # integrator_state.dt = 0.0001
 
             diff = final_time - t
             step_length = jnp.sign(diff) * jnp.min(
                 jnp.array([jnp.abs(diff), jnp.abs(integrator_state.dt)])
             )
 
-            # jax.debug.print(
-            #     "another step is needed. the current time is {x}, the final time is {y}, the diff is {q},  \nintegrator_dt is {w}, step_length being set to {z}",
-            #     x=t,
-            #     y=final_time,
-            #     q=diff,
-            #     z=step_length,
-            #     w=integrator_state.dt,
-            # )
             integrator_state.dt = step_length
-            # system_state, integrator_state = ias15_step_dynamic_predictor(
-            #     system_state, acceleration_func, integrator_state
-            # )
-            system_state, integrator_state = ias15_step(
+            system_state, integrator_state, _ = ias15_step(
                 system_state, acceleration_func, integrator_state
             )
             return system_state, integrator_state, last_meaningful_dt, iter_num + 1
@@ -616,4 +610,166 @@ def ias15_evolve(
     (final_system_state, final_integrator_state), (positions, velocities) = (
         jax.lax.scan(scan_func, (initial_system_state, initial_integrator_state), times)
     )
+    return positions, velocities, final_system_state, final_integrator_state
+
+
+@jax.jit
+def ias15_evolve(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+    """Evolve a system and recover positions/velocities at ``times`` via interpolation.
+
+    Takes natural adaptive IAS15 steps from the initial time past ``jnp.max(times)``,
+    stores the per-step dense output (converged 7th-order b coefficients plus start-
+    of-step acceleration/position/velocity) in a pre-allocated buffer, then evaluates
+    the polynomial at each entry of ``times``. This matches the approach used by
+    ASSIST/REBOUND and avoids the small final jumps that forced-landing integration
+    is prone to.
+
+    Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
+
+    .. warning::
+       The dense-output buffer is sized by ``IAS15_MAX_DYNAMIC_STEPS`` (2048 by
+       default). Integrations requiring more accepted steps will silently truncate,
+       with all query times beyond the truncation returning the last captured step's
+       polynomial value. For safety the loop also caps total iterations (including
+       rejected steps) at ``4 * IAS15_MAX_DYNAMIC_STEPS``.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        times (jnp.ndarray):
+            Times at which to return interpolated positions and velocities. Must be
+            within [initial_system_state.time, t_end_of_last_natural_step].
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
+            Interpolated positions and velocities at ``times``, the final system
+            state (at the end of the post-overshoot step), and the final integrator
+            state.
+    """
+    n_particles = initial_integrator_state.a0.shape[0]
+
+    b_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, 7, n_particles, 3))
+    a0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
+    x0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
+    v0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
+    # Trailing (unfilled) dts are a huge sentinel so cumulative t_step_starts past
+    # the valid prefix exceed any query time; searchsorted then safely routes all
+    # valid queries into the accepted-step prefix.
+    dts_buf = jnp.full((IAS15_MAX_DYNAMIC_STEPS,), 1e30)
+
+    t0 = initial_system_state.time
+    final_time = jnp.max(times)
+    direction = jnp.sign(final_time - t0)
+
+    def cond_fn(carry: tuple) -> bool:
+        system_state, _ig, _b, _a0, _x0, _v0, _dts, n_accepted, iter_num = carry
+        t = system_state.time
+        past_final = ((direction > 0) & (t >= final_time)) | (
+            (direction < 0) & (t <= final_time)
+        )
+        return (
+            (~past_final)
+            & (n_accepted < IAS15_MAX_DYNAMIC_STEPS)
+            & (iter_num < 4 * IAS15_MAX_DYNAMIC_STEPS)
+        )
+
+    def body_fn(carry: tuple) -> tuple:
+        (
+            system_state,
+            integrator_state,
+            b_buf,
+            a0_buf,
+            x0_buf,
+            v0_buf,
+            dts_buf,
+            n_accepted,
+            iter_num,
+        ) = carry
+
+        x0_start = jnp.concatenate(
+            (system_state.massive_positions, system_state.tracer_positions)
+        )
+        v0_start = jnp.concatenate(
+            (system_state.massive_velocities, system_state.tracer_velocities)
+        )
+        a0_start = integrator_state.a0
+
+        integrator_state.dt = direction * jnp.abs(integrator_state.dt)
+        new_system_state, new_integrator_state, converged_b = ias15_step(
+            system_state, acceleration_func, integrator_state
+        )
+
+        accepted = new_integrator_state.dt_last_done != 0.0
+
+        def write(buf_state: tuple) -> tuple:
+            b_buf, a0_buf, x0_buf, v0_buf, dts_buf = buf_state
+            b_buf = b_buf.at[n_accepted].set(converged_b)
+            a0_buf = a0_buf.at[n_accepted].set(a0_start)
+            x0_buf = x0_buf.at[n_accepted].set(x0_start)
+            v0_buf = v0_buf.at[n_accepted].set(v0_start)
+            dts_buf = dts_buf.at[n_accepted].set(new_integrator_state.dt_last_done)
+            return (b_buf, a0_buf, x0_buf, v0_buf, dts_buf)
+
+        def skip(buf_state: tuple) -> tuple:
+            return buf_state
+
+        b_buf, a0_buf, x0_buf, v0_buf, dts_buf = jax.lax.cond(
+            accepted, write, skip, (b_buf, a0_buf, x0_buf, v0_buf, dts_buf)
+        )
+
+        n_accepted = n_accepted + jnp.where(accepted, 1, 0)
+        return (
+            new_system_state,
+            new_integrator_state,
+            b_buf,
+            a0_buf,
+            x0_buf,
+            v0_buf,
+            dts_buf,
+            n_accepted,
+            iter_num + 1,
+        )
+
+    init_carry = (
+        initial_system_state,
+        initial_integrator_state,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        0,
+        0,
+    )
+    (
+        final_system_state,
+        final_integrator_state,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _n_accepted,
+        _iter_num,
+    ) = jax.lax.while_loop(cond_fn, body_fn, init_carry)
+
+    t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts_buf[:-1])])
+    step_indices, h_values = precompute_interpolation_indices(
+        t_step_starts, dts_buf, times
+    )
+    # Safety rail: in case of floating-point drift at the boundary.
+    h_values = jnp.clip(h_values, 0.0, 1.0)
+    positions, velocities = interpolate_from_dense_output(
+        b_buf, a0_buf, x0_buf, v0_buf, dts_buf, step_indices, h_values
+    )
+
     return positions, velocities, final_system_state, final_integrator_state

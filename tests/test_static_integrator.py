@@ -20,12 +20,12 @@ from jorbit.accelerations.static_helpers import (
 from jorbit.astrometry.sky_projection import on_sky, sky_sep
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
-    ias15_evolve,
     ias15_static_evolve,
     initialize_ias15_integrator_state,
     interpolate_from_dense_output,
     precompute_interpolation_indices,
 )
+from jorbit.integrators.ias15 import _ias15_evolve_forced_landing
 from jorbit.utils.horizons import get_observer_positions
 
 eph = Ephemeris(ssos="default solar system")
@@ -41,11 +41,13 @@ def _get_dynamic_positions(asteroid: str, times: Time) -> jnp.ndarray:
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
     integrator_init.dt = jnp.diff(times.tdb.jd)[0]
 
-    dynamic_x, dynamic_v, _dynamic_state, _dynamic_integrator_state = ias15_evolve(
-        initial_system_state=state,
-        acceleration_func=acc_func_dynamic,
-        times=times.tdb.jd,
-        initial_integrator_state=integrator_init,
+    dynamic_x, dynamic_v, _dynamic_state, _dynamic_integrator_state = (
+        _ias15_evolve_forced_landing(
+            initial_system_state=state,
+            acceleration_func=acc_func_dynamic,
+            times=times.tdb.jd,
+            initial_integrator_state=integrator_init,
+        )
     )
 
     return dynamic_x, dynamic_v
