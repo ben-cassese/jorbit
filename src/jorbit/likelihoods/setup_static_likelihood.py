@@ -60,11 +60,17 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
             - obs_ras: A JAX array of observed right ascensions.
             - obs_decs: A JAX array of observed declinations.
     """
-    obs_times = p.observations.times
+    # Absolute-JD astropy times: used to size the Ephemeris window and to generate
+    # Chebyshev coefficients (both inherently operate in absolute JD).
+    obs_times_astropy = p.observations.times_astropy
+    if obs_times_astropy is None:
+        obs_times_astropy = Time(p.observations.times, format="jd", scale="tdb")
+    # Offsets from the particle's t_ref: used everywhere JAX touches time.
+    obs_times = p._times_to_offsets(obs_times_astropy)
 
     ephem = Ephemeris(
-        earliest_time=Time(jnp.min(obs_times), format="jd", scale="tdb") - 10 * u.day,
-        latest_time=Time(jnp.max(obs_times), format="jd", scale="tdb") + 10 * u.day,
+        earliest_time=obs_times_astropy.min() - 10 * u.day,
+        latest_time=obs_times_astropy.max() + 10 * u.day,
         ssos="default solar system",
         de_ephemeris_version="440",
     )
@@ -72,9 +78,9 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
     # precompute Chebyshev coefficients to compute the states of the perturbers
     # around each observation time for light travel time corrections
     perturber_pos_chebys, perturber_vel_chebys = [], []
-    for t in obs_times:
+    for t_ast in obs_times_astropy:
         pos, vel = generate_perturber_chebyshev_coeffs(
-            obs_time=Time(t, format="jd", scale="tdb"),
+            obs_time=t_ast,
             ephem=ephem,
         )
         perturber_pos_chebys.append(pos)
@@ -82,11 +88,9 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
     perturber_pos_chebys = jnp.array(perturber_pos_chebys)
     perturber_vel_chebys = jnp.array(perturber_vel_chebys)
 
-    # constants chosen to match
-    # jorbit.accelerations.static_helpers.generate_perturber_chebyshev_coeffs
-    # which in turn were chosen to allow for light travel time out to ~1000 au
-    # (the +2 is chosen to keep the observation times away from the edges of the
-    # Chebyshev interval, where the approximation is worst)
+    # cheby_t0/cheby_t1 live in the same offset frame as inputs.time inside
+    # on_sky_acc_func, so the normalization 2*(t - cheby_t0)/(cheby_t1 - cheby_t0) - 1
+    # is frame-agnostic as long as the three quantities are consistent.
     cheby_info = {
         "perturber_position_cheby_coeffs": perturber_pos_chebys,
         "perturber_velocity_cheby_coeffs": perturber_vel_chebys,
@@ -94,10 +98,13 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
         "cheby_t1": obs_times + 2.0,
     }
 
-    # Use natural adaptive steps from start past the last observation time
-    t0 = p.keplerian_state.time
+    # Use natural adaptive steps from start past the last observation time.
+    # state.time is 0.0 in the rebased frame; obs_times are offsets too.
     state = p.keplerian_state.to_system()
-    dynamic_acc_func = create_default_ephemeris_acceleration_func(ephem.processor)
+    t0 = state.time
+    dynamic_acc_func = create_default_ephemeris_acceleration_func(
+        ephem.processor, t_ref_jd=p._t_ref_jd
+    )
     a0_dynamic = dynamic_acc_func(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
     integrator_init.dt = obs_times[0] - t0 if len(obs_times) > 0 else 10.0
@@ -108,17 +115,18 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
         initial_integrator_state=integrator_init,
     )
 
-    # Compute the start time of each step and precompute interpolation indices
+    # Compute the start time of each step and precompute interpolation indices.
+    # In the rebased frame t0 == 0.0, so the cumulative sum is the offset itself.
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
     step_indices, h_values = precompute_interpolation_indices(
         t_step_starts, dts, obs_times
     )
 
     # precompute the positions and velocities of all perturbers at each intermediate
-    # step, and at each ias15 substep
+    # step, and at each ias15 substep. This routine operates in absolute JD internally.
     planet_pos, planet_vel, asteroid_pos, asteroid_vel, gms = (
         precompute_perturber_positions(
-            t0=Time(p.cartesian_state.time, format="jd", scale="tdb"),
+            t0=p._t_ref_astropy,
             dts=dts,
             de_ephemeris_version="440",
         )

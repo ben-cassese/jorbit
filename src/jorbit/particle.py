@@ -173,10 +173,16 @@ class Particle:
 
         self.gravity = gravity
 
+        # self._time is kept at jnp.array(0.0) internally; absolute time lives in
+        # self._t_ref_astropy / self._t_ref_jd. All JAX-visible times are offsets
+        # (in days) from _t_ref_jd, which keeps step-boundary and interpolation
+        # arithmetic well-conditioned at decadal timescales.
         (
             self._x,
             self._v,
             self._time,
+            self._t_ref_astropy,
+            self._t_ref_jd,
             self._cartesian_state,
             self._keplerian_state,
             self._name,
@@ -214,12 +220,22 @@ class Particle:
 
     @property
     def cartesian_state(self) -> CartesianState:
-        """Return the Cartesian state of the particle."""
+        """Return the Cartesian state of the particle.
+
+        Note: ``.time`` on the returned state is the internal offset (days from
+        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
+        for the absolute time.
+        """
         return self._cartesian_state
 
     @property
     def keplerian_state(self) -> KeplerianState:
-        """Return the Keplerian state of the particle."""
+        """Return the Keplerian state of the particle.
+
+        Note: ``.time`` on the returned state is the internal offset (days from
+        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
+        for the absolute time.
+        """
         return self._keplerian_state
 
     @property
@@ -227,9 +243,54 @@ class Particle:
         """Return the observations associated with the particle."""
         return self._observations
 
+    @property
+    def t_ref(self) -> Time:
+        """Reference time (astropy Time, TDB) — the particle's epoch.
+
+        All JAX-visible times inside the Particle are offsets in days from this
+        reference, which keeps the integrator's internal arithmetic
+        well-conditioned at decadal timescales.
+        """
+        return self._t_ref_astropy
+
+    @property
+    def t_ref_jd(self) -> float:
+        """Reference time as a float JD (TDB), matching ``t_ref``."""
+        return self._t_ref_jd
+
     ###############
     # SETUP METHODS
     ###############
+
+    def _times_to_offsets(self, times: Time | jnp.ndarray) -> jnp.ndarray:
+        """Convert user-provided query times to offsets from ``self._t_ref_astropy``.
+
+        Astropy ``Time`` inputs preserve their internal jd1+jd2 high-precision pair
+        through the subtraction, so the returned offsets retain sub-ns precision
+        regardless of how far ``times`` is from ``t_ref``. Plain float/jnp inputs
+        are assumed to be absolute JD (TDB) and are subtracted in float64 — this
+        is Sterbenz-exact when the magnitudes match, but the offset precision is
+        capped at ulp(JD) ≈ 40 μs (≈1 m for typical solar system velocities).
+        """
+        if isinstance(times, Time):
+            return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
+        return jnp.asarray(times) - self._t_ref_jd
+
+    def _observations_times_as_offsets(self) -> jnp.ndarray:
+        """Return the observation times as offsets from ``self._t_ref_astropy``.
+
+        Prefers the full-precision astropy Time stored on the Observations object
+        when available (sub-ns precision preserved). Falls back to subtracting
+        :attr:`t_ref_jd` from the float-JD array, which is Sterbenz-exact but
+        inherits the ulp(JD) ≈ 40 μs quantization of the stored float-JD.
+        """
+        obs = self._observations
+        times_astropy = getattr(obs, "_times_astropy", None)
+        if times_astropy is not None:
+            return jnp.asarray(
+                (times_astropy.tdb - self._t_ref_astropy).to_value(u.day)
+            )
+        return jnp.asarray(obs.times) - self._t_ref_jd
 
     def _setup_state(
         self,
@@ -245,8 +306,15 @@ class Particle:
             time = state.time
 
         assert time is not None, "Must provide an epoch for the particle"
+
+        # Build the reference time pair (astropy Time at full precision + float JD)
+        # and then set the Particle's internal epoch to 0.0 in the offset frame.
         if isinstance(time, type(Time("2023-01-01"))):
-            time = jnp.array(time.tdb.jd)
+            t_ref_astropy = time.tdb
+        else:
+            t_ref_astropy = Time(float(time), format="jd", scale="tdb")
+        t_ref_jd = jnp.array(float(t_ref_astropy.jd))
+        internal_time = jnp.array(0.0)
 
         if state is not None:
             assert x is None and v is None, "Cannot provide both state and x, v"
@@ -255,7 +323,7 @@ class Particle:
             if state.x.ndim != 2:
                 state.x = state.x[None, :]
                 state.v = state.v[None, :]
-            state.time = time
+            state.time = internal_time
             keplerian_state = state.to_keplerian()
             cartesian_state = state.to_cartesian()
 
@@ -270,7 +338,7 @@ class Particle:
             cartesian_state = CartesianState(
                 x=jnp.array([x]),
                 v=jnp.array([v]),
-                time=time,
+                time=internal_time,
                 acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
             )
             keplerian_state = cartesian_state.to_keplerian()
@@ -285,12 +353,33 @@ class Particle:
             name = "unnamed"
 
         acc_func_kwargs = cartesian_state.acceleration_func_kwargs
-        return x, v, time, cartesian_state, keplerian_state, name, acc_func_kwargs
+        return (
+            x,
+            v,
+            internal_time,
+            t_ref_astropy,
+            t_ref_jd,
+            cartesian_state,
+            keplerian_state,
+            name,
+            acc_func_kwargs,
+        )
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
-            return gravity
+            # User-supplied acc funcs pre-date the rebase and expect state.time
+            # to be an absolute JD. Internally we now pass state.time as an
+            # offset from t_ref_jd, so we wrap the user's function to shift
+            # state.time back to absolute JD before calling it.
+            user_func = gravity
+            t_ref_jd = self._t_ref_jd
+
+            def _wrapped_user_acc(state: SystemState) -> jnp.ndarray:
+                shifted = state.replace(time=state.time + t_ref_jd)
+                return user_func(shifted)
+
+            return jax.tree_util.Partial(_wrapped_user_acc)
 
         assert self._de_ephemeris_version in ["440", "430"], (
             "de_ephemeris_version must be either '440' or '430' if not using a custom "
@@ -304,7 +393,9 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -312,7 +403,9 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -320,7 +413,9 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -328,7 +423,9 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -336,7 +433,9 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_default_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_default_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
 
         return acc_func
 
@@ -408,8 +507,10 @@ class Particle:
         if self._observations is None:
             return None, None, None, None
 
+        obs_times = self._observations_times_as_offsets()
+
         if self._is_keplerian:
-            times = self._observations.times
+            times = obs_times
 
             residuals = jax.tree_util.Partial(
                 _keplerian_residuals,
@@ -435,13 +536,13 @@ class Particle:
 
         else:
             if self._integrator_method == "ias15":
-                times = self._observations.times
-                inds = jnp.arange(len(self._observations.times))
+                times = obs_times
+                inds = jnp.arange(len(obs_times))
 
             elif self._integrator_method in ["Y4", "Y6", "Y8"]:
                 times, inds = create_leapfrog_times(
                     self._cartesian_state.time,
-                    self._observations.times,
+                    obs_times,
                     self._max_step_size,
                 )
 
@@ -648,8 +749,7 @@ class Particle:
             else:
                 x, v, t0 = self._x, self._v, self._time
 
-            if isinstance(times, Time):
-                times = jnp.array(times.tdb.jd)
+            times = self._times_to_offsets(times)
             if times.shape == ():
                 times = jnp.array([times])
 
@@ -662,8 +762,7 @@ class Particle:
             a0 = self.gravity(state.to_system())
             integrator_state = initialize_ias15_integrator_state(a0)
 
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
+        times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
@@ -725,8 +824,7 @@ class Particle:
             else:
                 x, v, t0 = self._x, self._v, self._time
 
-            if isinstance(times, Time):
-                times = jnp.array(times.tdb.jd)
+            times = self._times_to_offsets(times)
             if times.shape == ():
                 times = jnp.array([times])
 
@@ -740,8 +838,7 @@ class Particle:
             a0 = self.gravity(state.to_system())
             integrator_state = initialize_ias15_integrator_state(a0)
 
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
+        times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
@@ -854,7 +951,7 @@ class Particle:
             return Particle(
                 x=result.x[:3],
                 v=result.x[3:],
-                time=self._time,
+                time=self._t_ref_astropy,
                 state=None,
                 observations=self._observations,
                 name=self._name,
