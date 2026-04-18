@@ -51,10 +51,10 @@ tutorials/local_mpchecker.ipynb
 tutorials/lightcurve_contamination.ipynb
 tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
-tutorials/compare_w_horizons.ipynb
+tutorials/too_slow_for_tests/compare_with_horizons.ipynb
 tutorials/max_likelihood_orbit.ipynb
 tutorials/deep_dive.ipynb
-tutorials/apophis_flyby.ipynb
+tutorials/too_slow_for_tests/apophis_flyby.ipynb
 tutorials/general_n_body.ipynb
 tutorials/pick_an_integrator.ipynb
 tutorials/heliocentric_barycentric.ipynb

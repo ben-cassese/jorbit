@@ -70,6 +70,7 @@ dev = [
     "emcee>=3.1.6",
     "corner>=2.2.3",
     "assist>=1.1.11",
+    "nbmake>=1.5.5",
 ]
 
 [project.urls]
@@ -97,3 +98,6 @@ no-build-isolation-package = ["rebound", "reboundx"]
 
 [tool.codespell]
 skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"
+
+[tool.pytest.ini_options]
+addopts = "--ignore=docs/tutorials/too_slow_for_tests/"
