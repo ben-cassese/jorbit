@@ -1,0 +1,6 @@
+# Ephemeris BSP/binary files are large (~830 MB total). Don't commit them
+# to git; users regenerate the bundle by following README.md, which fetches
+# them from JPL Horizons / NAIF and from the project's paper/data/ directory.
+ephemeris/
+__pycache__/
+.repro-venv/

@@ -1,0 +1,88 @@
+{
+  "description": "Cumulative force-model peel. Each entry's `forces` list is passed to assist.Extras.forces, then rebound.clibrebound.reb_simulation_update_acceleration is invoked to populate particles[0].a{x,y,z} at the IC without taking any step.",
+  "ic": {
+    "x": [
+      -0.8948684925748359,
+      -0.4014550832008866,
+      -0.17229662830128972
+    ],
+    "v": [
+      0.010467027038853141,
+      -0.01375825759409125,
+      -0.005210941940552663
+    ],
+    "t_jd_tdb": 2462242.5
+  },
+  "subsets": [
+    {
+      "idx": 0,
+      "label": "01_sun_newt",
+      "forces": [
+        "SUN"
+      ]
+    },
+    {
+      "idx": 1,
+      "label": "02_planets_newt",
+      "forces": [
+        "SUN",
+        "PLANETS"
+      ]
+    },
+    {
+      "idx": 2,
+      "label": "03_planets_gr",
+      "forces": [
+        "SUN",
+        "PLANETS",
+        "GR_EIH"
+      ]
+    },
+    {
+      "idx": 3,
+      "label": "04_+asteroids",
+      "forces": [
+        "SUN",
+        "PLANETS",
+        "GR_EIH",
+        "ASTEROIDS"
+      ]
+    },
+    {
+      "idx": 4,
+      "label": "05_+sun_harmonics",
+      "forces": [
+        "SUN",
+        "PLANETS",
+        "GR_EIH",
+        "ASTEROIDS",
+        "SUN_HARMONICS"
+      ]
+    },
+    {
+      "idx": 5,
+      "label": "06_+earth_harmonics",
+      "forces": [
+        "SUN",
+        "PLANETS",
+        "GR_EIH",
+        "ASTEROIDS",
+        "SUN_HARMONICS",
+        "EARTH_HARMONICS"
+      ]
+    },
+    {
+      "idx": 6,
+      "label": "07_full",
+      "forces": [
+        "SUN",
+        "PLANETS",
+        "ASTEROIDS",
+        "GR_EIH",
+        "SUN_HARMONICS",
+        "EARTH_HARMONICS",
+        "NON_GRAVITATIONAL"
+      ]
+    }
+  ]
+}
