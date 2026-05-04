@@ -100,4 +100,5 @@ no-build-isolation-package = ["rebound", "reboundx"]
 skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"
 
 [tool.pytest.ini_options]
-addopts = "--ignore=docs/tutorials/too_slow_for_tests/"
+addopts = "--nbmake --ignore=docs/tutorials/skip_tests/"
+testpaths = ["tests", "docs/tutorials"]
