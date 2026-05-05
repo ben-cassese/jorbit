@@ -29,4 +29,3 @@ mpchecker/*.db
 mpchecker/*.npy
 *slurm*
 zzz_scratch/
-rebound/

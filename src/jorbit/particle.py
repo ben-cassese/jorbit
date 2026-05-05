@@ -811,6 +811,7 @@ class Particle:
         times: Time,
         state: CartesianState | KeplerianState | None = None,
         step_scheduler: str = "prs23",
+        return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the particle's orbit to specified times, landing exactly on each one.
 
@@ -830,22 +831,32 @@ class Particle:
                 which uses the PRS23 controller from Pham+ 2023, or "global", which uses
                 the controller from the original IAS15 paper. Default is "prs23".
                 Ignored for leapfrog integrators, which use a fixed step size.
+            return_steps (bool):
+                Whether to return the number of steps taken to reach each output time.
+                If True, the method returns a tuple of (positions, velocities, steps).
+                If False, only returns (positions, velocities). Defaults to False.
 
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
                 The positions of the particle at the given times, in AU, and the
-                The velocities of the particle at the given times, in AU/day.
+                The velocities of the particle at the given times, in AU/day. If
+                return_steps is True, also returns an array of the number of steps taken
+                to reach each output time.
         """
-        return self._integrate_base(
+        x, v, steps = self._integrate_base(
             times, state, forced_landing=True, step_scheduler=step_scheduler
         )
+        if return_steps:
+            return x, v, steps
+        return x, v
 
     def integrate_or_interpolate(
         self,
         times: Time,
         state: CartesianState | KeplerianState | None = None,
         step_scheduler: str = "prs23",
+        return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the particle's orbit to specified times, overshooting and 'interpolating' if necessary.
 
@@ -865,15 +876,24 @@ class Particle:
                 which uses the PRS23 controller from Pham+ 2023, or "global", which uses
                 the controller from the original IAS15 paper. Default is "prs23".
                 Ignored for leapfrog integrators, which use a fixed step size.
+            return_steps (bool):
+                Whether to return the number of steps taken to reach each output time.
+                If True, the method returns a tuple of (positions, velocities, steps).
+                If False, only returns (positions, velocities). Defaults to False.
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
                 The positions of the particle at the given times, in AU, and the
-                The velocities of the particle at the given times, in AU/day.
+                The velocities of the particle at the given times, in AU/day. If
+                return_steps is True, also returns an array of the number of steps taken
+                to reach each output time.
         """
-        return self._integrate_base(
+        x, v, steps = self._integrate_base(
             times, state, forced_landing=False, step_scheduler=step_scheduler
         )
+        if return_steps:
+            return x, v, steps
+        return x, v
 
     def ephemeris(
         self,
