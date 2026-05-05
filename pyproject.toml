@@ -53,7 +53,6 @@ dev = [
     "tox-uv>=1.16.2",
     "ruff>=0.14.0",
     "codespell>=2.4.1",
-    "myst-parser>=3.0.1",
     "nbsphinx>=0.9.6",
     "sphinx-automodapi>=0.18.0",
     "sphinx-book-theme>=1.1.4",
@@ -71,6 +70,7 @@ dev = [
     "corner>=2.2.3",
     "assist>=1.1.11",
     "nbmake>=1.5.5",
+    "myst-nb>=1.4.0",
 ]
 
 [project.urls]

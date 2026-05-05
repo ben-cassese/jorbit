@@ -254,6 +254,10 @@ def ias15_static_step(
         a0=acceleration_func(new_system_state),
         dt=dt_done,
         dt_last_done=dt_done,
+        # static integrator never rejects, so "last accepted" = current
+        b_last=b,
+        e_last=e,
+        dt_last_accepted=dt_done,
     )
 
     return new_system_state, new_integrator_state

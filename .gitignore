@@ -28,4 +28,5 @@ mpchecker/*.DAT
 mpchecker/*.db
 mpchecker/*.npy
 *slurm*
-tmp/
+zzz_scratch/
+rebound/

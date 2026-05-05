@@ -3,6 +3,7 @@
 __all__ = [
     "create_leapfrog_times",
     "ias15_evolve",
+    "ias15_evolve_forced_landing",
     "ias15_static_evolve",
     "ias15_static_step",
     "ias15_step",
@@ -10,14 +11,19 @@ __all__ = [
     "initialize_ias15_integrator_state",
     "interpolate_from_dense_output",
     "leapfrog_evolve",
+    "next_proposed_dt_PRS23",
+    "next_proposed_dt_global",
     "precompute_interpolation_indices",
 ]
 
 from jorbit.integrators.ias15 import (
     ias15_evolve,
+    ias15_evolve_forced_landing,
     ias15_step,
     initialize_ias15_integrator_state,
     interpolate_from_dense_output,
+    next_proposed_dt_global,
+    next_proposed_dt_PRS23,
     precompute_interpolation_indices,
 )
 from jorbit.integrators.ias15_static import ias15_static_evolve, ias15_static_step

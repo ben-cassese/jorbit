@@ -47,14 +47,15 @@ user_guide/cache
 :hidden:
 :caption: Tutorials/Demos
 
+tutorials/step_sizes.ipynb
 tutorials/local_mpchecker.ipynb
 tutorials/lightcurve_contamination.ipynb
 tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
-tutorials/too_slow_for_tests/compare_with_horizons.ipynb
+tutorials/skip_tests/compare_with_horizons.ipynb
 tutorials/max_likelihood_orbit.ipynb
 tutorials/deep_dive.ipynb
-tutorials/too_slow_for_tests/apophis_flyby.ipynb
+tutorials/skip_tests/apophis_flyby.ipynb
 tutorials/general_n_body.ipynb
 tutorials/pick_an_integrator.ipynb
 tutorials/heliocentric_barycentric.ipynb

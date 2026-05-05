@@ -1,5 +1,7 @@
 """Helper functions for pre-computing static perturber positions for use in accelerations."""
 
+from collections.abc import Callable
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -100,6 +102,7 @@ def _get_dynamic_intermediate_dts(
     acceleration_func: jax.tree_util.Partial,
     final_time: float,
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
 ) -> jnp.ndarray:
     """Use the adaptive IAS15 stepper to compute the required steps between two times.
 
@@ -113,6 +116,9 @@ def _get_dynamic_intermediate_dts(
             The final time to integrate to.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable):
+            The step scheduler used by the underlying ``ias15_step`` to choose the
+            next proposed step size.
 
     Returns:
         jnp.ndarray:
@@ -133,7 +139,7 @@ def _get_dynamic_intermediate_dts(
         integrator_state.dt = step_length
 
         system_state, integrator_state, _ = ias15_step(
-            system_state, acceleration_func, integrator_state
+            system_state, acceleration_func, integrator_state, step_scheduler
         )
         return system_state, integrator_state, last_meaningful_dt, iter_num + 1
 
@@ -168,6 +174,7 @@ def get_all_dynamic_intermediate_dts(
     acceleration_func: jax.tree_util.Partial,
     times: Time,
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
 ) -> jnp.ndarray:
     """Get all intermediate step sizes needed to integrate over a series of times.
 
@@ -183,6 +190,9 @@ def get_all_dynamic_intermediate_dts(
             The final times to integrate to.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable):
+            The step scheduler used by the underlying ``ias15_step`` to choose the
+            next proposed step size.
 
     Returns:
         tuple:
@@ -209,6 +219,7 @@ def get_all_dynamic_intermediate_dts(
             acceleration_func,
             final_time,
             integrator_state,
+            step_scheduler,
         )
         all_dts.append(dts)
         obs_inds.append(num_steps)
@@ -221,6 +232,7 @@ def get_natural_dynamic_dts(
     acceleration_func: jax.tree_util.Partial,
     final_time: float,
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
 ) -> jnp.ndarray:
     """Use the adaptive IAS15 stepper to compute natural steps from start past final_time.
 
@@ -239,6 +251,9 @@ def get_natural_dynamic_dts(
             The time to integrate past. The last step will overshoot this.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable):
+            The step scheduler used by the underlying ``ias15_step`` to choose the
+            next proposed step size.
 
     Returns:
         jnp.ndarray:
@@ -268,7 +283,7 @@ def get_natural_dynamic_dts(
         # Take a natural step (no clamping to final_time)
         integrator_state.dt = direction * jnp.abs(integrator_state.dt)
         system_state, integrator_state, _ = ias15_step(
-            system_state, acceleration_func, integrator_state
+            system_state, acceleration_func, integrator_state, step_scheduler
         )
 
         if integrator_state.dt_last_done != 0:

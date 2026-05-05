@@ -20,12 +20,13 @@ from jorbit.accelerations.static_helpers import (
 from jorbit.astrometry.sky_projection import on_sky, sky_sep
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
+    ias15_evolve_forced_landing,
     ias15_static_evolve,
     initialize_ias15_integrator_state,
     interpolate_from_dense_output,
+    next_proposed_dt_PRS23,
     precompute_interpolation_indices,
 )
-from jorbit.integrators.ias15 import _ias15_evolve_forced_landing
 from jorbit.utils.horizons import get_observer_positions
 
 eph = Ephemeris(ssos="default solar system")
@@ -47,12 +48,13 @@ def _get_dynamic_positions(asteroid: str, times: Time) -> jnp.ndarray:
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
     integrator_init.dt = jnp.diff(offsets)[0]
 
-    dynamic_x, dynamic_v, _dynamic_state, _dynamic_integrator_state = (
-        _ias15_evolve_forced_landing(
+    dynamic_x, dynamic_v, _dynamic_state, _dynamic_integrator_state, _steps = (
+        ias15_evolve_forced_landing(
             initial_system_state=state,
             acceleration_func=acc_func_dynamic,
             times=offsets,
             initial_integrator_state=integrator_init,
+            step_scheduler=jax.tree_util.Partial(next_proposed_dt_PRS23),
         )
     )
 
@@ -78,6 +80,7 @@ def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
         acceleration_func=acc_func_dynamic,
         final_time=offsets[-1],
         initial_integrator_state=integrator_init,
+        step_scheduler=jax.tree_util.Partial(next_proposed_dt_PRS23),
     )
 
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])

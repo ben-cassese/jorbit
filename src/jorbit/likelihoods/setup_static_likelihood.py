@@ -1,5 +1,7 @@
 """Helper functions to set up rapid likelihood evaluations using cached pertubers."""
 
+from collections.abc import Callable
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -31,7 +33,9 @@ from jorbit.integrators import (
 from jorbit.utils.states import CartesianState, KeplerianState
 
 
-def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
+def precompute_likelihood_data(
+    p: "Particle", step_scheduler: Callable  # noqa: F821
+) -> tuple:
     """Given a nearly correct orbit, precompute needed data for further fast likelihood evaluations.
 
     Args:
@@ -40,6 +44,9 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
             state should be approximately correct in the sense that the same "optimal"
             time steps taken by the dynamic IAS15 integrator can be reused for slightly
             different initial conditions.
+        step_scheduler (Callable):
+            The step scheduler used by the underlying ``ias15_step`` to choose the
+            next proposed step size when computing the natural step sizes.
 
     Returns:
         tuple:
@@ -113,6 +120,7 @@ def precompute_likelihood_data(p: "Particle") -> tuple:  # noqa: F821
         acceleration_func=dynamic_acc_func,
         final_time=jnp.max(obs_times),
         initial_integrator_state=integrator_init,
+        step_scheduler=step_scheduler,
     )
 
     # Compute the start time of each step and precompute interpolation indices.

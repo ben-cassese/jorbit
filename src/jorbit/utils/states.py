@@ -172,6 +172,15 @@ class IAS15IntegratorState:
     a0: jnp.ndarray
     dt: float
     dt_last_done: float
+    # REBOUND-style "last accepted" snapshots. On a rejected step the predictor
+    # extrapolates from these (er, br) instead of from the current b, matching
+    # `predict_next_step(ratio, N3, er, br, e, b)` at integrator_ias15.c:639.
+    # `dt_last_accepted` mirrors REBOUND's `r->dt_last_done`, which is only
+    # updated on success; jorbit's own `dt_last_done` doubles as an "accepted?"
+    # flag (0 means the last attempt was rejected) so we keep both.
+    b_last: jnp.ndarray
+    e_last: jnp.ndarray
+    dt_last_accepted: float
 
 
 @chex.dataclass

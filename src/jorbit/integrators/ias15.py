@@ -17,7 +17,6 @@ Many thanks to the REBOUND developers for their work on this integrator, and for
 
 # Many thanks to the REBOUND developers for their work on this integrator,
 # and for making it open source!
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -31,7 +30,9 @@ from jorbit.data.constants import (
     IAS15_BV_DENOMS,
     IAS15_BX_DENOMS,
     IAS15_D_MATRIX,
+    IAS15_EPSILON,
     IAS15_H,
+    IAS15_MIN_DT,
     IAS15_SAFETY_FACTOR,
     IAS15_EPS_Modified,
     IAS15_sub_cs,
@@ -40,10 +41,11 @@ from jorbit.data.constants import (
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
 # Maximum number of accepted adaptive steps captured by ias15_evolve's dense-output
-# buffer. At ~30 IAS15 steps per circular orbit this covers ~60 orbits, comfortably
-# beyond typical observation-fitting workloads. Exceeding this silently truncates
-# the trajectory; queries inside the truncated region return the last captured step.
-IAS15_MAX_DYNAMIC_STEPS = 2048
+# buffer. ASSIST GLOBAL+min_dt=0.001 takes ~2.1k steps for the 2029 Apophis flyby
+# year; jorbit's port currently takes ~13k under the same recipe (sits at the floor
+# longer than ASSIST due to PC/numerical b6 differences out of scope). 15000 leaves
+# headroom for slightly tighter encounters and matches that envelope.
+IAS15_MAX_DYNAMIC_STEPS = 15_000
 
 
 def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
@@ -58,15 +60,19 @@ def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
             An instance of the IAS15IntegratorState dataclass with zeros.
     """
     n_particles = a0.shape[0]
+    zeros_b = jnp.zeros((7, n_particles, 3), dtype=jnp.float64)
     return IAS15IntegratorState(
-        g=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
-        b=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
-        e=jnp.zeros((7, n_particles, 3), dtype=jnp.float64),
+        g=zeros_b,
+        b=zeros_b,
+        e=zeros_b,
         csx=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         csv=jnp.zeros((n_particles, 3), dtype=jnp.float64),
         a0=a0,
         dt=0.001,
         dt_last_done=0.0,
+        b_last=zeros_b,
+        e_last=zeros_b,
+        dt_last_accepted=0.0,
     )
 
 
@@ -228,7 +234,15 @@ def _update_bs(
 
 
 @jax.jit
-def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.ndarray:
+def next_proposed_dt_PRS23(
+    a0: jnp.ndarray,
+    at_fresh: jnp.ndarray,
+    b: jnp.ndarray,
+    dt_done: float,
+    x_end: jnp.ndarray,
+    v_end: jnp.ndarray,
+) -> jnp.ndarray:
+    """The PRS23 step controller."""
     tmp = a0 + jnp.sum(b, axis=0)
     y2 = jnp.sum(tmp * tmp, axis=1)
 
@@ -247,17 +261,68 @@ def _next_proposed_dt(a0: jnp.ndarray, b: jnp.ndarray, dt_done: float) -> jnp.nd
 
 
 @jax.jit
+def next_proposed_dt_global(
+    a0: jnp.ndarray,
+    at_fresh: jnp.ndarray,
+    b: jnp.ndarray,
+    dt_done: float,
+    x_end: jnp.ndarray,
+    v_end: jnp.ndarray,
+) -> jnp.ndarray:
+    """REBOUND's GLOBAL step controller (legacy, used by ASSIST).
+
+    Compares the magnitude of the highest-order polynomial coefficient (`b[6]`)
+    to the freshly-evaluated end-of-step acceleration (`at_fresh`, taken from
+    the last predictor-corrector sub-step at h = IAS15_H[7] = 0.977). Includes
+    REBOUND's "slow-acceleration" filter that skips particles with
+    `v²·dt²/x² < 1e-16`, evaluated on the END-of-step predictor state
+    (`x_end, v_end`) to match REBOUND's `particles[mi]` semantics
+    (`integrator_ias15.c:543-558`). Falls back to `dt/safety_factor` growth
+    when no particle contributes. Finally clamps the proposed step to
+    `IAS15_MIN_DT`. See REBOUND `integrator_ias15.c:534-619`. ASSIST forces
+    this mode at `assist.c:446`.
+    """
+    del a0
+    v2 = jnp.sum(v_end * v_end, axis=1)
+    x2 = jnp.sum(x_end * x_end, axis=1)
+    keep = (v2 * dt_done * dt_done / x2) >= 1e-16
+    at_masked = jnp.where(keep[:, None], at_fresh, 0.0)
+    b6_masked = jnp.where(keep[:, None], b[6], 0.0)
+    maxa = jnp.max(jnp.abs(at_masked))
+    maxj = jnp.max(jnp.abs(b6_masked))
+    integrator_error = maxj / maxa
+    dt_new = jnp.where(
+        jnp.isfinite(integrator_error) & (integrator_error > 0),
+        dt_done * jnp.power(IAS15_EPSILON / integrator_error, 1.0 / 7.0),
+        dt_done / IAS15_SAFETY_FACTOR,
+    )
+    dt_new = jnp.where(
+        jnp.abs(dt_new) < IAS15_MIN_DT,
+        jnp.sign(dt_new) * IAS15_MIN_DT,
+        dt_new,
+    )
+    return dt_new
+
+
+@jax.jit
 def _predict_next_step(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
 
     def large_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
+        # probably delete this comment
+        # When the dt ratio is large (saturated growth or pathological rejection),
+        # zero only `e` and keep `b`. This is the heuristic from before the REBOUND
+        # parity attempt; tested empirically to give sub-km PRS23 accuracy on the
+        # Apophis flyby year. REBOUND zeros both at ratio>20, but that interaction
+        # with jorbit's PC degrades accuracy here, so we keep the older behavior.
         e_new = jnp.zeros_like(e)
-        return e_new, b
+        b_new = jnp.zeros_like(b)
+        return e_new, b_new
 
     def reasonable_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
         qs = ratio ** jnp.arange(1, 8)
         diff = b - e
         e = jnp.einsum("i,ij,j...->i...", qs, IAS15_BEZIER_COEFFS, b)
-        b = e - diff
+        b = e + diff
         return e, b
 
     e, b = jax.lax.cond(
@@ -272,6 +337,9 @@ def ias15_step(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
 ) -> SystemState:
     """Take a single step using the IAS15 integrator.
 
@@ -287,6 +355,9 @@ def ias15_step(
             The acceleration function.
         initial_integrator_state (IAS15IntegratorState):
             The initial integrator state.
+        step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
+            The step scheduler function, which is either going to be
+            next_proposed_dt_PRS23 or next_proposed_dt_global
 
     Returns:
         tuple[SystemState, IAS15IntegratorState, jnp.ndarray]:
@@ -314,6 +385,11 @@ def ias15_step(
     csv = initial_integrator_state.csv
     e = initial_integrator_state.e
     b = initial_integrator_state.b
+    # REBOUND-style "last accepted" snapshots; used as the source for predict_next_step
+    # when the current step is rejected (integrator_ias15.c:637-640).
+    b_last_in = initial_integrator_state.b_last
+    e_last_in = initial_integrator_state.e_last
+    dt_last_accepted_in = initial_integrator_state.dt_last_accepted
 
     csb = jnp.zeros_like(b)
     g = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b)
@@ -323,21 +399,39 @@ def ias15_step(
         csb: jnp.ndarray,
         g: jnp.ndarray,
         predictor_corrector_error: jnp.ndarray,
+        at_last: jnp.ndarray,
+        x_end: jnp.ndarray,
+        v_end: jnp.ndarray,
     ) -> tuple:
         # jax.debug.print("just chillin")
-        return b, csb, g, predictor_corrector_error, predictor_corrector_error
+        return (
+            b,
+            csb,
+            g,
+            predictor_corrector_error,
+            predictor_corrector_error,
+            at_last,
+            x_end,
+            v_end,
+        )
 
     def _predictor_corrector_iteration(
         b: jnp.ndarray,
         csb: jnp.ndarray,
         g: jnp.ndarray,
         predictor_corrector_error: float,
+        at_last: jnp.ndarray,
+        x_end: jnp.ndarray,
+        v_end: jnp.ndarray,
     ) -> tuple:
+        # jax.debug.print("PC iteration starting")
+        del at_last, x_end, v_end
         predictor_corrector_error_last = predictor_corrector_error
         predictor_corrector_error = 0.0
         for n, h, c, r in zip(
             range(1, 8), IAS15_H[1:], IAS15_sub_cs, IAS15_sub_rs, strict=True
         ):
+            # jax.debug.print("   pc iter {n}: g={g}", n=n, g=g)
             step_time = t_beginning + dt * h
             x, v = _estimate_x_v_from_b(
                 a0=a0,
@@ -369,6 +463,7 @@ def ias15_step(
             g_old = g[n - 1]
             g_new = _refine_sub_g(at, a0, g[: n - 1], r)
             g_diff = g_new - g_old
+            # jax.debug.print("   min/max g_diff: {x}, {y}", x=jnp.max(g_diff), y=jnp.min(g_diff))
             new_bs, new_csbs = _update_bs(b[:n], csb[:n], g_diff, c)
             g = g.at[n - 1].set(g_new)
             b = b.at[:n].set(new_bs)
@@ -376,13 +471,36 @@ def ias15_step(
 
         maxa = jnp.max(jnp.abs(at))
         maxb6tmp = jnp.max(jnp.abs(g_diff))
+        # jax.debug.print("maxa: {maxa}, maxb6tmp: {maxb6tmp}", maxa=maxa, maxb6tmp=maxb6tmp)
 
         predictor_corrector_error = jnp.abs(maxb6tmp / maxa)
+        # jax.debug.print("PC iteration error: {error}\n\n", error=predictor_corrector_error)
 
-        return b, csb, g, predictor_corrector_error, predictor_corrector_error_last
+        # `at`, `x`, `v` here are from the last sub-step (n=7, h=IAS15_H[7]=0.977),
+        # i.e. the freshly-evaluated end-of-step acceleration and predictor state.
+        # REBOUND's GLOBAL controller uses these (integrator_ias15.c:382-385, 547).
+        return (
+            b,
+            csb,
+            g,
+            predictor_corrector_error,
+            predictor_corrector_error_last,
+            at,
+            x,
+            v,
+        )
 
     def scan_func(carry: tuple, scan_over: int) -> tuple:
-        b, csb, g, predictor_corrector_error, predictor_corrector_error_last = carry
+        (
+            b,
+            csb,
+            g,
+            predictor_corrector_error,
+            predictor_corrector_error_last,
+            at_last,
+            x_end,
+            v_end,
+        ) = carry
 
         condition = (predictor_corrector_error < EPSILON) | (
             (scan_over > 2)
@@ -397,16 +515,19 @@ def ias15_step(
             csb,
             g,
             predictor_corrector_error,
+            at_last,
+            x_end,
+            v_end,
         )
         return carry, None
 
-    initial_carry = (b, csb, g, 1e300, 2.0)
-    (b, csb, g, _pc_error, _pc_error_last), _ = jax.lax.scan(
+    initial_carry = (b, csb, g, 1e300, 2.0, a0, x0, v0)
+    (b, csb, g, _pc_error, _pc_error_last, at_final, x_end, v_end), _ = jax.lax.scan(
         scan_func, initial_carry, jnp.arange(12)
     )
 
     dt_done = dt
-    next_dt = _next_proposed_dt(a0, b, dt)
+    next_dt = step_scheduler(a0, at_final, b, dt, x_end, v_end)
 
     def step_too_ambitious(
         x0: jnp.ndarray,
@@ -478,11 +599,33 @@ def ias15_step(
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 
-    ratio = next_dt / dt_done
-    # ratio = 100 # temporarily disable prediction
-    # if we're rejecting the step, trick predict_next_step into not predicting
-    ratio = jnp.where(dt_done == 0.0, 100.0, ratio)
-    predicted_next_e, predicted_next_b = _predict_next_step(ratio, e, b)
+    # Match REBOUND's predict_next_step semantics:
+    #   accepted (integrator_ias15.c:696-697):
+    #       ratio = next_dt / dt_done                           # this step's dt
+    #       predict in-place from current (e, b)
+    #   rejected (integrator_ias15.c:637-640):
+    #       ratio = next_dt / dt_last_accepted                  # last successful dt
+    #       predict from (e_last, b_last) into current (e, b)
+    #       (and skip the predict entirely on the very first step, when
+    #        dt_last_accepted is still 0).
+    accepted = dt_done != 0.0
+    first_step_reject = (~accepted) & (dt_last_accepted_in == 0.0)
+    denom = jnp.where(accepted, dt_done, dt_last_accepted_in)
+    ratio = jnp.where(first_step_reject, 1.0, next_dt / denom)
+    e_source = jnp.where(accepted, e, e_last_in)
+    b_source = jnp.where(accepted, b, b_last_in)
+    predicted_next_e, predicted_next_b = _predict_next_step(ratio, e_source, b_source)
+    # On the first-step rejection there is no last-accepted state to extrapolate
+    # from, so leave e, b as the converged-but-rejected values; PC will refine
+    # them on the retry from those starting points (matches REBOUND's behavior
+    # of skipping the predict_next_step call when dt_last_done == 0).
+    predicted_next_e = jnp.where(first_step_reject, e, predicted_next_e)
+    predicted_next_b = jnp.where(first_step_reject, b, predicted_next_b)
+
+    # Update "last accepted" snapshots only on a successful step.
+    new_b_last = jnp.where(accepted, b, b_last_in)
+    new_e_last = jnp.where(accepted, e, e_last_in)
+    new_dt_last_accepted = jnp.where(accepted, dt_done, dt_last_accepted_in)
 
     new_integrator_state = IAS15IntegratorState(
         g=g,
@@ -493,17 +636,23 @@ def ias15_step(
         a0=acceleration_func(new_system_state),
         dt=next_dt,
         dt_last_done=dt_done,
+        b_last=new_b_last,
+        e_last=new_e_last,
+        dt_last_accepted=new_dt_last_accepted,
     )
 
     return new_system_state, new_integrator_state, b
 
 
 @jax.jit
-def _ias15_evolve_forced_landing(
+def ias15_evolve_forced_landing(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     """Forced-landing IAS15 evolve (internal testing reference only).
 
@@ -525,6 +674,9 @@ def _ias15_evolve_forced_landing(
             The times to evolve the system to.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
+            The step scheduler function to use for determining the next proposed
+            step size.
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
@@ -550,7 +702,7 @@ def _ias15_evolve_forced_landing(
 
             integrator_state.dt = step_length
             system_state, integrator_state, _ = ias15_step(
-                system_state, acceleration_func, integrator_state
+                system_state, acceleration_func, integrator_state, step_scheduler
             )
             return system_state, integrator_state, last_meaningful_dt, iter_num + 1
 
@@ -563,7 +715,7 @@ def _ias15_evolve_forced_landing(
             )
             return (step_length != 0) & (iter_num < 10_000)
 
-        final_system_state, final_integrator_state, _last_meaningful_dt, _iter_num = (
+        final_system_state, final_integrator_state, _last_meaningful_dt, iter_num = (
             jax.lax.while_loop(
                 cond_func,
                 step_needed,
@@ -579,7 +731,7 @@ def _ias15_evolve_forced_landing(
         #     "finished taking steps to goal time in {x} iterations", x=_iter_num
         # )
 
-        return (final_system_state, final_integrator_state)
+        return (final_system_state, final_integrator_state, iter_num)
 
     def scan_func(carry: tuple, scan_over: float) -> tuple:
         # jax.debug.print(
@@ -587,12 +739,12 @@ def _ias15_evolve_forced_landing(
         #     x=scan_over,
         #     y=carry[0].time,
         # )
-        system_state, integrator_state = carry
+        system_state, integrator_state, steps_so_far = carry
         final_time = scan_over
-        system_state, integrator_state = evolve(
+        system_state, integrator_state, new_steps = evolve(
             system_state, acceleration_func, final_time, integrator_state
         )
-        return (system_state, integrator_state), (
+        return (system_state, integrator_state, steps_so_far + new_steps), (
             jnp.concatenate(
                 (
                     system_state.massive_positions,
@@ -607,10 +759,12 @@ def _ias15_evolve_forced_landing(
             ),
         )
 
-    (final_system_state, final_integrator_state), (positions, velocities) = (
-        jax.lax.scan(scan_func, (initial_system_state, initial_integrator_state), times)
+    (final_system_state, final_integrator_state, tot_steps), (positions, velocities) = (
+        jax.lax.scan(
+            scan_func, (initial_system_state, initial_integrator_state, 0), times
+        )
     )
-    return positions, velocities, final_system_state, final_integrator_state
+    return positions, velocities, final_system_state, final_integrator_state, tot_steps
 
 
 @jax.jit
@@ -619,6 +773,9 @@ def ias15_evolve(
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
     """Evolve a system and recover positions/velocities at ``times`` via interpolation.
 
@@ -632,7 +789,7 @@ def ias15_evolve(
     Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
 
     .. warning::
-       The dense-output buffer is sized by ``IAS15_MAX_DYNAMIC_STEPS`` (2048 by
+       The dense-output buffer is sized by ``IAS15_MAX_DYNAMIC_STEPS`` (15000 by
        default). Integrations requiring more accepted steps will silently truncate,
        with all query times beyond the truncation returning the last captured step's
        polynomial value. For safety the loop also caps total iterations (including
@@ -648,6 +805,9 @@ def ias15_evolve(
             within [initial_system_state.time, t_end_of_last_natural_step].
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
+            The step scheduler function to use for determining the next proposed
+            step size.
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
@@ -657,10 +817,30 @@ def ias15_evolve(
     """
     n_particles = initial_integrator_state.a0.shape[0]
 
+    # Seed buffer index 0 with the initial state so that a zero-length integration
+    # (final_time == t0) still yields a valid interpolation: with dts_buf[0]=1e30
+    # the only reachable query is t == t0, which lands at h=0 where the
+    # polynomial collapses to (x0, v0) regardless of b. For non-degenerate
+    # integrations the first accepted step overwrites index 0 with the same
+    # x0/v0/a0 it sees as the start-of-step state, so this seeding is invisible.
+    x0_initial = jnp.concatenate(
+        (initial_system_state.massive_positions, initial_system_state.tracer_positions)
+    )
+    v0_initial = jnp.concatenate(
+        (
+            initial_system_state.massive_velocities,
+            initial_system_state.tracer_velocities,
+        )
+    )
+
     b_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, 7, n_particles, 3))
-    a0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
-    x0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
-    v0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
+    a0_buf = (
+        jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
+        .at[0]
+        .set(initial_integrator_state.a0)
+    )
+    x0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)).at[0].set(x0_initial)
+    v0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)).at[0].set(v0_initial)
     # Trailing (unfilled) dts are a huge sentinel so cumulative t_step_starts past
     # the valid prefix exceed any query time; searchsorted then safely routes all
     # valid queries into the accepted-step prefix.
@@ -673,8 +853,12 @@ def ias15_evolve(
     def cond_fn(carry: tuple) -> bool:
         system_state, _ig, _b, _a0, _x0, _v0, _dts, n_accepted, iter_num = carry
         t = system_state.time
-        past_final = ((direction > 0) & (t >= final_time)) | (
-            (direction < 0) & (t <= final_time)
+        # Non-strict on `direction` so that direction == 0 (final_time == t0)
+        # short-circuits past_final to True at iter 0, skipping the loop body
+        # entirely. For direction != 0 only one disjunct is active and the
+        # (t >= final_time) / (t <= final_time) checks are unchanged.
+        past_final = ((direction >= 0) & (t >= final_time)) | (
+            (direction <= 0) & (t <= final_time)
         )
         return (
             (~past_final)
@@ -705,7 +889,7 @@ def ias15_evolve(
 
         integrator_state.dt = direction * jnp.abs(integrator_state.dt)
         new_system_state, new_integrator_state, converged_b = ias15_step(
-            system_state, acceleration_func, integrator_state
+            system_state, acceleration_func, integrator_state, step_scheduler
         )
 
         accepted = new_integrator_state.dt_last_done != 0.0
@@ -759,7 +943,7 @@ def ias15_evolve(
         v0_buf,
         dts_buf,
         _n_accepted,
-        _iter_num,
+        iter_num,
     ) = jax.lax.while_loop(cond_fn, body_fn, init_carry)
 
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts_buf[:-1])])
@@ -772,4 +956,4 @@ def ias15_evolve(
         b_buf, a0_buf, x0_buf, v0_buf, dts_buf, step_indices, h_values
     )
 
-    return positions, velocities, final_system_state, final_integrator_state
+    return positions, velocities, final_system_state, final_integrator_state, iter_num
