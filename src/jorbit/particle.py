@@ -772,7 +772,7 @@ class Particle:
             if times.shape == ():
                 times = jnp.array([times])
 
-            return _keplerian_integrate(x, v, t0, times)
+            return *_keplerian_integrate(x, v, t0, times), None
 
         if state is None:
             state = self._cartesian_state
