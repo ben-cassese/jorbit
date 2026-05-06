@@ -45,8 +45,10 @@ from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
     ias15_evolve_forced_landing,
+    ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
+    make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
 )
@@ -971,16 +973,36 @@ class Particle:
 
         integrator = self._integrator if interpolate else self._forced_integrator
         scheduler = self._resolve_step_scheduler(step_scheduler)
-        ras, decs = _ephem(
-            times,
-            state,
-            self.gravity,
-            integrator,
-            integrator_state,
-            observer_positions,
-            inds,
-            scheduler,
+        # IAS15 with interpolation has dense-output b-coefficients available, so
+        # we can use them to evaluate the polynomial at light-travel-delayed times in on_sky's
+        # LTT loop instead of a constant-acceleration Taylor expansion. All other
+        # paths (leapfrog, IAS15 forced-landing) fall back to the original Taylor.
+        use_dense_ltt = interpolate and self._integrator_method not in (
+            "Y4",
+            "Y6",
+            "Y8",
         )
+        if use_dense_ltt:
+            ras, decs = _ephem_ias15(
+                times,
+                state,
+                self.gravity,
+                integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
+        else:
+            ras, decs = _ephem(
+                times,
+                state,
+                self.gravity,
+                integrator,
+                integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
     def max_likelihood(
@@ -1213,11 +1235,6 @@ def _ephem(
         step_scheduler,
     )
 
-    # # only one particle, so take the 0th particle. shape is (time, particles, 3)
-    # ras, decs = jax.vmap(on_sky, in_axes=(0, 0, 0, 0, None))(
-    #         positions[:,0,:], velocities[:,0,:], times, observer_positions, acc_func
-    #     )
-
     def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
         position, velocity, time, observer_position = scan_over
         ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
@@ -1234,6 +1251,91 @@ def _ephem(
         ),
     )
 
+    return ras, decs
+
+
+@jax.jit
+def _ephem_ias15(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+
+    The ``on_sky`` light-travel-time correction defaults to a 2nd-order Taylor with a
+    constant acceleration. For IAS15, we already have the converged 7th-order
+    polynomial per step (the "dense output"). This variant builds a per-observation
+    closure that evaluates that polynomial at the light-travel-delayed time, replacing the
+    Taylor expansion. Only used when ``interpolate=True``.
+    """
+    state = particle_state.to_system()
+    (
+        _positions,
+        _velocities,
+        _final_system_state,
+        _final_integrator_state,
+        _iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _t_step_starts,
+        step_indices,
+        h_values,
+    ) = ias15_evolve_with_dense_output(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+
+    # Restrict to observation times only (drops any intermediate landing times).
+    obs_times = times[relevant_inds]
+    obs_step_indices = step_indices[relevant_inds]
+    obs_h_values = h_values[relevant_inds]
+
+    # Per-obs dense-output gather (single tracer at index 0).
+    b_per_obs = b_buf[obs_step_indices][:, :, 0, :]
+    a0_per_obs = a0_buf[obs_step_indices][:, 0, :]
+    x0_per_obs = x0_buf[obs_step_indices][:, 0, :]
+    v0_per_obs = v0_buf[obs_step_indices][:, 0, :]
+    dt_per_obs = dts_buf[obs_step_indices]
+
+    def per_obs_on_sky(
+        b_step: jnp.ndarray,
+        a0_step: jnp.ndarray,
+        x0_step: jnp.ndarray,
+        v0_step: jnp.ndarray,
+        dt_step: jnp.ndarray,
+        h_obs: jnp.ndarray,
+        time: jnp.ndarray,
+        observer_pos: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        propagator = make_ltt_propagator(
+            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+        )
+        x_obs = propagator(jnp.array(0.0))
+        return on_sky(
+            x_obs,
+            jnp.zeros(3),
+            time,
+            observer_pos,
+            acc_func,
+            ltt_position_fn=propagator,
+        )
+
+    ras, decs = jax.vmap(per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
+        b_per_obs,
+        a0_per_obs,
+        x0_per_obs,
+        v0_per_obs,
+        dt_per_obs,
+        obs_h_values,
+        obs_times,
+        observer_positions,
+    )
     return ras, decs
 
 

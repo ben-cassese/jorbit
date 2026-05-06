@@ -27,9 +27,9 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
     ias15_static_evolve,
     initialize_ias15_integrator_state,
-    interpolate_from_dense_output,
     precompute_interpolation_indices,
 )
+from jorbit.integrators.ias15 import make_ltt_propagator
 from jorbit.utils.states import CartesianState, KeplerianState
 
 
@@ -239,21 +239,58 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
             )
         )
 
-        # Interpolate positions/velocities at observation times using
-        # precomputed indices (searchsorted is done once at setup, not here)
-        interp_x, interp_v = interpolate_from_dense_output(
-            b_all, a0_all, x0_all, v0_all, dts, step_indices, h_values
-        )
-        # Select the single tracer particle (index 0)
-        obs_xs = interp_x[:, 0, :]
-        obs_vs = interp_v[:, 0, :]
+        # Gather per-obs dense-output slices for the single tracer (index 0).
+        # Shapes: b_per_obs (n_obs, 7, 3); a0/x0/v0_per_obs (n_obs, 3);
+        # dt_per_obs (n_obs,).
+        b_per_obs = b_all[step_indices][:, :, 0, :]
+        a0_per_obs = a0_all[step_indices][:, 0, :]
+        x0_per_obs = x0_all[step_indices][:, 0, :]
+        v0_per_obs = v0_all[step_indices][:, 0, :]
+        dt_per_obs = dts[step_indices]
 
-        model_ras, model_decs = jax.vmap(on_sky, in_axes=(0, 0, 0, 0, None, 0))(
-            obs_xs,
-            obs_vs,
+        def per_obs_on_sky(
+            b_step: jnp.ndarray,
+            a0_step: jnp.ndarray,
+            x0_step: jnp.ndarray,
+            v0_step: jnp.ndarray,
+            dt_step: jnp.ndarray,
+            h_obs: jnp.ndarray,
+            time: jnp.ndarray,
+            observer_pos: jnp.ndarray,
+            cheby_info_obs: dict[str, jnp.ndarray],
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+            # Build a closure that evaluates the IAS15 polynomial at light-travel-
+            # delayed times within this step. on_sky uses it instead of the
+            # constant-acceleration Taylor expansion.
+            propagator = make_ltt_propagator(
+                b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+            )
+            # x_obs (=position at h_obs) is what on_sky uses to seed the LTT
+            # loop and to compute the geometric distance to the observer.
+            # When ltt_position_fn is provided, on_sky doesn't use the
+            # velocity argument, so we pass zeros to keep the signature.
+            x_obs = propagator(jnp.array(0.0))
+            return on_sky(
+                x_obs,
+                jnp.zeros(3),
+                time,
+                observer_pos,
+                on_sky_acc_func,
+                cheby_info_obs,
+                ltt_position_fn=propagator,
+            )
+
+        model_ras, model_decs = jax.vmap(
+            per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        )(
+            b_per_obs,
+            a0_per_obs,
+            x0_per_obs,
+            v0_per_obs,
+            dt_per_obs,
+            h_values,
             obs_times,
             observer_positions,
-            on_sky_acc_func,
             cheby_info,
         )
 

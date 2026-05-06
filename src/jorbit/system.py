@@ -23,8 +23,10 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
+    ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
+    make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
 )
@@ -421,16 +423,31 @@ class System:
             inds = jnp.arange(times.shape[0])
 
         scheduler = self._resolve_step_scheduler(step_scheduler)
-        ras, decs = _ephem(
-            times,
-            self._state,
-            self.gravity,
-            self._integrator,
-            self._integrator_state,
-            observer_positions,
-            inds,
-            scheduler,
-        )
+        # IAS15 has dense-output b-coefficients available, so use them in on_sky's
+        # LTT loop instead of a constant-acceleration Taylor expansion. Leapfrog
+        # has no b-coefficients; fall back to the original Taylor.
+        use_dense_ltt = self._integrator_method not in ("Y4", "Y6", "Y8")
+        if use_dense_ltt:
+            ras, decs = _ephem_ias15(
+                times,
+                self._state,
+                self.gravity,
+                self._integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
+        else:
+            ras, decs = _ephem(
+                times,
+                self._state,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
 
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
@@ -495,6 +512,100 @@ def _ephem(
         return ras, decs
 
     ras, decs = jax.vmap(interior, in_axes=(1, 1))(positions, velocities)
+    return ras, decs
+
+
+@jax.jit
+def _ephem_ias15(
+    times: jnp.ndarray,
+    state: SystemState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+
+    Vmaps the per-observation polynomial-LTT closure over both the observation axis
+    and the particle axis; each particle gets its own light-travel-time correction.
+    """
+    (
+        _positions,
+        _velocities,
+        _final_system_state,
+        _final_integrator_state,
+        _iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _t_step_starts,
+        step_indices,
+        h_values,
+    ) = ias15_evolve_with_dense_output(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+
+    obs_times = times[relevant_inds]
+    obs_step_indices = step_indices[relevant_inds]
+    obs_h_values = h_values[relevant_inds]
+
+    # Per-obs gather. Shapes: b (n_obs, 7, n_particles, 3), a0/v0/x0 (n_obs, n_particles, 3),
+    # dt (n_obs,).
+    b_per_obs_all = b_buf[obs_step_indices]
+    a0_per_obs_all = a0_buf[obs_step_indices]
+    x0_per_obs_all = x0_buf[obs_step_indices]
+    v0_per_obs_all = v0_buf[obs_step_indices]
+    dt_per_obs = dts_buf[obs_step_indices]
+
+    def per_particle_per_obs(
+        b_step: jnp.ndarray,
+        a0_step: jnp.ndarray,
+        x0_step: jnp.ndarray,
+        v0_step: jnp.ndarray,
+        dt_step: jnp.ndarray,
+        h_obs: jnp.ndarray,
+        time: jnp.ndarray,
+        observer_pos: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        propagator = make_ltt_propagator(
+            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+        )
+        x_obs = propagator(jnp.array(0.0))
+        return on_sky(
+            x_obs,
+            jnp.zeros(3),
+            time,
+            observer_pos,
+            acc_func,
+            ltt_position_fn=propagator,
+        )
+
+    def for_single_particle(
+        b_obs_p: jnp.ndarray,
+        a0_obs_p: jnp.ndarray,
+        x0_obs_p: jnp.ndarray,
+        v0_obs_p: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # b_obs_p: (n_obs, 7, 3); a0/v0/x0_obs_p: (n_obs, 3)
+        return jax.vmap(per_particle_per_obs, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
+            b_obs_p,
+            a0_obs_p,
+            x0_obs_p,
+            v0_obs_p,
+            dt_per_obs,
+            obs_h_values,
+            obs_times,
+            observer_positions,
+        )
+
+    # Vmap over particle axis: 2 in b_per_obs_all (axes are obs/coeff/particle/xyz),
+    # 1 in a0/v0/x0_per_obs_all (axes are obs/particle/xyz).
+    ras, decs = jax.vmap(for_single_particle, in_axes=(2, 1, 1, 1))(
+        b_per_obs_all, a0_per_obs_all, x0_per_obs_all, v0_per_obs_all
+    )
     return ras, decs
 
 

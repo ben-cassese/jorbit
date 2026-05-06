@@ -144,7 +144,7 @@ SUN_J_HARMONICS = jnp.array([2.1961391516529825e-07])
 # EARTH_RADIUS = 6.3781365999999998e+03 / 1.4959787069999999e+08
 # """The radius of the Earth in AU. Taken from the JPL DE440/441 ephemeris."""
 
-EARTH_RADIUS = 6378.137 / 149597870.700
+EARTH_RADIUS = 6378.1366 / 149597870.700
 """The radius of the Earth in AU. Taken from Horizons web interface."""
 
 # SUN_RADIUS = 6.9600000000000000e+05 / 1.4959787069999999e+08

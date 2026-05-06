@@ -259,10 +259,37 @@ Cumulative subset order (each row is a superset of the prior):
 - **`min_dt = 0.001` is mandatory for GLOBAL** to match the ASSIST
   online Apophis tutorial; without it ASSIST grinds to ~1e-7-day steps
   near closest approach and the run takes hours.
-- **Compiler flags matter.** REBOUND's pip-installed `librebound` is
-  built without `-O3`, with `-g`. The bundle's reference output was
-  generated with the same flags. Don't change `OPT` in the Makefile
-  unless you're prepared for FP-level drift in the comparison.
+- **Compiler flags matter.** REBOUND's PyPI distribution for
+  `rebound==4.5.1` ships only sdist + cp36–cp312 wheels; on a Python
+  3.13 install pip falls back to building from sdist. The pip-driven
+  source build uses `setup.py`'s `extra_compile_args = [...,
+  '-O3', '-fstrict-aliasing', '-DLIBREBOUND', ...]`. The bundle's
+  reference outputs were generated with the same setup.py-driven
+  build (via `uv pip install --no-binary rebound .`). FP results
+  drift across compiler versions / OS toolchain / `-march` choices,
+  so for tight comparisons rebuild against the same toolchain.
+- **PRS23 (sim2) step count is sensitive to the dump path.** With the
+  patched librebound and `IAS15_DUMP_PC=1`, year-long PRS23 produces
+  **137 steps** when the C-side stdout is redirected to a real file
+  (as `run_simulations.py` does via `_ReroutedStdout`), and
+  **133 steps** when the dump is suppressed (env unset, or stdout
+  piped to `/dev/null`, or a clean source build with no patch).
+  Mechanism: the `fprintf` + `fflush` calls inside the per-substep
+  `[IAS15_SUB]` block perturb register/memory usage in the
+  surrounding `-O3` code, shifting later FMA roundoff and propagating
+  ~ULP-scale per-step `b` differences through the controller. The
+  GLOBAL controller (sim1) is insensitive to this — both paths give
+  2117 steps. The single-step sims 3/4/5 are pinned and produce
+  identical b/at sequences either way; this is a year-long
+  controller-trajectory effect only.
+- **Time scale matters in callers.** `Time("2029-01-01")` in astropy
+  defaults to UTC; converting to TDB JD adds ~69 s of TAI/TT/TDB
+  offsets at this epoch. `run_simulations.py` uses
+  `Time("2029-01-01", scale="tdb")` to skip that conversion. Apophis
+  moves ~2 km/s near 2029-01-01, so a 69 s start-time offset shifts
+  the IC by ~140,000 km — completely different trajectories,
+  different step counts. Drivers comparing against this bundle must
+  use TDB-direct time inputs.
 - **Bit-faithful reproduction is expected for sims 3–5** (single-step,
   deterministic) given the same compiler version. Year-long sims 1–2
   are also expected to be bit-faithful in step count and per-step

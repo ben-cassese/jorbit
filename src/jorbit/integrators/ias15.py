@@ -151,6 +151,58 @@ def precompute_interpolation_indices(
     return step_indices, h_values
 
 
+def make_ltt_propagator(
+    b_step: jnp.ndarray,
+    a0_step: jnp.ndarray,
+    x0_step: jnp.ndarray,
+    v0_step: jnp.ndarray,
+    dt_step: jnp.ndarray,
+    h_obs: jnp.ndarray,
+) -> jax.tree_util.Partial:
+    """Build a closure that evaluates the IAS15 polynomial at a light-travel-delayed time.
+
+    Used inside ``on_sky`` to propagate a particle backward by the light travel time
+    using the converged 7th-order Hermite polynomial for the step containing the
+    observation time, instead of a constant-acceleration Taylor expansion.
+
+    The returned closure maps a (negative) time offset ``dt`` to the particle's
+    position at fractional position ``h_obs + dt / dt_step`` within the step. It
+    accepts ``h`` slightly outside ``[0, 1]`` (i.e. it will extrapolate within the
+    same step's polynomial) — typically only by a small amount, since the LTT is
+    much shorter than ``dt_step`` for normal solar-system geometries. For close
+    flybys with very small steps where LTT may exceed dt_step, this still gives a
+    much higher-order correction than the constant-acceleration Taylor.
+
+    Args:
+        b_step (jnp.ndarray): Converged b coefficients for this step (single
+            particle slice), shape (7, 3).
+        a0_step (jnp.ndarray): Acceleration at the start of this step, shape (3,).
+        x0_step (jnp.ndarray): Position at the start of this step, shape (3,).
+        v0_step (jnp.ndarray): Velocity at the start of this step, shape (3,).
+        dt_step (jnp.ndarray): Length of this step (scalar).
+        h_obs (jnp.ndarray): Fractional position of the observation time within
+            this step, in ``[0, 1]`` (scalar).
+
+    Returns:
+        jax.tree_util.Partial:
+            A pytree-friendly callable ``f(dt) -> x_at_delayed_time`` of shape (3,).
+    """
+    # _estimate_x_v_from_b assumes a per-particle axis (IAS15_BX_DENOMS broadcasts
+    # against shape (7, n_particles, 3)). Add a singleton particle axis here and
+    # strip it in the output so callers can work with plain (3,) / (7, 3) shapes.
+    bp = b_step[::-1][:, None, :]
+    a0 = a0_step[None, :]
+    v0 = v0_step[None, :]
+    x0 = x0_step[None, :]
+
+    def f(dt: jnp.ndarray) -> jnp.ndarray:
+        h = h_obs + dt / dt_step
+        x_at_delayed_time, _ = _estimate_x_v_from_b(a0, v0, x0, h, dt_step, bp)
+        return x_at_delayed_time[0]
+
+    return jax.tree_util.Partial(f)
+
+
 @jax.jit
 def interpolate_from_dense_output(
     b_all: jnp.ndarray,
@@ -768,7 +820,7 @@ def ias15_evolve_forced_landing(
 
 
 @jax.jit
-def ias15_evolve(
+def ias15_evolve_with_dense_output(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
@@ -776,17 +828,52 @@ def ias15_evolve(
     step_scheduler: Callable[
         [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
     ],
-) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    """Evolve a system and recover positions/velocities at ``times`` via interpolation.
+) -> tuple:
+    """Evolve a system, returning interpolated states plus the underlying dense-output buffers.
 
-    Takes natural adaptive IAS15 steps from the initial time past ``jnp.max(times)``,
-    stores the per-step dense output (converged 7th-order b coefficients plus start-
-    of-step acceleration/position/velocity) in a pre-allocated buffer, then evaluates
-    the polynomial at each entry of ``times``. This matches the approach used by
-    ASSIST/REBOUND and avoids the small final jumps that forced-landing integration
-    is prone to.
+    Same integration logic as :func:`ias15_evolve`, but in addition to the interpolated
+    positions and velocities at ``times`` it returns the converged 7th-order b coefficients
+    plus the start-of-step state for every step. Callers that want to do their own
+    polynomial evaluation (e.g. richer light-travel-time correction in :func:`on_sky` via
+    :func:`make_ltt_propagator`) should use this function instead of
+    :func:`ias15_evolve`.
 
-    Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
+    Returns:
+        tuple:
+            ``(positions, velocities, final_system_state, final_integrator_state,
+            iter_num, b_buf, a0_buf, x0_buf, v0_buf, dts_buf, t_step_starts,
+            step_indices, h_values)``.
+            ``b_buf`` has shape ``(IAS15_MAX_DYNAMIC_STEPS, 7, n_particles, 3)``;
+            ``a0_buf, x0_buf, v0_buf`` have shape
+            ``(IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)``; ``dts_buf`` and
+            ``t_step_starts`` have shape ``(IAS15_MAX_DYNAMIC_STEPS,)``;
+            ``step_indices`` and ``h_values`` have shape ``(len(times),)``.
+    """
+    # Body shared with ias15_evolve.
+    return _ias15_evolve_core(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+    )
+
+
+def _ias15_evolve_core(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
+) -> tuple:
+    """Internal: full ias15_evolve implementation, returning interpolated states *and* dense output.
+
+    Drives the adaptive IAS15 loop, populates the per-step dense-output buffers, and
+    interpolates positions/velocities at ``times``. Public callers should use
+    :func:`ias15_evolve` (compact return) or :func:`ias15_evolve_with_dense_output`
+    (full return).
 
     .. warning::
        The dense-output buffer is sized by ``IAS15_MAX_DYNAMIC_STEPS`` (15000 by
@@ -810,10 +897,10 @@ def ias15_evolve(
             step size.
 
     Returns:
-        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-            Interpolated positions and velocities at ``times``, the final system
-            state (at the end of the post-overshoot step), and the final integrator
-            state.
+        tuple:
+            ``(positions, velocities, final_system_state, final_integrator_state,
+            iter_num, b_buf, a0_buf, x0_buf, v0_buf, dts_buf, t_step_starts,
+            step_indices, h_values)``.
     """
     n_particles = initial_integrator_state.a0.shape[0]
 
@@ -956,4 +1043,75 @@ def ias15_evolve(
         b_buf, a0_buf, x0_buf, v0_buf, dts_buf, step_indices, h_values
     )
 
+    return (
+        positions,
+        velocities,
+        final_system_state,
+        final_integrator_state,
+        iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        t_step_starts,
+        step_indices,
+        h_values,
+    )
+
+
+@jax.jit
+def ias15_evolve(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
+    """Evolve a system and recover positions/velocities at ``times`` via interpolation.
+
+    Takes natural adaptive IAS15 steps from the initial time past ``jnp.max(times)``,
+    stores the per-step dense output (converged 7th-order b coefficients plus start-
+    of-step acceleration/position/velocity) in a pre-allocated buffer, then evaluates
+    the polynomial at each entry of ``times``. This matches the approach used by
+    ASSIST/REBOUND and avoids the small final jumps that forced-landing integration
+    is prone to.
+
+    Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        times (jnp.ndarray):
+            Times at which to return interpolated positions and velocities. Must be
+            within ``[initial_system_state.time, t_end_of_last_natural_step]``.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+        step_scheduler (Callable):
+            The step scheduler function to use for determining the next proposed
+            step size.
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
+            Interpolated positions and velocities at ``times``, the final system
+            state, the final integrator state, and the iteration count.
+    """
+    (
+        positions,
+        velocities,
+        final_system_state,
+        final_integrator_state,
+        iter_num,
+        *_dense,
+    ) = _ias15_evolve_core(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+    )
     return positions, velocities, final_system_state, final_integrator_state, iter_num
