@@ -69,6 +69,7 @@ class Observations:
             self._ra,
             self._dec,
             self._times,
+            self._times_astropy,
             self._observatories,
             self._astrometric_uncertainties,
             self._observer_positions,
@@ -134,6 +135,11 @@ class Observations:
     def times(self) -> jnp.ndarray:
         """Times of the observations in JD TDB."""
         return self._times
+
+    @property
+    def times_astropy(self) -> Time | None:
+        """Original astropy Time (TDB) if provided at construction; else None."""
+        return self._times_astropy
 
     @property
     def observatories(self) -> list[str] | str:
@@ -257,9 +263,15 @@ class Observations:
 
         # TIMES
         if isinstance(times, type(Time("2023-01-01"))):
+            times_astropy = times.tdb
+            if times_astropy.isscalar:
+                times_astropy = Time([times_astropy.jd], format="jd", scale="tdb")
             times = jnp.array(times.tdb.jd)
         elif isinstance(times, list):
+            times_astropy = Time([t.tdb.jd for t in times], format="jd", scale="tdb")
             times = jnp.array([t.tdb.jd for t in times])
+        else:
+            times_astropy = None
         if times.shape == ():
             times = jnp.array([times])
 
@@ -311,6 +323,7 @@ class Observations:
             jnp.array(ra),
             jnp.array(dec),
             times,
+            times_astropy,
             observatories,
             astrometric_uncertainties,
             jnp.array(observer_positions),

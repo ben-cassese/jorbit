@@ -100,13 +100,22 @@ def on_sky(
     observer_position: jnp.ndarray,
     acc_func: jax.tree_util.Partial,
     acc_func_kwargs: dict = {},
+    ltt_position_fn: jax.tree_util.Partial | None = None,
 ) -> tuple[float, float]:
     """Compute the on-sky position of a particle from a given observer position.
 
     This function computes the on-sky position of a particle at a given time, correcting
-    for light travel time. It uses a 2nd-order Taylor expansion (position, velocity,
-    acceleration) to propagate backward by the light travel time. Three iterations of
-    the light travel time correction are applied, which is sufficient for most cases.
+    for light travel time. By default it uses a 2nd-order Taylor expansion (position,
+    velocity, acceleration) to propagate backward by the light travel time, where the
+    acceleration is evaluated once at the observation time using ``acc_func``. Three
+    iterations of the light travel time correction are applied, which is sufficient for
+    most cases.
+
+    For richer cases (e.g. a distant observer watching a close flyby, where higher-order
+    terms in the polynomial expansion of position around the observation time matter),
+    pass an explicit ``ltt_position_fn`` closure. When provided, this replaces
+    both the on-the-fly acceleration evaluation and the constant-acceleration Taylor
+    formula with a user-supplied propagator (typically built from IAS15 b-coefficients).
 
     Note: you can vmap this function, but don't pass multiple particles at once: each
     one needs its own light travel time correction.
@@ -119,36 +128,47 @@ def on_sky(
         acc_func (jax.tree_util.Partial):
             Acceleration function to use during light travel time correction. Must be a
             continuous function that can evaluate the positions of any fixed perturbers
-            at arbitrary times.
+            at arbitrary times. Ignored when ``ltt_position_fn`` is provided.
         acc_func_kwargs (dict, optional): Additional arguments for the acceleration
             function.
+        ltt_position_fn (jax.tree_util.Partial | None, optional):
+            Optional callable mapping a (negative) time offset ``dt`` to the particle's
+            position at ``time + dt``. When provided, this is used inside the LTT
+            iteration in place of the constant-acceleration Taylor expansion, and
+            ``acc_func`` is not called. Default ``None`` preserves the original
+            Taylor-based behavior.
 
     Returns:
         tuple[float, float]:
             The right ascension and declination of the particle in radians, ICRS.
     """
-    # Compute acceleration at the observation time for Taylor expansion
-    state = SystemState(
-        massive_positions=jnp.empty((0, 3)),
-        massive_velocities=jnp.empty((0, 3)),
-        tracer_positions=jnp.array([x]),
-        tracer_velocities=jnp.array([v]),
-        log_gms=jnp.empty(0),
-        time=time,
-        fixed_perturber_positions=jnp.empty((0, 3)),
-        fixed_perturber_velocities=jnp.empty((0, 3)),
-        fixed_perturber_log_gms=jnp.empty(0),
-        acceleration_func_kwargs=acc_func_kwargs,
-    )
-    a0 = acc_func(state)[0]  # shape (3,), acceleration of the single tracer
+    if ltt_position_fn is None:
+        # Default: evaluate acceleration once and Taylor-expand backward by LTT
+        state = SystemState(
+            massive_positions=jnp.empty((0, 3)),
+            massive_velocities=jnp.empty((0, 3)),
+            tracer_positions=jnp.array([x]),
+            tracer_velocities=jnp.array([v]),
+            log_gms=jnp.empty(0),
+            time=time,
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty(0),
+            acceleration_func_kwargs=acc_func_kwargs,
+        )
+        a0 = acc_func(state)[0]  # shape (3,), acceleration of the single tracer
 
-    # Iterative light travel time correction using Taylor expansion:
-    # x_retarded = x + v*dt + 0.5*a*dt^2 where dt = -light_travel_time
+        def propagate(dt: jnp.ndarray) -> jnp.ndarray:
+            return x + v * dt + 0.5 * a0 * dt * dt
+
+    else:
+        propagate = ltt_position_fn
+
     xz = x
     for _ in range(3):
         earth_distance = jnp.linalg.norm(xz - observer_position)
         dt = -earth_distance * INV_SPEED_OF_LIGHT
-        xz = x + v * dt + 0.5 * a0 * dt * dt
+        xz = propagate(dt)
 
     X = xz - observer_position
     calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)

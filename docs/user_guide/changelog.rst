@@ -5,6 +5,7 @@ Changelog
 
 - Added option for Keplerian-only motion to `Particle` and `System`
 - Add the `.is_observable` method to `Particle` objects which checks whether the particle is at least a certain angular distance from the Sun at given times from given observatories.
+- Instead of taking an IAS15 step to the exact observation times, the `static_step` now takes natural IAS15 adaptive steps and evaluates the relevant polynomials based on the b coefficients to compute positions/velocities at arbitrary times within a step. This cuts down the number of IAS15 steps substatially when observations are spaced within a typical maximum-allowable IAS15 step, or ~30 days.
 
 **1.2.0 (02/2026)**
 

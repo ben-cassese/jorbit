@@ -28,3 +28,4 @@ mpchecker/*.DAT
 mpchecker/*.db
 mpchecker/*.npy
 *slurm*
+zzz_scratch/

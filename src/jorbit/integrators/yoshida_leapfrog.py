@@ -100,7 +100,8 @@ def leapfrog_evolve(
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
     initial_integrator_state: LeapfrogIntegratorState,
-) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, LeapfrogIntegratorState]:
+    step_scheduler: Callable | None,
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, LeapfrogIntegratorState, jnp.ndarray]:
     """Evolve a system to multiple different times using a Yoshida leapfrog integrator.
 
     .. warnging::
@@ -118,12 +119,18 @@ def leapfrog_evolve(
             The times to evolve the system to.
         initial_integrator_state (LeapfrogIntegratorState):
             The initial state of the integrator.
+        step_scheduler (Callable | None):
+            Unused; present so leapfrog matches the IAS15 evolve protocol (which
+            requires a step scheduler). Kept positional to keep the dispatch in
+            ``Particle``/``System`` uniform across integrators.
 
     Returns:
-        Tuple[jnp.ndarray, jnp.ndarray, SystemState, LeapfrogIntegratorState]:
-            The positions and velocities of the system at each timestep,
-            the final state of the system, and the final state of the integrator.
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, LeapfrogIntegratorState, jnp.ndarray]:
+            The positions and velocities of the system at each timestep, the final
+            state of the system, the final state of the integrator, and the total
+            number of steps taken (one per output time, as a 0-d jnp.int32 array).
     """
+    del step_scheduler
 
     def scan_func(carry: tuple, scan_over: float) -> tuple[tuple, tuple]:
         system_state, integrator_state = carry
@@ -149,7 +156,8 @@ def leapfrog_evolve(
     (final_system_state, final_integrator_state), (positions, velocities) = (
         jax.lax.scan(scan_func, (initial_system_state, initial_integrator_state), times)
     )
-    return positions, velocities, final_system_state, final_integrator_state
+    n_steps = jnp.asarray(times.shape[0], dtype=jnp.int32)
+    return positions, velocities, final_system_state, final_integrator_state, n_steps
 
 
 def create_leapfrog_times(

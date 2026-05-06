@@ -27,12 +27,17 @@ __all__ = [
 
 def create_newtonian_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
+    t_ref_jd: float = 0.0,
 ) -> jax.tree_util.Partial:
     """Create and return a function that adds newtonian gravity from fixed perturbers conjured from an ephemeris.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
             the perturber positions and velocities.
+        t_ref_jd (float): Reference JD so that ``inputs.time`` is interpreted as an
+            offset from this time. The absolute JD passed to the ephemeris is
+            ``inputs.time + t_ref_jd``. Defaults to 0.0, in which case ``inputs.time``
+            is treated as an absolute JD (legacy behavior).
 
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
@@ -41,7 +46,7 @@ def create_newtonian_ephemeris_acceleration_func(
     """
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
+        perturber_xs, perturber_vs = ephem_processor.state(inputs.time + t_ref_jd)
         perturber_log_gms = ephem_processor.log_gms
 
         new_state = SystemState(
@@ -65,12 +70,17 @@ def create_newtonian_ephemeris_acceleration_func(
 
 def create_gr_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
+    t_ref_jd: float = 0.0,
 ) -> jax.tree_util.Partial:
     """Create and return a function that adds gr gravity from fixed perturbers conjured from an ephemeris.
 
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
             the perturber positions and velocities.
+        t_ref_jd (float): Reference JD so that ``inputs.time`` is interpreted as an
+            offset from this time. The absolute JD passed to the ephemeris is
+            ``inputs.time + t_ref_jd``. Defaults to 0.0, in which case ``inputs.time``
+            is treated as an absolute JD (legacy behavior).
 
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
@@ -79,7 +89,7 @@ def create_gr_ephemeris_acceleration_func(
     """
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
+        perturber_xs, perturber_vs = ephem_processor.state(inputs.time + t_ref_jd)
         perturber_log_gms = ephem_processor.log_gms
 
         new_state = SystemState(
@@ -103,6 +113,7 @@ def create_gr_ephemeris_acceleration_func(
 
 def create_default_ephemeris_acceleration_func(
     ephem_processor: EphemerisProcessor,
+    t_ref_jd: float = 0.0,
 ) -> jax.tree_util.Partial:
     """Create and return a function that adds gravity from fixed perturbers for the default ephemeris.
 
@@ -112,6 +123,10 @@ def create_default_ephemeris_acceleration_func(
     Args:
         ephem_processor (EphemerisProcessor): The ephemeris processor that will provide
             the perturber positions and velocities.
+        t_ref_jd (float): Reference JD so that ``inputs.time`` is interpreted as an
+            offset from this time. The absolute JD passed to the ephemeris is
+            ``inputs.time + t_ref_jd``. Defaults to 0.0, in which case ``inputs.time``
+            is treated as an absolute JD (legacy behavior).
 
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
@@ -123,7 +138,7 @@ def create_default_ephemeris_acceleration_func(
         num_gr_perturbers = 11  # the "planets", including the sun, moon, and pluto
         # num_newtonian_perturbers = 16  # the asteroids
 
-        perturber_xs, perturber_vs = ephem_processor.state(inputs.time)
+        perturber_xs, perturber_vs = ephem_processor.state(inputs.time + t_ref_jd)
         perturber_log_gms = ephem_processor.log_gms
 
         gr_state = SystemState(
@@ -160,7 +175,10 @@ def create_default_ephemeris_acceleration_func(
 
 
 def create_ephem_grav_harmonics_acceleration_func(
-    ephem_processor: EphemerisProcessor, ephem_index: int, state_index: int
+    ephem_processor: EphemerisProcessor,
+    ephem_index: int,
+    state_index: int,
+    t_ref_jd: float = 0.0,
 ) -> jax.tree_util.Partial:
     """Create and return a function that computes gravitational harmonics from a perturber sourced from an Ephemeris.
 
@@ -169,6 +187,10 @@ def create_ephem_grav_harmonics_acceleration_func(
             the perturber positions and velocities.
         ephem_index (int): The index of the perturber from the EphemerisProcessor output.
         state_index (int): The index of the state in the acceleration function kwargs.
+        t_ref_jd (float): Reference JD so that ``inputs.time`` is interpreted as an
+            offset from this time. The absolute JD passed to the ephemeris is
+            ``inputs.time + t_ref_jd``. Defaults to 0.0, in which case ``inputs.time``
+            is treated as an absolute JD (legacy behavior).
 
     Returns:
         A jax.tree_util.Partial function that takes a SystemState and returns the
@@ -177,7 +199,7 @@ def create_ephem_grav_harmonics_acceleration_func(
     """
 
     def func(inputs: SystemState) -> jnp.ndarray:
-        perturber_xs, _ = ephem_processor.state(inputs.time)
+        perturber_xs, _ = ephem_processor.state(inputs.time + t_ref_jd)
         perturber_log_gms = ephem_processor.log_gms
 
         xs = jnp.concatenate((inputs.massive_positions, inputs.tracer_positions))

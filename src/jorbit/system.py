@@ -23,8 +23,12 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
+    ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
+    make_ltt_propagator,
+    next_proposed_dt_global,
+    next_proposed_dt_PRS23,
 )
 from jorbit.particle import _keplerian_integrate, _keplerian_on_sky
 from jorbit.utils.horizons import get_observer_positions
@@ -98,13 +102,18 @@ class System:
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
 
+        # Mirrors the Particle rebase: the JAX-visible state always carries
+        # time=0.0, the absolute epoch lives on self._t_ref_astropy /
+        # self._t_ref_jd, and any user-supplied query times are converted to
+        # offsets via _times_to_offsets before they hit the integrator.
         if state is None:
             assert particles is not None
-            times = jnp.array([p._time for p in particles])
-            t0 = times[0]
+            t_ref_jds = jnp.array([p._t_ref_jd for p in particles])
             assert jnp.allclose(
-                times, t0
+                t_ref_jds, t_ref_jds[0]
             ), "All particles must have the same reference time"
+            self._t_ref_astropy = particles[0]._t_ref_astropy
+            self._t_ref_jd = particles[0]._t_ref_jd
 
             self._state = SystemState(
                 tracer_positions=jnp.array([p._x for p in particles]),
@@ -112,14 +121,21 @@ class System:
                 massive_positions=jnp.empty((0, 3)),
                 massive_velocities=jnp.empty((0, 3)),
                 log_gms=jnp.empty((0,)),
-                time=t0,
+                time=jnp.array(0.0),
                 fixed_perturber_positions=jnp.empty((0, 3)),
                 fixed_perturber_velocities=jnp.empty((0, 3)),
                 fixed_perturber_log_gms=jnp.empty((0,)),
                 acceleration_func_kwargs={},
             )
         else:
-            self._state = state
+            t_in = state.time
+            if isinstance(t_in, type(Time("2023-01-01"))):
+                t_ref_astropy = t_in.tdb
+            else:
+                t_ref_astropy = Time(float(t_in), format="jd", scale="tdb")
+            self._t_ref_astropy = t_ref_astropy
+            self._t_ref_jd = jnp.array(float(t_ref_astropy.tdb.jd))
+            self._state = state.replace(time=jnp.array(0.0))
 
         if self._is_keplerian:
             self.gravity = "keplerian"
@@ -137,12 +153,63 @@ class System:
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
-        return f"*************\njorbit System\n time: {Time(self._state.time, format='jd', scale='tdb').utc.iso}\n*************"
+        return f"*************\njorbit System\n time: {Time(self._t_ref_jd, format='jd', scale='tdb').utc.iso}\n*************"
+
+    @property
+    def t_ref(self) -> Time:
+        """Reference time (astropy Time, TDB) — the System's epoch.
+
+        All JAX-visible times inside the System are offsets in days from this
+        reference, which keeps the integrator's internal arithmetic
+        well-conditioned at decadal timescales.
+        """
+        return self._t_ref_astropy
+
+    @property
+    def t_ref_jd(self) -> float:
+        """Reference time as a float JD (TDB), matching ``t_ref``."""
+        return self._t_ref_jd
+
+    def _times_to_offsets(self, times: Time | jnp.ndarray) -> jnp.ndarray:
+        """Convert user-provided query times to offsets from ``self._t_ref_astropy``.
+
+        Astropy ``Time`` inputs preserve their internal jd1+jd2 high-precision pair
+        through the subtraction, so the returned offsets retain sub-ns precision
+        regardless of how far ``times`` is from ``t_ref``. Plain float/jnp inputs
+        are assumed to be absolute JD (TDB) and are subtracted in float64 — this
+        is Sterbenz-exact when the magnitudes match, but the offset precision is
+        capped at ulp(JD) ≈ 40 μs (≈1 m for typical solar system velocities).
+        """
+        if isinstance(times, Time):
+            return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
+        return jnp.asarray(times) - self._t_ref_jd
+
+    @staticmethod
+    def _resolve_step_scheduler(name: str) -> Callable:
+        """Translate a string name to a JIT-friendly Partial step scheduler."""
+        if name.lower() == "prs23":
+            return jax.tree_util.Partial(next_proposed_dt_PRS23)
+        elif name.lower() == "global":
+            return jax.tree_util.Partial(next_proposed_dt_global)
+        raise ValueError(
+            f"Unknown step_scheduler '{name}'. Choices are 'prs23' or 'global'."
+        )
 
     def _setup_acceleration_func(self, gravity: str | Callable) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
-            return gravity
+            # User-supplied acc funcs pre-date the rebase and expect state.time
+            # to be an absolute JD. Internally we now pass state.time as an
+            # offset from t_ref_jd, so we wrap the user's function to shift
+            # state.time back to absolute JD before calling it.
+            user_func = gravity
+            t_ref_jd = self._t_ref_jd
+
+            def _wrapped_user_acc(state: SystemState) -> jnp.ndarray:
+                shifted = state.replace(time=state.time + t_ref_jd)
+                return user_func(shifted)
+
+            return jax.tree_util.Partial(_wrapped_user_acc)
 
         if gravity == "newtonian planets":
             eph = Ephemeris(
@@ -150,37 +217,49 @@ class System:
                 latest_time=self._latest_time,
                 ssos="default planets",
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default planets",
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
             )
-            acc_func = create_default_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_default_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
 
         elif gravity == "generic newtonian":
+            # newtonian_gravity / ppn_gravity don't read inputs.time, so the
+            # rebase is invisible to them — no shim needed.
             acc_func = jax.tree_util.Partial(newtonian_gravity)
 
         elif gravity == "generic gr":
@@ -222,7 +301,9 @@ class System:
     # PUBLIC METHODS
     ################
 
-    def integrate(self, times: Time) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def integrate(
+        self, times: Time, step_scheduler: str = "prs23"
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the System to a given time.
 
         Note: This method does not change the state of the system. It returns the
@@ -233,14 +314,18 @@ class System:
             times (Time | jnp.ndarray):
                 The times to integrate to. Can be a single time or an array of times.
                 If provided as a jnp.array, the entries are assumed to be in TDB JD.
+            step_scheduler (str):
+                The scheduler to use for determining step sizes. Choices are "prs23",
+                which uses the PRS23 controller from Pham+ 2023, or "global", which
+                uses the controller from the original IAS15 paper. Default is "prs23".
+                Ignored for leapfrog integrators and keplerian systems.
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
                 The positions of the particle at the given times, in AU, and the
                 The velocities of the particle at the given times, in AU/day.
         """
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
+        times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
@@ -262,6 +347,7 @@ class System:
         else:
             inds = jnp.arange(times.shape[0])
 
+        scheduler = self._resolve_step_scheduler(step_scheduler)
         positions, velocities, _final_system_state, _final_integrator_state = (
             _integrate(
                 times,
@@ -270,13 +356,17 @@ class System:
                 self._integrator,
                 self._integrator_state,
                 inds,
+                scheduler,
             )
         )
 
         return positions, velocities
 
     def ephemeris(
-        self, times: Time | jnp.ndarray, observer: str | jnp.ndarray
+        self,
+        times: Time | jnp.ndarray,
+        observer: str | jnp.ndarray,
+        step_scheduler: str = "prs23",
     ) -> SkyCoord:
         """Compute an ephemeris for the system.
 
@@ -289,6 +379,11 @@ class System:
                 The observer to compute the ephemeris for. Can be a string representing
                 an observatory name, or a 3D position vector in AU. For more info on
                 acceptable strings, see the get_observer_positions function.
+            step_scheduler (str):
+                The scheduler to use for determining step sizes. Choices are "prs23",
+                which uses the PRS23 controller from Pham+ 2023, or "global", which
+                uses the controller from the original IAS15 paper. Default is "prs23".
+                Ignored for leapfrog integrators and keplerian systems.
 
         Returns:
             coords (SkyCoord):
@@ -303,8 +398,7 @@ class System:
         else:
             observer_positions = observer
 
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
+        times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
@@ -328,15 +422,32 @@ class System:
         else:
             inds = jnp.arange(times.shape[0])
 
-        ras, decs = _ephem(
-            times,
-            self._state,
-            self.gravity,
-            self._integrator,
-            self._integrator_state,
-            observer_positions,
-            inds,
-        )
+        scheduler = self._resolve_step_scheduler(step_scheduler)
+        # IAS15 has dense-output b-coefficients available, so use them in on_sky's
+        # LTT loop instead of a constant-acceleration Taylor expansion. Leapfrog
+        # has no b-coefficients; fall back to the original Taylor.
+        use_dense_ltt = self._integrator_method not in ("Y4", "Y6", "Y8")
+        if use_dense_ltt:
+            ras, decs = _ephem_ias15(
+                times,
+                self._state,
+                self.gravity,
+                self._integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
+        else:
+            ras, decs = _ephem(
+                times,
+                self._state,
+                self.gravity,
+                self._integrator,
+                self._integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
 
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
@@ -349,9 +460,10 @@ def _integrate(
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState,
     relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    positions, velocities, final_system_state, final_integrator_state = integrator_func(
-        state, acc_func, times, integrator_state
+    positions, velocities, final_system_state, final_integrator_state, _steps = (
+        integrator_func(state, acc_func, times, integrator_state, step_scheduler)
     )
 
     return (
@@ -371,9 +483,16 @@ def _ephem(
     integrator_state: IAS15IntegratorState,
     observer_positions: jnp.ndarray,
     relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     positions, velocities, _, _ = _integrate(
-        times, state, acc_func, integrator_func, integrator_state, relevant_inds
+        times,
+        state,
+        acc_func,
+        integrator_func,
+        integrator_state,
+        relevant_inds,
+        step_scheduler,
     )
 
     def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -393,6 +512,100 @@ def _ephem(
         return ras, decs
 
     ras, decs = jax.vmap(interior, in_axes=(1, 1))(positions, velocities)
+    return ras, decs
+
+
+@jax.jit
+def _ephem_ias15(
+    times: jnp.ndarray,
+    state: SystemState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+
+    Vmaps the per-observation polynomial-LTT closure over both the observation axis
+    and the particle axis; each particle gets its own light-travel-time correction.
+    """
+    (
+        _positions,
+        _velocities,
+        _final_system_state,
+        _final_integrator_state,
+        _iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _t_step_starts,
+        step_indices,
+        h_values,
+    ) = ias15_evolve_with_dense_output(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+
+    obs_times = times[relevant_inds]
+    obs_step_indices = step_indices[relevant_inds]
+    obs_h_values = h_values[relevant_inds]
+
+    # Per-obs gather. Shapes: b (n_obs, 7, n_particles, 3), a0/v0/x0 (n_obs, n_particles, 3),
+    # dt (n_obs,).
+    b_per_obs_all = b_buf[obs_step_indices]
+    a0_per_obs_all = a0_buf[obs_step_indices]
+    x0_per_obs_all = x0_buf[obs_step_indices]
+    v0_per_obs_all = v0_buf[obs_step_indices]
+    dt_per_obs = dts_buf[obs_step_indices]
+
+    def per_particle_per_obs(
+        b_step: jnp.ndarray,
+        a0_step: jnp.ndarray,
+        x0_step: jnp.ndarray,
+        v0_step: jnp.ndarray,
+        dt_step: jnp.ndarray,
+        h_obs: jnp.ndarray,
+        time: jnp.ndarray,
+        observer_pos: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        propagator = make_ltt_propagator(
+            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+        )
+        x_obs = propagator(jnp.array(0.0))
+        return on_sky(
+            x_obs,
+            jnp.zeros(3),
+            time,
+            observer_pos,
+            acc_func,
+            ltt_position_fn=propagator,
+        )
+
+    def for_single_particle(
+        b_obs_p: jnp.ndarray,
+        a0_obs_p: jnp.ndarray,
+        x0_obs_p: jnp.ndarray,
+        v0_obs_p: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # b_obs_p: (n_obs, 7, 3); a0/v0/x0_obs_p: (n_obs, 3)
+        return jax.vmap(per_particle_per_obs, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
+            b_obs_p,
+            a0_obs_p,
+            x0_obs_p,
+            v0_obs_p,
+            dt_per_obs,
+            obs_h_values,
+            obs_times,
+            observer_positions,
+        )
+
+    # Vmap over particle axis: 2 in b_per_obs_all (axes are obs/coeff/particle/xyz),
+    # 1 in a0/v0/x0_per_obs_all (axes are obs/particle/xyz).
+    ras, decs = jax.vmap(for_single_particle, in_axes=(2, 1, 1, 1))(
+        b_per_obs_all, a0_per_obs_all, x0_per_obs_all, v0_per_obs_all
+    )
     return ras, decs
 
 

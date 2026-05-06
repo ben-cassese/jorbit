@@ -7,6 +7,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import warnings
 from collections.abc import Callable
+from copy import deepcopy
 
 import astropy.units as u
 import jax.numpy as jnp
@@ -43,8 +44,13 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
+    ias15_evolve_forced_landing,
+    ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
+    make_ltt_propagator,
+    next_proposed_dt_global,
+    next_proposed_dt_PRS23,
 )
 from jorbit.likelihoods.setup_static_likelihood import (
     create_default_static_residuals_func,
@@ -105,6 +111,7 @@ class Particle:
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
         max_step_size: u.Quantity | None = None,
+        step_scheduler: str = "prs23",
     ) -> None:
         """Initialize a Particle object.
 
@@ -164,19 +171,38 @@ class Particle:
                 smaller to ensure that the particle lands exactly on the requested
                 output times, and that the step size may change if the spacing between
                 output times is not constant. Defaults to None.
+            step_scheduler (str):
+                The scheduler used by IAS15 for picking the next proposed step size.
+                Choices are "prs23" (Pham+ 2023 controller, default) or "global"
+                (the controller from the original IAS15 paper). Baked in here because
+                the residuals/loglike closures are constructed at __init__ time;
+                ``integrate``/``integrate_or_interpolate``/``ephemeris`` accept their
+                own ``step_scheduler`` kwarg that overrides this for those calls.
+                Ignored when gravity is "keplerian" or for leapfrog integrators.
         """
         self._observations = observations
         self._earliest_time = earliest_time
         self._latest_time = latest_time
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
+        self._step_scheduler = self._resolve_step_scheduler(step_scheduler)
 
         self.gravity = gravity
 
+        # the time subtraction in setup_statewas altering the input in place,
+        # which was confusing
+        state = deepcopy(state) if state is not None else None
+
+        # self._time is kept at jnp.array(0.0) internally; absolute time lives in
+        # self._t_ref_astropy / self._t_ref_jd. All JAX-visible times are offsets
+        # (in days) from _t_ref_jd, which keeps step-boundary and interpolation
+        # arithmetic well-conditioned at decadal timescales.
         (
             self._x,
             self._v,
             self._time,
+            self._t_ref_astropy,
+            self._t_ref_jd,
             self._cartesian_state,
             self._keplerian_state,
             self._name,
@@ -191,8 +217,8 @@ class Particle:
             self._max_step_size = None
         else:
             self.gravity = self._setup_acceleration_func(gravity)
-            self._integrator_state, self._integrator = self._setup_integrator(
-                integrator, max_step_size
+            self._integrator_state, self._integrator, self._forced_integrator = (
+                self._setup_integrator(integrator, max_step_size)
             )
             self._integrator_method = integrator
             self._max_step_size = max_step_size
@@ -214,12 +240,22 @@ class Particle:
 
     @property
     def cartesian_state(self) -> CartesianState:
-        """Return the Cartesian state of the particle."""
+        """Return the Cartesian state of the particle.
+
+        Note: ``.time`` on the returned state is the internal offset (days from
+        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
+        for the absolute time.
+        """
         return self._cartesian_state
 
     @property
     def keplerian_state(self) -> KeplerianState:
-        """Return the Keplerian state of the particle."""
+        """Return the Keplerian state of the particle.
+
+        Note: ``.time`` on the returned state is the internal offset (days from
+        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
+        for the absolute time.
+        """
         return self._keplerian_state
 
     @property
@@ -227,9 +263,54 @@ class Particle:
         """Return the observations associated with the particle."""
         return self._observations
 
+    @property
+    def t_ref(self) -> Time:
+        """Reference time (astropy Time, TDB) — the particle's epoch.
+
+        All JAX-visible times inside the Particle are offsets in days from this
+        reference, which keeps the integrator's internal arithmetic
+        well-conditioned at decadal timescales.
+        """
+        return self._t_ref_astropy
+
+    @property
+    def t_ref_jd(self) -> float:
+        """Reference time as a float JD (TDB), matching ``t_ref``."""
+        return self._t_ref_jd
+
     ###############
     # SETUP METHODS
     ###############
+
+    def _times_to_offsets(self, times: Time | jnp.ndarray) -> jnp.ndarray:
+        """Convert user-provided query times to offsets from ``self._t_ref_astropy``.
+
+        Astropy ``Time`` inputs preserve their internal jd1+jd2 high-precision pair
+        through the subtraction, so the returned offsets retain sub-ns precision
+        regardless of how far ``times`` is from ``t_ref``. Plain float/jnp inputs
+        are assumed to be absolute JD (TDB) and are subtracted in float64 — this
+        is Sterbenz-exact when the magnitudes match, but the offset precision is
+        capped at ulp(JD) ≈ 40 μs (≈1 m for typical solar system velocities).
+        """
+        if isinstance(times, Time):
+            return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
+        return jnp.asarray(times) - self._t_ref_jd
+
+    def _observations_times_as_offsets(self) -> jnp.ndarray:
+        """Return the observation times as offsets from ``self._t_ref_astropy``.
+
+        Prefers the full-precision astropy Time stored on the Observations object
+        when available (sub-ns precision preserved). Falls back to subtracting
+        :attr:`t_ref_jd` from the float-JD array, which is Sterbenz-exact but
+        inherits the ulp(JD) ≈ 40 μs quantization of the stored float-JD.
+        """
+        obs = self._observations
+        times_astropy = getattr(obs, "_times_astropy", None)
+        if times_astropy is not None:
+            return jnp.asarray(
+                (times_astropy.tdb - self._t_ref_astropy).to_value(u.day)
+            )
+        return jnp.asarray(obs.times) - self._t_ref_jd
 
     def _setup_state(
         self,
@@ -245,8 +326,15 @@ class Particle:
             time = state.time
 
         assert time is not None, "Must provide an epoch for the particle"
+
+        # Build the reference time pair (astropy Time at full precision + float JD)
+        # and then set the Particle's internal epoch to 0.0 in the offset frame.
         if isinstance(time, type(Time("2023-01-01"))):
-            time = jnp.array(time.tdb.jd)
+            t_ref_astropy = time.tdb
+        else:
+            t_ref_astropy = Time(float(time), format="jd", scale="tdb")
+        t_ref_jd = jnp.array(float(t_ref_astropy.tdb.jd))
+        internal_time = jnp.array(0.0)
 
         if state is not None:
             assert x is None and v is None, "Cannot provide both state and x, v"
@@ -255,7 +343,7 @@ class Particle:
             if state.x.ndim != 2:
                 state.x = state.x[None, :]
                 state.v = state.v[None, :]
-            state.time = time
+            state.time = internal_time
             keplerian_state = state.to_keplerian()
             cartesian_state = state.to_cartesian()
 
@@ -270,7 +358,7 @@ class Particle:
             cartesian_state = CartesianState(
                 x=jnp.array([x]),
                 v=jnp.array([v]),
-                time=time,
+                time=internal_time,
                 acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
             )
             keplerian_state = cartesian_state.to_keplerian()
@@ -285,12 +373,33 @@ class Particle:
             name = "unnamed"
 
         acc_func_kwargs = cartesian_state.acceleration_func_kwargs
-        return x, v, time, cartesian_state, keplerian_state, name, acc_func_kwargs
+        return (
+            x,
+            v,
+            internal_time,
+            t_ref_astropy,
+            t_ref_jd,
+            cartesian_state,
+            keplerian_state,
+            name,
+            acc_func_kwargs,
+        )
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
-            return gravity
+            # User-supplied acc funcs pre-date the rebase and expect state.time
+            # to be an absolute JD. Internally we now pass state.time as an
+            # offset from t_ref_jd, so we wrap the user's function to shift
+            # state.time back to absolute JD before calling it.
+            user_func = gravity
+            t_ref_jd = self._t_ref_jd
+
+            def _wrapped_user_acc(state: SystemState) -> jnp.ndarray:
+                shifted = state.replace(time=state.time + t_ref_jd)
+                return user_func(shifted)
+
+            return jax.tree_util.Partial(_wrapped_user_acc)
 
         assert self._de_ephemeris_version in ["440", "430"], (
             "de_ephemeris_version must be either '440' or '430' if not using a custom "
@@ -304,7 +413,9 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -312,7 +423,9 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_newtonian_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -320,7 +433,9 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "gr solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -328,7 +443,9 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_gr_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
         elif gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -336,9 +453,22 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_default_ephemeris_acceleration_func(eph.processor)
+            acc_func = create_default_ephemeris_acceleration_func(
+                eph.processor, t_ref_jd=self._t_ref_jd
+            )
 
         return acc_func
+
+    @staticmethod
+    def _resolve_step_scheduler(name: str) -> Callable:
+        """Translate a string name to a JIT-friendly Partial step scheduler."""
+        if name.lower() == "prs23":
+            return jax.tree_util.Partial(next_proposed_dt_PRS23)
+        elif name.lower() == "global":
+            return jax.tree_util.Partial(next_proposed_dt_global)
+        raise ValueError(
+            f"Unknown step_scheduler '{name}'. Choices are 'prs23' or 'global'."
+        )
 
     def _setup_integrator(
         self, integrator: str, max_step_size: u.Quantity | None
@@ -351,6 +481,7 @@ class Particle:
             a0 = self.gravity(self._cartesian_state.to_system())
             integrator_state = initialize_ias15_integrator_state(a0)
             integrator = jax.tree_util.Partial(ias15_evolve)
+            forced_integrator = jax.tree_util.Partial(ias15_evolve_forced_landing)
         elif integrator in ["Y4", "Y6", "Y8"]:
             assert (
                 max_step_size is not None
@@ -367,8 +498,9 @@ class Particle:
                 d = Y8_D
             integrator_state = LeapfrogIntegratorState(dt=dt, C=c, D=d)
             integrator = jax.tree_util.Partial(leapfrog_evolve)
+            forced_integrator = integrator
 
-        return integrator_state, integrator
+        return integrator_state, integrator, forced_integrator
 
     def _setup_fit_seed(
         self, fit_seed: KeplerianState | CartesianState | None
@@ -408,8 +540,10 @@ class Particle:
         if self._observations is None:
             return None, None, None, None
 
+        obs_times = self._observations_times_as_offsets()
+
         if self._is_keplerian:
-            times = self._observations.times
+            times = obs_times
 
             residuals = jax.tree_util.Partial(
                 _keplerian_residuals,
@@ -435,13 +569,13 @@ class Particle:
 
         else:
             if self._integrator_method == "ias15":
-                times = self._observations.times
-                inds = jnp.arange(len(self._observations.times))
+                times = obs_times
+                inds = jnp.arange(len(obs_times))
 
             elif self._integrator_method in ["Y4", "Y6", "Y8"]:
                 times, inds = create_leapfrog_times(
                     self._cartesian_state.time,
-                    self._observations.times,
+                    obs_times,
                     self._max_step_size,
                 )
 
@@ -455,6 +589,7 @@ class Particle:
                 self._observations.ra,
                 self._observations.dec,
                 inds,
+                step_scheduler=self._step_scheduler,
             )
 
             ll = jax.tree_util.Partial(
@@ -469,6 +604,7 @@ class Particle:
                 self._observations.inv_cov_matrices,
                 self._observations.cov_log_dets,
                 inds,
+                step_scheduler=self._step_scheduler,
             )
 
             # since we've gone with the while loop version of the ias15 integrator,
@@ -520,7 +656,7 @@ class Particle:
     def _setup_default_static_residuals(self) -> Callable:
         if self._observations is None or self._is_keplerian:
             return None
-        precomputed_data = precompute_likelihood_data(self)
+        precomputed_data = precompute_likelihood_data(self, self._step_scheduler)
         static_residuals_func = create_default_static_residuals_func(precomputed_data)
         return static_residuals_func
 
@@ -619,10 +755,67 @@ class Particle:
             max_step_size=max_step_size,
         )
 
-    def integrate(
-        self, times: Time, state: CartesianState | KeplerianState | None = None
+    def _integrate_base(
+        self,
+        times: Time,
+        state: CartesianState | KeplerianState | None = None,
+        forced_landing: bool = False,
+        step_scheduler: str = "prs23",
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Integrate the particle's orbit to a given time.
+        if self._is_keplerian:
+            if state is not None:
+                state = state.to_cartesian()
+                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
+                t0 = self._times_to_offsets(t0)
+            else:
+                x, v, t0 = self._x, self._v, self._time
+
+            times = self._times_to_offsets(times)
+            if times.shape == ():
+                times = jnp.array([times])
+
+            return *_keplerian_integrate(x, v, t0, times), None
+
+        if state is None:
+            state = self._cartesian_state
+            integrator_state = self._integrator_state
+        else:
+            a0 = self.gravity(state.to_system())
+            integrator_state = initialize_ias15_integrator_state(a0)
+
+        times = self._times_to_offsets(times)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
+        else:
+            inds = jnp.arange(times.shape[0])
+
+        integrator = self._forced_integrator if forced_landing else self._integrator
+        scheduler = self._resolve_step_scheduler(step_scheduler)
+
+        positions, velocities, _final_system_state, _final_integrator_state, steps = (
+            _integrate(
+                times,
+                state,
+                self.gravity,
+                integrator,
+                integrator_state,
+                inds,
+                scheduler,
+            )
+        )
+        return positions[:, 0, :], velocities[:, 0, :], steps
+
+    def integrate(
+        self,
+        times: Time,
+        state: CartesianState | KeplerianState | None = None,
+        step_scheduler: str = "prs23",
+        return_steps: bool = False,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Integrate the particle's orbit to specified times, landing exactly on each one.
 
         Note that this method does not change the state of the particle. It returns the
         positions and velocities of the particle at the given times, but the particle
@@ -635,60 +828,82 @@ class Particle:
             state (CartesianState | None):
                 The state to integrate from. If None, the particle's current state will
                 be used. Usually not necessary to provide this.
+            step_scheduler (str):
+                The scheduler to use for determining step sizes. Choices are "prs23",
+                which uses the PRS23 controller from Pham+ 2023, or "global", which uses
+                the controller from the original IAS15 paper. Default is "prs23".
+                Ignored for leapfrog integrators, which use a fixed step size.
+            return_steps (bool):
+                Whether to return the number of steps taken to reach each output time.
+                If True, the method returns a tuple of (positions, velocities, steps).
+                If False, only returns (positions, velocities). Defaults to False.
+
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
                 The positions of the particle at the given times, in AU, and the
-                The velocities of the particle at the given times, in AU/day.
+                The velocities of the particle at the given times, in AU/day. If
+                return_steps is True, also returns an array of the number of steps taken
+                to reach each output time.
         """
-        if self._is_keplerian:
-            if state is not None:
-                state = state.to_cartesian()
-                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
-            else:
-                x, v, t0 = self._x, self._v, self._time
-
-            if isinstance(times, Time):
-                times = jnp.array(times.tdb.jd)
-            if times.shape == ():
-                times = jnp.array([times])
-
-            return _keplerian_integrate(x, v, t0, times)
-
-        if state is None:
-            state = self._cartesian_state
-            integrator_state = self._integrator_state
-        else:
-            a0 = self.gravity(state.to_system())
-            integrator_state = initialize_ias15_integrator_state(a0)
-
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
-        if times.shape == ():
-            times = jnp.array([times])
-
-        if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
-        else:
-            inds = jnp.arange(times.shape[0])
-
-        positions, velocities, _final_system_state, _final_integrator_state = (
-            _integrate(
-                times,
-                state,
-                self.gravity,
-                self._integrator,
-                integrator_state,
-                inds,
-            )
+        x, v, steps = self._integrate_base(
+            times, state, forced_landing=True, step_scheduler=step_scheduler
         )
-        return positions[:, 0, :], velocities[:, 0, :]
+        if return_steps:
+            return x, v, steps
+        return x, v
+
+    def integrate_or_interpolate(
+        self,
+        times: Time,
+        state: CartesianState | KeplerianState | None = None,
+        step_scheduler: str = "prs23",
+        return_steps: bool = False,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Integrate the particle's orbit to specified times, overshooting and 'interpolating' if necessary.
+
+        Note that this method does not change the state of the particle. It returns the
+        positions and velocities of the particle at the given times, but the particle
+        itself is not changed.
+
+        Args:
+            times (Time | jnp.ndarray):
+                The times to integrate to. Can be a single time or an array of times.
+                If provided as a jnp.array, the entries are assumed to be in TDB JD.
+            state (CartesianState | None):
+                The state to integrate from. If None, the particle's current state will
+                be used. Usually not necessary to provide this.
+            step_scheduler (str):
+                The scheduler to use for determining step sizes. Choices are "prs23",
+                which uses the PRS23 controller from Pham+ 2023, or "global", which uses
+                the controller from the original IAS15 paper. Default is "prs23".
+                Ignored for leapfrog integrators, which use a fixed step size.
+            return_steps (bool):
+                Whether to return the number of steps taken to reach each output time.
+                If True, the method returns a tuple of (positions, velocities, steps).
+                If False, only returns (positions, velocities). Defaults to False.
+
+        Returns:
+            tuple[jnp.ndarray, jnp.ndarray]:
+                The positions of the particle at the given times, in AU, and the
+                The velocities of the particle at the given times, in AU/day. If
+                return_steps is True, also returns an array of the number of steps taken
+                to reach each output time.
+        """
+        x, v, steps = self._integrate_base(
+            times, state, forced_landing=False, step_scheduler=step_scheduler
+        )
+        if return_steps:
+            return x, v, steps
+        return x, v
 
     def ephemeris(
         self,
         times: Time,
         observer: str | jnp.ndarray,
         state: CartesianState | KeplerianState | None = None,
+        interpolate: bool = True,
+        step_scheduler: str = "prs23",
     ) -> SkyCoord:
         """Compute an ephemeris for the particle.
 
@@ -704,6 +919,14 @@ class Particle:
             state (CartesianState | None):
                 The state to compute the ephemeris from. If None, the particle's current
                 state will be used. Usually not necessary to provide this.
+            interpolate (bool):
+                Whether to use `integrate` or `integrate_or_interpolate` for the
+                underlying integrations.
+            step_scheduler (str):
+                The scheduler to use for determining step sizes. Choices are "prs23",
+                which uses the PRS23 controller from Pham+ 2023, or "global", which
+                uses the controller from the original IAS15 paper. Default is "prs23".
+                Ignored for leapfrog integrators and keplerian particles.
 
         Returns:
             coords (SkyCoord):
@@ -725,8 +948,7 @@ class Particle:
             else:
                 x, v, t0 = self._x, self._v, self._time
 
-            if isinstance(times, Time):
-                times = jnp.array(times.tdb.jd)
+            times = self._times_to_offsets(times)
             if times.shape == ():
                 times = jnp.array([times])
 
@@ -740,8 +962,7 @@ class Particle:
             a0 = self.gravity(state.to_system())
             integrator_state = initialize_ias15_integrator_state(a0)
 
-        if isinstance(times, Time):
-            times = jnp.array(times.tdb.jd)
+        times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
@@ -750,15 +971,38 @@ class Particle:
         else:
             inds = jnp.arange(times.shape[0])
 
-        ras, decs = _ephem(
-            times,
-            state,
-            self.gravity,
-            self._integrator,
-            integrator_state,
-            observer_positions,
-            inds,
+        integrator = self._integrator if interpolate else self._forced_integrator
+        scheduler = self._resolve_step_scheduler(step_scheduler)
+        # IAS15 with interpolation has dense-output b-coefficients available, so
+        # we can use them to evaluate the polynomial at light-travel-delayed times in on_sky's
+        # LTT loop instead of a constant-acceleration Taylor expansion. All other
+        # paths (leapfrog, IAS15 forced-landing) fall back to the original Taylor.
+        use_dense_ltt = interpolate and self._integrator_method not in (
+            "Y4",
+            "Y6",
+            "Y8",
         )
+        if use_dense_ltt:
+            ras, decs = _ephem_ias15(
+                times,
+                state,
+                self.gravity,
+                integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
+        else:
+            ras, decs = _ephem(
+                times,
+                state,
+                self.gravity,
+                integrator,
+                integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
     def max_likelihood(
@@ -854,7 +1098,7 @@ class Particle:
             return Particle(
                 x=result.x[:3],
                 v=result.x[3:],
-                time=self._time,
+                time=self._t_ref_astropy,
                 state=None,
                 observations=self._observations,
                 name=self._name,
@@ -949,6 +1193,7 @@ def _integrate(
     integrator_func: Callable,
     integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
     relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
 ) -> tuple[
     jnp.ndarray,
     jnp.ndarray,
@@ -956,8 +1201,8 @@ def _integrate(
     IAS15IntegratorState | LeapfrogIntegratorState,
 ]:
     state = particle_state.to_system()
-    positions, velocities, final_system_state, final_integrator_state = integrator_func(
-        state, acc_func, times, integrator_state
+    positions, velocities, final_system_state, final_integrator_state, steps = (
+        integrator_func(state, acc_func, times, integrator_state, step_scheduler)
     )
 
     return (
@@ -965,6 +1210,7 @@ def _integrate(
         velocities[relevant_inds],
         final_system_state,
         final_integrator_state,
+        steps,
     )
 
 
@@ -977,20 +1223,17 @@ def _ephem(
     integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
     observer_positions: jnp.ndarray,
     relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    positions, velocities, _, _ = _integrate(
+    positions, velocities, _, _, _ = _integrate(
         times,
         particle_state,
         acc_func,
         integrator_func,
         integrator_state,
         relevant_inds,
+        step_scheduler,
     )
-
-    # # only one particle, so take the 0th particle. shape is (time, particles, 3)
-    # ras, decs = jax.vmap(on_sky, in_axes=(0, 0, 0, 0, None))(
-    #         positions[:,0,:], velocities[:,0,:], times, observer_positions, acc_func
-    #     )
 
     def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
         position, velocity, time, observer_position = scan_over
@@ -1012,6 +1255,91 @@ def _ephem(
 
 
 @jax.jit
+def _ephem_ias15(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+
+    The ``on_sky`` light-travel-time correction defaults to a 2nd-order Taylor with a
+    constant acceleration. For IAS15, we already have the converged 7th-order
+    polynomial per step (the "dense output"). This variant builds a per-observation
+    closure that evaluates that polynomial at the light-travel-delayed time, replacing the
+    Taylor expansion. Only used when ``interpolate=True``.
+    """
+    state = particle_state.to_system()
+    (
+        _positions,
+        _velocities,
+        _final_system_state,
+        _final_integrator_state,
+        _iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _t_step_starts,
+        step_indices,
+        h_values,
+    ) = ias15_evolve_with_dense_output(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+
+    # Restrict to observation times only (drops any intermediate landing times).
+    obs_times = times[relevant_inds]
+    obs_step_indices = step_indices[relevant_inds]
+    obs_h_values = h_values[relevant_inds]
+
+    # Per-obs dense-output gather (single tracer at index 0).
+    b_per_obs = b_buf[obs_step_indices][:, :, 0, :]
+    a0_per_obs = a0_buf[obs_step_indices][:, 0, :]
+    x0_per_obs = x0_buf[obs_step_indices][:, 0, :]
+    v0_per_obs = v0_buf[obs_step_indices][:, 0, :]
+    dt_per_obs = dts_buf[obs_step_indices]
+
+    def per_obs_on_sky(
+        b_step: jnp.ndarray,
+        a0_step: jnp.ndarray,
+        x0_step: jnp.ndarray,
+        v0_step: jnp.ndarray,
+        dt_step: jnp.ndarray,
+        h_obs: jnp.ndarray,
+        time: jnp.ndarray,
+        observer_pos: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        propagator = make_ltt_propagator(
+            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+        )
+        x_obs = propagator(jnp.array(0.0))
+        return on_sky(
+            x_obs,
+            jnp.zeros(3),
+            time,
+            observer_pos,
+            acc_func,
+            ltt_position_fn=propagator,
+        )
+
+    ras, decs = jax.vmap(per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
+        b_per_obs,
+        a0_per_obs,
+        x0_per_obs,
+        v0_per_obs,
+        dt_per_obs,
+        obs_h_values,
+        obs_times,
+        observer_positions,
+    )
+    return ras, decs
+
+
+@jax.jit
 def _residuals(
     times: jnp.ndarray,
     gravity: Callable,
@@ -1022,6 +1350,7 @@ def _residuals(
     dec: jnp.ndarray,
     relevant_inds: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
+    step_scheduler: Callable,
 ) -> jnp.ndarray:
     ras, decs = _ephem(
         times,
@@ -1031,6 +1360,7 @@ def _residuals(
         integrator_state,
         observer_positions,
         relevant_inds,
+        step_scheduler,
     )
 
     xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
@@ -1053,6 +1383,7 @@ def _loglike(
     cov_log_dets: jnp.ndarray,
     relevant_inds: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
+    step_scheduler: Callable,
 ) -> float:
     xis_etas = _residuals(
         times,
@@ -1064,6 +1395,7 @@ def _loglike(
         dec,
         relevant_inds,
         particle_state,
+        step_scheduler,
     )
 
     quad = jnp.einsum("bi,bij,bj->b", xis_etas, inv_cov_matrices, xis_etas)

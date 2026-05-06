@@ -144,7 +144,7 @@ SUN_J_HARMONICS = jnp.array([2.1961391516529825e-07])
 # EARTH_RADIUS = 6.3781365999999998e+03 / 1.4959787069999999e+08
 # """The radius of the Earth in AU. Taken from the JPL DE440/441 ephemeris."""
 
-EARTH_RADIUS = 6378.137 / 149597870.700
+EARTH_RADIUS = 6378.1366 / 149597870.700
 """The radius of the Earth in AU. Taken from Horizons web interface."""
 
 # SUN_RADIUS = 6.9600000000000000e+05 / 1.4959787069999999e+08
@@ -426,8 +426,12 @@ IAS15_EPS_Modified = 0.1750670293218999749  # 0.17506702932189997485866141827971
 IAS15_SAFETY_FACTOR = 0.25
 """Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
 
-IAS15_MIN_DT = 0.0
-"""Constant from `REBOUND <https://github.com/hannorein/rebound/blob/0b5c85d836fec20bc284d1f1bb326f418e11f591/src/integrator_ias15.c>`_."""
+IAS15_MIN_DT = 0.001
+"""Floor on the proposed step size; matches ASSIST's `sim.ri_ias15.min_dt = 0.001`
+recipe for solar-system close-encounter work. Without a floor, the GLOBAL
+adaptive controller can grind to ~1e-7-day steps near a planetary close approach
+(ASSIST itself takes ~1.66M steps for the 2029 Apophis flyby year if `min_dt = 0`).
+The original REBOUND default is `0.0`."""
 
 IAS15_BEZIER_COEFFS = jnp.array(
     [

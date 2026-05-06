@@ -1,0 +1,151 @@
+diff --git a/src/integrator_ias15.c b/src/integrator_ias15.c
+index 9d769980..4e055acd 100644
+--- a/src/integrator_ias15.c
++++ b/src/integrator_ias15.c
+@@ -163,6 +163,25 @@ static inline void add_cs(double* p, double* csp, double inp){
+     *p = t;
+ }
+
++// === IAS15_DUMP_PC instrumentation helpers ===
++// Used by [IAS15_INIT], [IAS15_SUB], [IAS15_PC], and [IAS15_FINAL] dumps.
++// All emissions are gated by the IAS15_DUMP_PC env var (see _ias15_dump_on
++// resolved once per process inside reb_integrator_ias15_step).
++static inline void _dump_arr(const char* lbl, const double* arr, int N3) {
++    fprintf(stdout, " %s=", lbl);
++    for (int ii = 0; ii < N3; ++ii) {
++        fprintf(stdout, "%s%.17e", ii == 0 ? "" : ",", arr[ii]);
++    }
++}
++static inline void _dump_dp7(const char* prefix, const struct reb_dpconst7 dpc, int N3) {
++    const double* arrs[7] = {dpc.p0, dpc.p1, dpc.p2, dpc.p3, dpc.p4, dpc.p5, dpc.p6};
++    for (int kk = 0; kk < 7; ++kk) {
++        char lbl[16];
++        snprintf(lbl, sizeof(lbl), "%s%d", prefix, kk);
++        _dump_arr(lbl, arrs[kk], N3);
++    }
++}
++
+ void reb_integrator_ias15_alloc(struct reb_simulation* r){
+     unsigned int N3;
+     if (r->integrator==REB_INTEGRATOR_MERCURIUS){
+@@ -303,7 +322,35 @@ static int reb_integrator_ias15_step(struct reb_simulation* r) {
+     double t_beginning = r->t;
+     double predictor_corrector_error = 1e300;
+     double predictor_corrector_error_last = 2;
+-    int iterations = 0;
++    int iterations = 0;
++
++    // === IAS15_DUMP_PC: resolve the env-var once per process. Used by all
++    // [IAS15_INIT], [IAS15_SUB], [IAS15_PC], [IAS15_FINAL] dumps below. Zero
++    // overhead when unset (a single static int compare per dump site).
++    static int _ias15_dump_check = 0;
++    static int _ias15_dump_on = 0;
++    if (!_ias15_dump_check) {
++        _ias15_dump_check = 1;
++        const char* _env = getenv("IAS15_DUMP_PC");
++        _ias15_dump_on = (_env != NULL && _env[0] != '\0' && _env[0] != '0');
++    }
++
++    // === [IAS15_INIT] one-shot dump of step-start state, just before PC loop. ===
++    if (_ias15_dump_on) {
++        fprintf(stdout, "[IAS15_INIT] N3=%d dt=%.17e t_beginning=%.17e", N3, r->dt, t_beginning);
++        _dump_arr("x0", x0, N3);
++        _dump_arr("v0", v0, N3);
++        _dump_arr("a0", a0, N3);
++        _dump_arr("csx", csx, N3);
++        _dump_arr("csv", csv, N3);
++        _dump_arr("csa0", csa0, N3);
++        _dump_dp7("b", b, N3);
++        _dump_dp7("csb", csb, N3);
++        _dump_dp7("g", g, N3);
++        fprintf(stdout, "\n");
++        fflush(stdout);
++    }
++
+     // Predictor corrector loop
+     // Stops if one of the following conditions is satisfied:
+     //   1) predictor_corrector_error better than 1e-16
+@@ -378,9 +425,34 @@ static int reb_integrator_ias15_step(struct reb_simulation* r) {
+             for(int k=0;k<N;++k) {
+                 int mk = map[k];
+                 at[3*k]   = particles[mk].ax;
+-                at[3*k+1] = particles[mk].ay;
++                at[3*k+1] = particles[mk].ay;
+                 at[3*k+2] = particles[mk].az;
+             }
++
++            // === IAS15_DUMP_PC: snapshot pre-substep state for [IAS15_SUB] ===
++            // Capture g.p{n-1}, predicted x, and predicted v before the case
++            // block mutates them. Heap-allocated so we don't impose a stack-VLA
++            // size limit; only allocated when the dump is on.
++            double* _sub_x = NULL;
++            double* _sub_v = NULL;
++            double* _sub_g_pre = NULL;
++            if (_ias15_dump_on) {
++                _sub_x = (double*)malloc(sizeof(double)*N3);
++                _sub_v = (double*)malloc(sizeof(double)*N3);
++                _sub_g_pre = (double*)malloc(sizeof(double)*N3);
++                for (int i = 0; i < N; ++i) {
++                    int mi = map[i];
++                    _sub_x[3*i+0] = particles[mi].x;
++                    _sub_x[3*i+1] = particles[mi].y;
++                    _sub_x[3*i+2] = particles[mi].z;
++                    _sub_v[3*i+0] = particles[mi].vx;
++                    _sub_v[3*i+1] = particles[mi].vy;
++                    _sub_v[3*i+2] = particles[mi].vz;
++                }
++                const double* g_n1 = (n==1?g.p0:n==2?g.p1:n==3?g.p2:n==4?g.p3:n==5?g.p4:n==6?g.p5:g.p6);
++                for (int kk = 0; kk < N3; ++kk) _sub_g_pre[kk] = g_n1[kk];
++            }
++
+             switch (n) {                            // Improve b and g values
+                 case 1:
+                     for(int k=0;k<N3;++k) {
+@@ -508,9 +580,46 @@ static int reb_integrator_ias15_step(struct reb_simulation* r) {
+                         break;
+                     }
+             }
++
++            // === [IAS15_SUB]: emit per-substep state snapshot ===
++            if (_ias15_dump_on) {
++                fprintf(stdout, "[IAS15_SUB] iter=%d n=%d", iterations, n);
++                _dump_arr("x", _sub_x, N3);
++                _dump_arr("v", _sub_v, N3);
++                _dump_arr("at", at, N3);
++                _dump_arr("g_pre", _sub_g_pre, N3);
++                _dump_dp7("g", g, N3);
++                _dump_dp7("b", b, N3);
++                _dump_dp7("csb", csb, N3);
++                fprintf(stdout, "\n");
++                fflush(stdout);
++                free(_sub_x); free(_sub_v); free(_sub_g_pre);
++            }
++        }
++        // === [IAS15_PC] per-iteration dump (b only). Uses function-scoped
++        // _ias15_dump_on resolved before the PC loop.
++        if (_ias15_dump_on) {
++            fprintf(stdout, "[IAS15_PC] iter=%d N3=%d pc_err=%.17e", iterations, N3, predictor_corrector_error);
++            _dump_dp7("b", b, N3);
++            fprintf(stdout, "\n");
++            fflush(stdout);
+         }
+     }
+-    // Set time back to initial value (will be updated below)
++
++    // === [IAS15_FINAL] one-shot dump of the converged PC state. b/csb/g here
++    // are the values that get copied into _br/_csb/_g at end-of-step. Emitted
++    // after the while(1) PC loop exits, before any controller mutations.
++    if (_ias15_dump_on) {
++        fprintf(stdout, "[IAS15_FINAL] iter_final=%d", iterations);
++        _dump_dp7("b", b, N3);
++        _dump_dp7("csb", csb, N3);
++        _dump_dp7("g", g, N3);
++        _dump_dp7("e", e, N3);
++        fprintf(stdout, "\n");
++        fflush(stdout);
++    }
++
++    // Set time back to initial value (will be updated below)
+     r->t = t_beginning;
+     // Find new timestep
+     const double dt_done = r->dt;

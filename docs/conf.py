@@ -31,10 +31,13 @@ extensions = [
     "sphinx.ext.viewcode",
     "nbsphinx",
     "sphinx_automodapi.automodapi",
-    "myst_parser",
+    # "myst_parser",
     "sphinxcontrib.video",
     # "sphinx.ext.pngmath",
+    "myst_nb",
 ]
+
+nb_execution_mode = "off"
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "visualizations"]
