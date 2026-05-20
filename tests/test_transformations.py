@@ -223,6 +223,80 @@ def test_heliocentric_to_barycentric_cartesian() -> None:
     assert jnp.allclose(p.cartesian_state.v[0], horizons_bary.v, atol=1e-10)
 
 
+def test_cartesian_to_elements_in_plane_circular() -> None:
+    """Round-trip Cartesian → elements → Cartesian for inc=0, ecc=0 (issue #62)."""
+    # Circular orbit in the ecliptic plane: z=0 exactly, position along +y axis
+    r = 1.5  # AU
+    x_ecl = jnp.array([[0.0, r, 0.0]])
+    v_circ = jnp.sqrt(TOTAL_SOLAR_SYSTEM_GM / r)
+    v_ecl = jnp.array([[-v_circ, 0.0, 0.0]])  # prograde
+
+    a, ecc, nu, inc, Omega, omega = cartesian_to_elements(
+        x=x_ecl, v=v_ecl, mass=TOTAL_SOLAR_SYSTEM_GM
+    )
+
+    assert jnp.all(jnp.isfinite(a)), "a contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(ecc)), "ecc contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(nu)), "nu contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(inc)), "inc contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(Omega)), "Omega contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(omega)), "omega contains NaN/Inf"
+
+    x_recovered, _ = elements_to_cartesian(
+        a=a,
+        ecc=ecc,
+        nu=nu,
+        inc=inc,
+        Omega=Omega,
+        omega=omega,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
+    )
+    assert jnp.allclose(x_ecl, x_recovered, atol=1e-12)
+
+
+def test_cartesian_to_elements_in_plane_eccentric() -> None:
+    """Round-trip Cartesian → elements → Cartesian for inc=0, ecc>0 (issue #62 related)."""
+    # Eccentric orbit in the ecliptic plane with periapsis at 45° from x-axis
+    a_in = jnp.array([2.0])
+    ecc_in = jnp.array([0.3])
+    nu_in = jnp.array([60.0])
+    inc_in = jnp.array([0.0])
+    Omega_in = jnp.array([0.0])
+    omega_in = jnp.array([45.0])  # periapsis not on x-axis
+
+    x_ecl, v_ecl = elements_to_cartesian(
+        a=a_in,
+        ecc=ecc_in,
+        nu=nu_in,
+        inc=inc_in,
+        Omega=Omega_in,
+        omega=omega_in,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
+    )
+
+    a, ecc, nu, inc, Omega, omega = cartesian_to_elements(
+        x=x_ecl, v=v_ecl, mass=TOTAL_SOLAR_SYSTEM_GM
+    )
+
+    assert jnp.all(jnp.isfinite(a)), "a contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(ecc)), "ecc contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(nu)), "nu contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(inc)), "inc contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(Omega)), "Omega contains NaN/Inf"
+    assert jnp.all(jnp.isfinite(omega)), "omega contains NaN/Inf"
+
+    x_recovered, _ = elements_to_cartesian(
+        a=a,
+        ecc=ecc,
+        nu=nu,
+        inc=inc,
+        Omega=Omega,
+        omega=omega,
+        mass=TOTAL_SOLAR_SYSTEM_GM,
+    )
+    assert jnp.allclose(x_ecl, x_recovered, atol=1e-12)
+
+
 def test_heliocentric_to_barycentric_keplerian() -> None:
     """Test heliocentric to barycentric Keplerian conversion."""
     epoch = Time(61000.0, format="mjd", scale="tdb")

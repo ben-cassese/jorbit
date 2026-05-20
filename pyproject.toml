@@ -93,7 +93,7 @@ exclude = [
 pydocstyle.convention = "google"
 
 [tool.uv]
-no-build-isolation-package = ["rebound", "reboundx"]
+no-build-isolation-package = ["rebound", "reboundx", "assist"]
 
 [tool.codespell]
 skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"

@@ -130,8 +130,12 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
     Relies on the total mass of the solar system, which is assumed to be the sum of all
     GM values of the sun, planets, and 16 most massive asteroids as assumed by DE440.
 
-    This is the inverse of elements_to_cartesian. If the eccentricity falls below a
-    hard-coded threshold of 1e-10, it and omega are both set to zero.
+    This is the inverse of elements_to_cartesian. Two degenerate cases are handled:
+    - Circular orbits (ecc < 1e-10): omega is set to zero and nu becomes the argument
+      of latitude (or position angle from x-axis for in-plane orbits).
+    - In-plane orbits (inc = 0, n_mag = 0): Omega is set to zero; omega is set to the
+      ecliptic longitude of periapsis (atan2(e_y, e_x)); nu for circular in-plane orbits
+      is the position angle from the x-axis.
 
     Args:
         x (jnp.ndarray): Position in AU.
@@ -166,16 +170,25 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
 
     n = jnp.cross(jnp.array([0, 0, 1]), h)
     n_mag = jnp.linalg.norm(n, axis=1)
+    # Prevents 0/0 NaN in jnp.where branches when inc=0 (n_mag=0)
+    safe_n_mag = jnp.where(n_mag == 0, 1.0, n_mag)
 
     Omega = jnp.where(
         n[:, 1] >= 0,
-        jnp.arccos(n[:, 0] / n_mag) * 180 / jnp.pi,
-        360.0 - jnp.arccos(n[:, 0] / n_mag) * 180 / jnp.pi,
+        jnp.arccos(jnp.clip(n[:, 0] / safe_n_mag, -1, 1)) * 180 / jnp.pi,
+        360.0 - jnp.arccos(jnp.clip(n[:, 0] / safe_n_mag, -1, 1)) * 180 / jnp.pi,
     )
     Omega = jnp.where(n_mag == 0, 0, Omega)
 
     # ── omega (argument of periapsis) ──
-    # Standard computation from eccentricity vector
+    # For in-plane orbits (n_mag=0), omega = ecliptic longitude of periapsis = atan2(e_y, e_x).
+    # safe_e_mag guards ecc=0; the is_circular branch below overrides omega=0 in that case.
+    safe_e_mag = jnp.where(ecc == 0, 1.0, ecc)
+    omega_in_plane = jnp.where(
+        e_vec[:, 1] >= 0,
+        jnp.arccos(jnp.clip(e_vec[:, 0] / safe_e_mag, -1, 1)) * 180 / jnp.pi,
+        360.0 - jnp.arccos(jnp.clip(e_vec[:, 0] / safe_e_mag, -1, 1)) * 180 / jnp.pi,
+    )
     omega_standard = jnp.where(
         n_mag > 0,
         jnp.where(
@@ -183,7 +196,7 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
             jnp.arccos(
                 jnp.clip(
                     jnp.sum(n * e_vec, axis=1)
-                    / (n_mag * jnp.linalg.norm(e_vec, axis=1)),
+                    / (safe_n_mag * jnp.linalg.norm(e_vec, axis=1)),
                     -1,
                     1,
                 )
@@ -194,7 +207,7 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
             - jnp.arccos(
                 jnp.clip(
                     jnp.sum(n * e_vec, axis=1)
-                    / (n_mag * jnp.linalg.norm(e_vec, axis=1)),
+                    / (safe_n_mag * jnp.linalg.norm(e_vec, axis=1)),
                     -1,
                     1,
                 )
@@ -202,7 +215,7 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
             * 180
             / jnp.pi,
         ),
-        0,
+        omega_in_plane,
     )
 
     # ── nu (true anomaly) ──
@@ -219,15 +232,20 @@ def cartesian_to_elements(x: jnp.ndarray, v: jnp.ndarray, mass: float) -> tuple:
     )
 
     # ── Circular orbit fallback: omega=0, nu=argument of latitude ──
-    # u = angle from ascending node to position, measured in the orbital plane
-    # cos(u) = (n . x) / (n_mag * r_mag)
-    # sin(u) sign from x[2]: positive when above the reference plane
-    cos_u = jnp.sum(n * x, axis=1) / (n_mag * r_mag)
-    u_deg = jnp.where(
+    # u = angle from ascending node to position, measured in the orbital plane.
+    # For in-plane orbits (n_mag=0), use the position angle from the x-axis instead.
+    cos_u = jnp.sum(n * x, axis=1) / (safe_n_mag * r_mag)
+    u_standard = jnp.where(
         x[:, 2] >= 0,
         jnp.arccos(jnp.clip(cos_u, -1, 1)) * 180 / jnp.pi,
         360 - jnp.arccos(jnp.clip(cos_u, -1, 1)) * 180 / jnp.pi,
     )
+    nu_in_plane = jnp.where(
+        x[:, 1] >= 0,
+        jnp.arccos(jnp.clip(x[:, 0] / r_mag, -1, 1)) * 180 / jnp.pi,
+        360 - jnp.arccos(jnp.clip(x[:, 0] / r_mag, -1, 1)) * 180 / jnp.pi,
+    )
+    u_deg = jnp.where(n_mag == 0, nu_in_plane, u_standard)
 
     is_circular = ecc < 1e-10  # Threshold for circular orbits, can be tuned
     omega = jnp.where(is_circular, 0.0, omega_standard)
