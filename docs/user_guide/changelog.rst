@@ -1,11 +1,14 @@
 Changelog
 +++++++++
 
-**development**
+**1.3.0 (05/2026)**
 
-- Added option for Keplerian-only motion to `Particle` and `System`
+- Instead of taking an IAS15 step to the exact observation times, the `static_step` now takes natural IAS15 adaptive steps and evaluates the relevant polynomials based on the b coefficients to compute positions/velocities at arbitrary times within a step. This cuts down the number of IAS15 steps substatially when observations are spaced within a typical maximum-allowable IAS15 step, or ~30 days. This involves lots of changes to the internal `ias_15_evolve` function and the creation of some new internal helpers like `ias15_evolve_with_dense_output`, `ias15_evolve_forced_landing` and `interpolate_from_dense_output`.
+- Added option for Keplerian-only motion to `Particle` and `System`. This is significantly faster than the full N-body simulations and is useful for both short-term motion and outer solar system applications where the perturbations are small.
 - Add the `.is_observable` method to `Particle` objects which checks whether the particle is at least a certain angular distance from the Sun at given times from given observatories.
-- Instead of taking an IAS15 step to the exact observation times, the `static_step` now takes natural IAS15 adaptive steps and evaluates the relevant polynomials based on the b coefficients to compute positions/velocities at arbitrary times within a step. This cuts down the number of IAS15 steps substatially when observations are spaced within a typical maximum-allowable IAS15 step, or ~30 days.
+- Modified `on_sky` to take optional `ltt_position_fn` instead of always defaulting to the Taylor expansion. Can be used to "interpolate" using the above-mentioned b coefficients.
+- Changed the internal representations being absolute and relative time. No external API changes, but now `Particle` and `System` objects work in relative times by default, only converting to absolute times when necessary for ephemeris queries. This preserves some precision by not storing all the extra digits in mjd/jd.
+- Misc bug fixes and code cleanups.
 
 **1.2.0 (02/2026)**
 
