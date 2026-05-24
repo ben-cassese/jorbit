@@ -8,6 +8,7 @@ Changelog
 - Add the `.is_observable` method to `Particle` objects which checks whether the particle is at least a certain angular distance from the Sun at given times from given observatories.
 - Modified `on_sky` to take optional `ltt_position_fn` instead of always defaulting to the Taylor expansion. Can be used to "interpolate" using the above-mentioned b coefficients.
 - Changed the internal representations being absolute and relative time. No external API changes, but now `Particle` and `System` objects work in relative times by default, only converting to absolute times when necessary for ephemeris queries. This preserves some precision by not storing all the extra digits in mjd/jd.
+- Add the "global" IAS15 step size controller in addition to the default "PRS23" controller.
 - Misc bug fixes and code cleanups.
 
 **1.2.0 (02/2026)**
