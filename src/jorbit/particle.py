@@ -174,11 +174,10 @@ class Particle:
             step_scheduler (str):
                 The scheduler used by IAS15 for picking the next proposed step size.
                 Choices are "prs23" (Pham+ 2023 controller, default) or "global"
-                (the controller from the original IAS15 paper). Baked in here because
-                the residuals/loglike closures are constructed at __init__ time;
-                ``integrate``/``integrate_or_interpolate``/``ephemeris`` accept their
-                own ``step_scheduler`` kwarg that overrides this for those calls.
-                Ignored when gravity is "keplerian" or for leapfrog integrators.
+                (the controller from the original IAS15 paper). Used consistently
+                by ``integrate``, ``integrate_or_interpolate``, ``ephemeris``, and
+                the residuals/loglike closures. Ignored when gravity is "keplerian"
+                or for leapfrog integrators.
         """
         self._observations = observations
         self._earliest_time = earliest_time
@@ -189,8 +188,6 @@ class Particle:
 
         self.gravity = gravity
 
-        # the time subtraction in setup_statewas altering the input in place,
-        # which was confusing
         state = deepcopy(state) if state is not None else None
 
         # self._time is kept at jnp.array(0.0) internally; absolute time lives in
@@ -329,7 +326,7 @@ class Particle:
 
         # Build the reference time pair (astropy Time at full precision + float JD)
         # and then set the Particle's internal epoch to 0.0 in the offset frame.
-        if isinstance(time, type(Time("2023-01-01"))):
+        if isinstance(time, Time):
             t_ref_astropy = time.tdb
         else:
             t_ref_astropy = Time(float(time), format="jd", scale="tdb")
@@ -760,7 +757,6 @@ class Particle:
         times: Time,
         state: CartesianState | KeplerianState | None = None,
         forced_landing: bool = False,
-        step_scheduler: str = "prs23",
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         if self._is_keplerian:
             if state is not None:
@@ -793,7 +789,6 @@ class Particle:
             inds = jnp.arange(times.shape[0])
 
         integrator = self._forced_integrator if forced_landing else self._integrator
-        scheduler = self._resolve_step_scheduler(step_scheduler)
 
         positions, velocities, _final_system_state, _final_integrator_state, steps = (
             _integrate(
@@ -803,7 +798,7 @@ class Particle:
                 integrator,
                 integrator_state,
                 inds,
-                scheduler,
+                self._step_scheduler,
             )
         )
         return positions[:, 0, :], velocities[:, 0, :], steps
@@ -812,7 +807,6 @@ class Particle:
         self,
         times: Time,
         state: CartesianState | KeplerianState | None = None,
-        step_scheduler: str = "prs23",
         return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the particle's orbit to specified times, landing exactly on each one.
@@ -828,11 +822,6 @@ class Particle:
             state (CartesianState | None):
                 The state to integrate from. If None, the particle's current state will
                 be used. Usually not necessary to provide this.
-            step_scheduler (str):
-                The scheduler to use for determining step sizes. Choices are "prs23",
-                which uses the PRS23 controller from Pham+ 2023, or "global", which uses
-                the controller from the original IAS15 paper. Default is "prs23".
-                Ignored for leapfrog integrators, which use a fixed step size.
             return_steps (bool):
                 Whether to return the number of steps taken to reach each output time.
                 If True, the method returns a tuple of (positions, velocities, steps).
@@ -846,9 +835,7 @@ class Particle:
                 return_steps is True, also returns an array of the number of steps taken
                 to reach each output time.
         """
-        x, v, steps = self._integrate_base(
-            times, state, forced_landing=True, step_scheduler=step_scheduler
-        )
+        x, v, steps = self._integrate_base(times, state, forced_landing=True)
         if return_steps:
             return x, v, steps
         return x, v
@@ -857,7 +844,6 @@ class Particle:
         self,
         times: Time,
         state: CartesianState | KeplerianState | None = None,
-        step_scheduler: str = "prs23",
         return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the particle's orbit to specified times, overshooting and 'interpolating' if necessary.
@@ -873,11 +859,6 @@ class Particle:
             state (CartesianState | None):
                 The state to integrate from. If None, the particle's current state will
                 be used. Usually not necessary to provide this.
-            step_scheduler (str):
-                The scheduler to use for determining step sizes. Choices are "prs23",
-                which uses the PRS23 controller from Pham+ 2023, or "global", which uses
-                the controller from the original IAS15 paper. Default is "prs23".
-                Ignored for leapfrog integrators, which use a fixed step size.
             return_steps (bool):
                 Whether to return the number of steps taken to reach each output time.
                 If True, the method returns a tuple of (positions, velocities, steps).
@@ -890,9 +871,7 @@ class Particle:
                 return_steps is True, also returns an array of the number of steps taken
                 to reach each output time.
         """
-        x, v, steps = self._integrate_base(
-            times, state, forced_landing=False, step_scheduler=step_scheduler
-        )
+        x, v, steps = self._integrate_base(times, state, forced_landing=False)
         if return_steps:
             return x, v, steps
         return x, v
@@ -903,7 +882,6 @@ class Particle:
         observer: str | jnp.ndarray,
         state: CartesianState | KeplerianState | None = None,
         interpolate: bool = True,
-        step_scheduler: str = "prs23",
     ) -> SkyCoord:
         """Compute an ephemeris for the particle.
 
@@ -922,11 +900,6 @@ class Particle:
             interpolate (bool):
                 Whether to use `integrate` or `integrate_or_interpolate` for the
                 underlying integrations.
-            step_scheduler (str):
-                The scheduler to use for determining step sizes. Choices are "prs23",
-                which uses the PRS23 controller from Pham+ 2023, or "global", which
-                uses the controller from the original IAS15 paper. Default is "prs23".
-                Ignored for leapfrog integrators and keplerian particles.
 
         Returns:
             coords (SkyCoord):
@@ -972,7 +945,6 @@ class Particle:
             inds = jnp.arange(times.shape[0])
 
         integrator = self._integrator if interpolate else self._forced_integrator
-        scheduler = self._resolve_step_scheduler(step_scheduler)
         # IAS15 with interpolation has dense-output b-coefficients available, so
         # we can use them to evaluate the polynomial at light-travel-delayed times in on_sky's
         # LTT loop instead of a constant-acceleration Taylor expansion. All other
@@ -990,7 +962,7 @@ class Particle:
                 integrator_state,
                 observer_positions,
                 inds,
-                scheduler,
+                self._step_scheduler,
             )
         else:
             ras, decs = _ephem(
@@ -1001,7 +973,7 @@ class Particle:
                 integrator_state,
                 observer_positions,
                 inds,
-                scheduler,
+                self._step_scheduler,
             )
         return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 

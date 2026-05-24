@@ -70,9 +70,6 @@ def initialize_ias15_integrator_state(a0: jnp.ndarray) -> IAS15IntegratorState:
         a0=a0,
         dt=0.001,
         dt_last_done=0.0,
-        b_last=zeros_b,
-        e_last=zeros_b,
-        dt_last_accepted=0.0,
     )
 
 
@@ -360,15 +357,10 @@ def next_proposed_dt_global(
 def _predict_next_step(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
 
     def large_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
-        # probably delete this comment
-        # When the dt ratio is large (saturated growth or pathological rejection),
-        # zero only `e` and keep `b`. This is the heuristic from before the REBOUND
-        # parity attempt; tested empirically to give sub-km PRS23 accuracy on the
-        # Apophis flyby year. REBOUND zeros both at ratio>20, but that interaction
-        # with jorbit's PC degrades accuracy here, so we keep the older behavior.
+        # On saturated growth, zero only `e` and keep `b` as the starting point
+        # for the next step's PC iteration.
         e_new = jnp.zeros_like(e)
-        b_new = jnp.zeros_like(b)
-        return e_new, b_new
+        return e_new, b
 
     def reasonable_ratio(ratio: float, e: jnp.ndarray, b: jnp.ndarray) -> tuple:
         qs = ratio ** jnp.arange(1, 8)
@@ -437,11 +429,6 @@ def ias15_step(
     csv = initial_integrator_state.csv
     e = initial_integrator_state.e
     b = initial_integrator_state.b
-    # REBOUND-style "last accepted" snapshots; used as the source for predict_next_step
-    # when the current step is rejected (integrator_ias15.c:637-640).
-    b_last_in = initial_integrator_state.b_last
-    e_last_in = initial_integrator_state.e_last
-    dt_last_accepted_in = initial_integrator_state.dt_last_accepted
 
     csb = jnp.zeros_like(b)
     g = jnp.einsum("ij,jnk->ink", IAS15_D_MATRIX, b)
@@ -651,33 +638,10 @@ def ias15_step(
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
     )
 
-    # Match REBOUND's predict_next_step semantics:
-    #   accepted (integrator_ias15.c:696-697):
-    #       ratio = next_dt / dt_done                           # this step's dt
-    #       predict in-place from current (e, b)
-    #   rejected (integrator_ias15.c:637-640):
-    #       ratio = next_dt / dt_last_accepted                  # last successful dt
-    #       predict from (e_last, b_last) into current (e, b)
-    #       (and skip the predict entirely on the very first step, when
-    #        dt_last_accepted is still 0).
-    accepted = dt_done != 0.0
-    first_step_reject = (~accepted) & (dt_last_accepted_in == 0.0)
-    denom = jnp.where(accepted, dt_done, dt_last_accepted_in)
-    ratio = jnp.where(first_step_reject, 1.0, next_dt / denom)
-    e_source = jnp.where(accepted, e, e_last_in)
-    b_source = jnp.where(accepted, b, b_last_in)
-    predicted_next_e, predicted_next_b = _predict_next_step(ratio, e_source, b_source)
-    # On the first-step rejection there is no last-accepted state to extrapolate
-    # from, so leave e, b as the converged-but-rejected values; PC will refine
-    # them on the retry from those starting points (matches REBOUND's behavior
-    # of skipping the predict_next_step call when dt_last_done == 0).
-    predicted_next_e = jnp.where(first_step_reject, e, predicted_next_e)
-    predicted_next_b = jnp.where(first_step_reject, b, predicted_next_b)
-
-    # Update "last accepted" snapshots only on a successful step.
-    new_b_last = jnp.where(accepted, b, b_last_in)
-    new_e_last = jnp.where(accepted, e, e_last_in)
-    new_dt_last_accepted = jnp.where(accepted, dt_done, dt_last_accepted_in)
+    # On rejection (dt_done == 0), force ratio into the large_ratio no-op
+    # branch of _predict_next_step (zeros e, keeps b).
+    ratio = jnp.where(dt_done == 0.0, 100.0, next_dt / dt_done)
+    predicted_next_e, predicted_next_b = _predict_next_step(ratio, e, b)
 
     new_integrator_state = IAS15IntegratorState(
         g=g,
@@ -688,9 +652,6 @@ def ias15_step(
         a0=acceleration_func(new_system_state),
         dt=next_dt,
         dt_last_done=dt_done,
-        b_last=new_b_last,
-        e_last=new_e_last,
-        dt_last_accepted=new_dt_last_accepted,
     )
 
     return new_system_state, new_integrator_state, b

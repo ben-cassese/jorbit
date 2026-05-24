@@ -129,7 +129,7 @@ class System:
             )
         else:
             t_in = state.time
-            if isinstance(t_in, type(Time("2023-01-01"))):
+            if isinstance(t_in, Time):
                 t_ref_astropy = t_in.tdb
             else:
                 t_ref_astropy = Time(float(t_in), format="jd", scale="tdb")

@@ -243,7 +243,7 @@ class Observations:
             ) = read_mpc_file(self._mpc_file)
 
         # POSITIONS
-        if isinstance(observed_coordinates, type(SkyCoord(0 * u.deg, 0 * u.deg))):
+        if isinstance(observed_coordinates, SkyCoord):
             # in case they're barycentric, etc
             s = observed_coordinates.transform_to(ICRS)
             ra = s.ra.rad
@@ -262,13 +262,13 @@ class Observations:
             dec = jnp.array([dec])
 
         # TIMES
-        if isinstance(times, type(Time("2023-01-01"))):
+        if isinstance(times, Time):
             times_astropy = times.tdb
             if times_astropy.isscalar:
                 times_astropy = Time([times_astropy.jd], format="jd", scale="tdb")
             times = jnp.array(times.tdb.jd)
         elif isinstance(times, list):
-            times_astropy = Time([t.tdb.jd for t in times], format="jd", scale="tdb")
+            times_astropy = Time([t.tdb for t in times])
             times = jnp.array([t.tdb.jd for t in times])
         else:
             times_astropy = None
