@@ -101,9 +101,16 @@ class Observations:
         )
 
         order = jnp.argsort(t)
+        t_sorted = t[order]
+        # Pass times as an astropy Time so that the new Observations object retains
+        # a valid times_astropy attribute. Passing a raw jnp array causes the
+        # __init__ parser to set times_astropy=None, which forces downstream code
+        # to reconstruct times from the float JD array and introduces tiny
+        # floating-point offsets that can break the static-likelihood dt_seed logic.
+        t_astropy = Time(t_sorted.tolist(), format="jd", scale="tdb")
         return Observations(
             observed_coordinates=SkyCoord(ra=ra[order], dec=dec[order], unit=u.rad),
-            times=t[order],
+            times=t_astropy,
             observatories=observer_positions[order],
             astrometric_uncertainties=obs_precision[order],
             mpc_file=None,
