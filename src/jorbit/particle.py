@@ -191,6 +191,12 @@ class Particle:
         self._step_scheduler = self._resolve_step_scheduler(step_scheduler)
 
         self.gravity = gravity
+        # Preserve the original gravity spec (string or user-supplied Partial) so
+        # max_likelihood can pass it to the result Particle rather than self.gravity.
+        # self.gravity is overwritten by _setup_acceleration_func with a Partial that
+        # already has t_ref_jd baked in; passing *that* Partial to a new Particle would
+        # re-wrap it a second time and double-count the offset (see BUG_FIXES_MAY2026).
+        self._gravity_str = gravity
 
         state = deepcopy(state) if state is not None else None
 
@@ -345,6 +351,13 @@ class Particle:
         if state is not None:
             assert x is None and v is None, "Cannot provide both state and x, v"
 
+            # to_keplerian() and to_cartesian() are documented not to propagate `cov`
+            # because the covariance is parameterisation-specific. Save and re-attach
+            # it to the same-type output state so callers who set cov on the input
+            # state can retrieve it on particle.cartesian_state / particle.keplerian_state.
+            _input_is_keplerian = isinstance(state, KeplerianState)
+            _input_cov = state.cov
+
             state = state.to_cartesian()
             if state.x.ndim != 2:
                 state.x = state.x[None, :]
@@ -353,6 +366,11 @@ class Particle:
             state.time_reference = t_ref_jd
             keplerian_state = state.to_keplerian()
             cartesian_state = state.to_cartesian()
+
+            if _input_is_keplerian:
+                keplerian_state.cov = _input_cov
+            else:
+                cartesian_state.cov = _input_cov
 
             x = state.x.flatten()
             v = state.v.flatten()
@@ -395,10 +413,20 @@ class Particle:
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
         if isinstance(gravity, jax.tree_util.Partial):
-            # User-supplied acc funcs pre-date the rebase and expect state.time
-            # to be an absolute JD. Internally we now pass state.time as an
-            # offset from t_ref_jd, so we wrap the user's function to shift
-            # state.time back to absolute JD before calling it.
+            # The wrapper converts from the Particle's internal offset frame
+            # (state.time = days since self._t_ref_jd) to absolute JD before
+            # calling the user's function, which must expect absolute JD.
+            #
+            # CONTRACT: the custom function must be built with t_ref_jd=0 (or
+            # equivalently, must treat state.time as an absolute Julian Date).
+            # Do NOT pass a function returned by jorbit's factory functions
+            # (create_default_ephemeris_acceleration_func, etc.) that was
+            # built with a non-zero t_ref_jd — that would double-count the
+            # offset and silently query the ephemeris at the wrong time.
+            # The safe pattern is to build the function fresh with t_ref_jd=0:
+            #   acc_func = create_default_ephemeris_acceleration_func(
+            #       eph.processor, t_ref_jd=0.0
+            #   )
             user_func = gravity
             t_ref_jd = self._t_ref_jd
 
@@ -462,6 +490,13 @@ class Particle:
             )
             acc_func = create_default_ephemeris_acceleration_func(
                 eph.processor, t_ref_jd=self._t_ref_jd
+            )
+        else:
+            raise ValueError(
+                f"Unrecognized gravity '{gravity}'. Valid options are: 'newtonian planets', "
+                "'newtonian solar system', 'gr planets', 'gr solar system', "
+                "'default solar system', 'keplerian'. For a custom acceleration function, "
+                "pass a jax.tree_util.Partial."
             )
 
         return acc_func
@@ -533,6 +568,11 @@ class Particle:
                     stacklevel=2,
                 )
         else:
+            # Pass the Particle's reference epoch (not the observation time)
+            # so that the returned state's x, v represent the object at
+            # self._t_ref_jd — the same epoch the optimizer will use as its
+            # starting point. Using obs.times[0] instead would yield x, v at
+            # a different epoch that the optimizer would then misinterpret.
             fit_seed = simple_circular(
                 self._observations.ra[0],
                 self._observations.dec[0],
@@ -1165,7 +1205,8 @@ class Particle:
                 state=None,
                 observations=self._observations,
                 name=self._name,
-                gravity=self.gravity,
+                gravity=self._gravity_str,
+                de_ephemeris_version=self._de_ephemeris_version,
                 integrator=self._integrator_method,
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,

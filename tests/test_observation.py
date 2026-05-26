@@ -55,3 +55,39 @@ def test_added_observations_support_fit_seed_indexing_pattern() -> None:
 
     assert len(seed_obs) == 3
     assert seed_obs.observatories.shape == (3, 3)
+
+
+def test_add_preserves_covariance_consistency() -> None:
+    """inv_cov @ cov should equal identity for every observation after __add__."""
+    obs = _make_observations([0, 2]) + _make_observations([1])
+
+    for i in range(len(obs)):
+        product = obs.inv_cov_matrices[i] @ obs.cov_matrices[i]
+        assert jnp.allclose(
+            product, jnp.eye(2), atol=1e-10
+        ), f"inv_cov @ cov != I at index {i}"
+
+
+def test_single_observation_init() -> None:
+    """A single-observation Observations must initialise correctly."""
+    obs = _make_observations([0.0])
+
+    assert len(obs) == 1
+    assert obs.ra.shape == (1,)
+    assert obs.dec.shape == (1,)
+    assert obs.times.shape == (1,)
+    assert obs.observer_positions.shape == (1, 3)
+    assert obs.astrometric_uncertainties.shape == (1,)
+    assert obs.cov_matrices.shape == (1, 2, 2)
+    assert obs.inv_cov_matrices.shape == (1, 2, 2)
+    assert obs.cov_log_dets.shape == (1,)
+
+
+def test_getitem_negative_index() -> None:
+    """Negative integer indexing must return the last observation correctly."""
+    obs = _make_observations([0, 1, 2])
+    last = obs[-1]
+
+    assert len(last) == 1
+    assert jnp.allclose(last.times, obs.times[-1:])
+    assert jnp.allclose(last.ra, obs.ra[-1:])

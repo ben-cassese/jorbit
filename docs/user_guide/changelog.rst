@@ -1,6 +1,11 @@
 Changelog
 +++++++++
 
+**1.4.0 (05/2026)**
+
+- Added `uncertainty=True` as an option to `Particle.ephemeris` that returns the propagated on-sky covariance in addition to the propagated state. This is implemented by computing the Jacobian of the dynamics using forward autodiff, then linear error propagation using the initial covariance on the `CartesianState` or `KeplerianState`.
+- Several misc bug fixes found by Claude's recent code audit, including some precision loss issues when combining `Observation` objects and array shape mismatches.
+
 **1.3.0 (05/2026)**
 
 - Instead of taking an IAS15 step to the exact observation times, the `static_step` now takes natural IAS15 adaptive steps and evaluates the relevant polynomials based on the b coefficients to compute positions/velocities at arbitrary times within a step. This cuts down the number of IAS15 steps substatially when observations are spaced within a typical maximum-allowable IAS15 step, or ~30 days. This involves lots of changes to the internal `ias_15_evolve` function and the creation of some new internal helpers like `ias15_evolve_with_dense_output`, `ias15_evolve_forced_landing` and `interpolate_from_dense_output`.

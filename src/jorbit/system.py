@@ -110,8 +110,8 @@ class System:
             assert particles is not None
             t_ref_jds = jnp.array([p._t_ref_jd for p in particles])
             assert jnp.allclose(
-                t_ref_jds, t_ref_jds[0]
-            ), "All particles must have the same reference time"
+                t_ref_jds, t_ref_jds[0], atol=1e-6, rtol=0
+            ), "All particles must have the same reference time (tolerance: 1e-6 days ~ 0.1 s)"
             self._t_ref_astropy = particles[0]._t_ref_astropy
             self._t_ref_jd = particles[0]._t_ref_jd
 
@@ -132,7 +132,14 @@ class System:
             if isinstance(t_in, Time):
                 t_ref_astropy = t_in.tdb
             else:
-                t_ref_astropy = Time(float(t_in), format="jd", scale="tdb")
+                raise ValueError(
+                    "Cannot determine the absolute epoch from a SystemState whose "
+                    "time field is a numeric offset. SystemState.time is an "
+                    "integration offset (typically 0.0), not an absolute JD. "
+                    "To build a System from an existing particle state, use "
+                    "System(particles=[particle]) or set state.time to an "
+                    "astropy Time object representing the absolute epoch."
+                )
             self._t_ref_astropy = t_ref_astropy
             self._t_ref_jd = jnp.array(float(t_ref_astropy.tdb.jd))
             self._state = state.replace(time=jnp.array(0.0))
@@ -198,10 +205,12 @@ class System:
     def _setup_acceleration_func(self, gravity: str | Callable) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
-            # User-supplied acc funcs pre-date the rebase and expect state.time
-            # to be an absolute JD. Internally we now pass state.time as an
-            # offset from t_ref_jd, so we wrap the user's function to shift
-            # state.time back to absolute JD before calling it.
+            # See Particle._setup_acceleration_func for the full rationale.
+            # CONTRACT: the custom function must be built with t_ref_jd=0 and
+            # must treat state.time as an absolute Julian Date. Do NOT pass a
+            # jorbit factory function built with a non-zero t_ref_jd — that
+            # would double-count the offset and silently query the ephemeris
+            # at the wrong absolute time.
             user_func = gravity
             t_ref_jd = self._t_ref_jd
 
@@ -264,6 +273,13 @@ class System:
 
         elif gravity == "generic gr":
             acc_func = jax.tree_util.Partial(ppn_gravity)
+        else:
+            raise ValueError(
+                f"Unrecognized gravity '{gravity}'. Valid options are: 'newtonian planets', "
+                "'newtonian solar system', 'gr planets', 'gr solar system', "
+                "'default solar system', 'generic newtonian', 'generic gr', 'keplerian'. "
+                "For a custom acceleration function, pass a jax.tree_util.Partial."
+            )
 
         return acc_func
 
