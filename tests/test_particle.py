@@ -401,3 +401,54 @@ def test_elongation_angle() -> None:
     mask = p.is_observable(times=times, observer="kitt peak", ephem=ephem)
     assert mask.shape == (5,)
     assert mask[0] == (angles[0] > np.deg2rad(20))
+
+
+def test_static_residuals() -> None:
+    """Regression test: static_residuals must not return NaN when particle epoch = first obs.
+
+    precompute_likelihood_data seeds IAS15 with dt = obs_times[0] - t0.  When the
+    particle epoch equals the first observation time (the common case) that gap is 0,
+    which causes IAS15 to divide by zero and produce NaN for every precomputed step.
+    All subsequent static_residuals calls then return NaN.
+    """
+    nights = [
+        Time("2025-01-01 07:00"),
+        Time("2025-01-02 07:00"),
+        Time("2025-01-05 07:00"),
+    ]
+    times = []
+    for n in nights:
+        times.extend([n + i * 1 * u.hour for i in range(3)])
+    times = Time(times)
+
+    obj = Horizons(id="274301", location="695@399", epochs=times.utc.jd)
+    pts = obj.ephemerides(extra_precision=True, quantities="1")
+    coords = SkyCoord(pts["RA"], pts["DEC"], unit=(u.deg, u.deg))
+    times = Time(pts["datetime_jd"], format="jd", scale="utc")
+
+    obs = Observations(
+        observed_coordinates=coords,
+        times=times,
+        observatories="kitt peak",
+        astrometric_uncertainties=1 * u.arcsec,
+    )
+
+    obj = Horizons(id="274301", location="500@0", epochs=times.tdb.jd[0])
+    vecs = obj.vectors(refplane="earth")
+    true_x0 = jnp.array([vecs["x"], vecs["y"], vecs["z"]]).T[0]
+    true_v0 = jnp.array([vecs["vx"], vecs["vy"], vecs["vz"]]).T[0]
+
+    # Epoch = first observation time: previously caused dt_seed=0 → NaN.
+    p = Particle(
+        x=true_x0,
+        v=true_v0,
+        time=times[0],
+        observations=obs,
+    )
+
+    # Residuals must be finite.
+    res = p.static_residuals(p.cartesian_state)
+    assert jnp.all(jnp.isfinite(res)), "static_residuals returned NaN or Inf"
+
+    # For the true (noiseless Horizons) orbit the residuals must be sub-mas.
+    assert float(jnp.max(jnp.abs(res))) < 1e-3  # 1 mas threshold

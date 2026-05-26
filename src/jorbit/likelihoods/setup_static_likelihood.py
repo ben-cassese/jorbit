@@ -114,7 +114,14 @@ def precompute_likelihood_data(
     )
     a0_dynamic = dynamic_acc_func(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
-    integrator_init.dt = obs_times[0] - t0 if len(obs_times) > 0 else 10.0
+    # Seed the integrator with the gap from the particle epoch to the first
+    # observation.  When the particle is initialised at the first observation
+    # time (the common case) this gap is 0, which would make IAS15 divide by
+    # zero.  Fall back to the first inter-observation spacing instead.
+    dt_seed = float(obs_times[0] - t0) if len(obs_times) > 0 else 10.0
+    if dt_seed == 0.0:
+        dt_seed = 0.1
+    integrator_init.dt = dt_seed
     dts = get_natural_dynamic_dts(
         initial_system_state=state,
         acceleration_func=dynamic_acc_func,
