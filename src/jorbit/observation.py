@@ -101,25 +101,51 @@ class Observations:
         )
 
         order = jnp.argsort(t)
+        t_sorted = t[order]
+        # Pass times as an astropy Time so that the new Observations object retains
+        # a valid times_astropy attribute. Passing a raw jnp array causes the
+        # __init__ parser to set times_astropy=None, which forces downstream code
+        # to reconstruct times from the float JD array and introduces tiny
+        # floating-point offsets that can break the static-likelihood dt_seed logic.
+        t_astropy = Time(t_sorted.tolist(), format="jd", scale="tdb")
         return Observations(
             observed_coordinates=SkyCoord(ra=ra[order], dec=dec[order], unit=u.rad),
-            times=t[order],
+            times=t_astropy,
             observatories=observer_positions[order],
             astrometric_uncertainties=obs_precision[order],
             mpc_file=None,
         )
 
-    def __getitem__(self, index: int) -> "Observations":
+    def __getitem__(self, index: int | slice | jnp.ndarray) -> "Observations":
         """Return a new Observations object from a slice of the current one."""
+        ra = self._slice_observation_axis(self._ra, index)
+        dec = self._slice_observation_axis(self._dec, index)
+        times = self._slice_observation_axis(self._times, index)
+        astrometric_uncertainties = self._slice_observation_axis(
+            self._astrometric_uncertainties, index
+        )
+
+        observatories = self._observatories[index]
+        if isinstance(self._observatories, jnp.ndarray):
+            observatories = self._slice_observation_axis(self._observatories, index)
+
         return Observations(
-            observed_coordinates=SkyCoord(
-                ra=self._ra[index], dec=self._dec[index], unit=u.rad
-            ),
-            times=self._times[index],
-            observatories=self._observatories[index],
-            astrometric_uncertainties=self._astrometric_uncertainties[index] * u.arcsec,
+            observed_coordinates=SkyCoord(ra=ra, dec=dec, unit=u.rad),
+            times=times,
+            observatories=observatories,
+            astrometric_uncertainties=astrometric_uncertainties * u.arcsec,
             mpc_file=self._mpc_file,
         )
+
+    @staticmethod
+    def _slice_observation_axis(
+        values: jnp.ndarray, index: int | slice | jnp.ndarray
+    ) -> jnp.ndarray:
+        """Slice an observation-indexed array without dropping singleton rows."""
+        sliced = values[index]
+        if sliced.ndim == values.ndim - 1:
+            sliced = sliced[jnp.newaxis, ...]
+        return sliced
 
     @property
     def ra(self) -> jnp.ndarray:
@@ -220,7 +246,6 @@ class Observations:
             )
 
     def _parse_astrometry(self) -> tuple:
-
         if self._mpc_file is None:
             (
                 observed_coordinates,

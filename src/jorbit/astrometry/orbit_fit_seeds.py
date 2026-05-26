@@ -133,7 +133,7 @@ def gauss_method_orbit(obs: Observations) -> CartesianState:
     return CartesianState(
         x=jnp.array([r[0]]),
         v=jnp.array([v1]),
-        time=obs.times[0],
+        time_reference=obs.times[0],
         acceleration_func_kwargs={
             "c2": SPEED_OF_LIGHT**2,
         },
@@ -186,7 +186,7 @@ def simple_circular(ra: float, dec: float, semi: float, time: float) -> Cartesia
         inc=inc,
         Omega=Omega,
         omega=omega,
-        time=time,
+        time_reference=time,
         acceleration_func_kwargs={
             "c2": SPEED_OF_LIGHT**2,
         },

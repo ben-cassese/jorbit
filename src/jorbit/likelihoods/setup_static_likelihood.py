@@ -119,7 +119,7 @@ def precompute_likelihood_data(
     # time (the common case) this gap is 0, which would make IAS15 divide by
     # zero.  Fall back to the first inter-observation spacing instead.
     dt_seed = float(obs_times[0] - t0) if len(obs_times) > 0 else 10.0
-    if dt_seed == 0.0:
+    if abs(dt_seed) < 1e-6:  # < ~0.1 s; treat as zero (floating-point rounding)
         dt_seed = 0.1
     integrator_init.dt = dt_seed
     dts = get_natural_dynamic_dts(
