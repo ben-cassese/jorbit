@@ -3,6 +3,8 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+from dataclasses import field
+
 import astropy.units as u
 import chex
 import jax.numpy as jnp
@@ -48,6 +50,21 @@ class KeplerianState:
 
     Angles are in degrees. Elements will not agree with those presented in a
     heliocentric frame.
+
+    Time is represented as a ``(relative_time, time_reference)`` pair so the
+    state is self-describing about its absolute epoch:
+
+    - ``relative_time`` is the value that flows through to ``SystemState.time``
+      and the integrator / acceleration functions. Acceleration functions
+      built with a non-zero ``t_ref_jd`` add it back to recover an absolute
+      JD; standalone factories built with ``t_ref_jd=0`` use this value
+      directly.
+    - ``time_reference`` is the absolute JD (TDB) anchor that
+      ``relative_time`` is measured against. ``Particle.__init__`` reads
+      ``relative_time + time_reference`` to set the particle's reference
+      epoch.
+
+    Invariant: ``absolute_jd = relative_time + time_reference``.
     """
 
     semi: float
@@ -57,11 +74,14 @@ class KeplerianState:
     omega: float
     nu: float
     acceleration_func_kwargs: dict
-    # careful here- adding a default to allow users creating Particles to pass
-    # astropy.time.Time objects, which wouldn't work in these dataclasses
-    # but, in general, need to specify for the SystemState you get from .to_system()
-    # to produce correct accelerations later
-    time: float
+    # absolute JD (TDB) anchor that relative_time is measured against
+    time_reference: float
+    # offset in days from time_reference; this is what `to_system` propagates
+    # to SystemState.time
+    relative_time: float = field(default_factory=lambda: jnp.array(0.0))
+    # 6x6 covariance matrix in Keplerian coordinates (semi, ecc, inc, Omega, omega, nu).
+    # Shape (0, 0) means "not set". Not propagated through coordinate transforms.
+    cov: jnp.ndarray = field(default_factory=lambda: jnp.empty((0, 0)))
 
     def to_cartesian(self) -> "CartesianState":
         """Converts the Keplerian state to Cartesian coordinates."""
@@ -79,7 +99,8 @@ class KeplerianState:
         return CartesianState(
             x=x,
             v=v,
-            time=self.time,
+            relative_time=self.relative_time,
+            time_reference=self.time_reference,
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
@@ -92,7 +113,12 @@ class KeplerianState:
         return self
 
     def to_system(self) -> SystemState:
-        """Converts the Keplerian state to a system state."""
+        """Converts the Keplerian state to a system state.
+
+        ``SystemState.time`` is set from ``self.relative_time``; the
+        ``time_reference`` anchor is dropped, since the acceleration function
+        carries its own ``t_ref_jd`` for converting back to absolute JD.
+        """
         c = self.to_cartesian()
         return SystemState(
             tracer_positions=c.x,
@@ -100,7 +126,7 @@ class KeplerianState:
             massive_positions=jnp.empty((0, 3)),
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
-            time=self.time,
+            time=self.relative_time,
             fixed_perturber_positions=jnp.empty((0, 3)),
             fixed_perturber_velocities=jnp.empty((0, 3)),
             fixed_perturber_log_gms=jnp.empty((0,)),
@@ -110,13 +136,26 @@ class KeplerianState:
 
 @chex.dataclass
 class CartesianState:
-    """Contains the *barycentric* state of a particle in Cartesian coordinates."""
+    """Contains the *barycentric* state of a particle in Cartesian coordinates.
+
+    Time is represented as a ``(relative_time, time_reference)`` pair so the
+    state is self-describing about its absolute epoch. See
+    :class:`KeplerianState` for the full convention.
+
+    Invariant: ``absolute_jd = relative_time + time_reference``.
+    """
 
     x: jnp.ndarray
     v: jnp.ndarray
     acceleration_func_kwargs: dict
-    # same warning as above
-    time: float
+    # absolute JD (TDB) anchor that relative_time is measured against
+    time_reference: float
+    # offset in days from time_reference; this is what `to_system` propagates
+    # to SystemState.time
+    relative_time: float = field(default_factory=lambda: jnp.array(0.0))
+    # 6x6 covariance matrix in Cartesian coordinates (x0, x1, x2, v0, v1, v2).
+    # Shape (0, 0) means "not set". Not propagated through coordinate transforms.
+    cov: jnp.ndarray = field(default_factory=lambda: jnp.empty((0, 0)))
 
     def to_keplerian(self) -> KeplerianState:
         """Converts the Cartesian state to Keplerian elements."""
@@ -132,7 +171,8 @@ class CartesianState:
             Omega=Omega,
             omega=omega,
             nu=nu,
-            time=self.time,
+            relative_time=self.relative_time,
+            time_reference=self.time_reference,
             acceleration_func_kwargs=self.acceleration_func_kwargs,
         )
 
@@ -145,14 +185,19 @@ class CartesianState:
         return self
 
     def to_system(self) -> SystemState:
-        """Converts the Cartesian state to a system state."""
+        """Converts the Cartesian state to a system state.
+
+        ``SystemState.time`` is set from ``self.relative_time``; the
+        ``time_reference`` anchor is dropped, since the acceleration function
+        carries its own ``t_ref_jd`` for converting back to absolute JD.
+        """
         return SystemState(
             tracer_positions=self.x,
             tracer_velocities=self.v,
             massive_positions=jnp.empty((0, 3)),
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
-            time=self.time,
+            time=self.relative_time,
             fixed_perturber_positions=jnp.empty((0, 3)),
             fixed_perturber_velocities=jnp.empty((0, 3)),
             fixed_perturber_log_gms=jnp.empty((0,)),
@@ -305,7 +350,7 @@ def heliocentric_to_barycentric(
         return CartesianState(
             x=cart_x,
             v=cart_v,
-            time=time.tdb.jd,
+            time_reference=time.tdb.jd,
             acceleration_func_kwargs=acceleration_func_kwargs,
         )
     elif "a_helio" in heliocentric_dict:
@@ -323,7 +368,7 @@ def heliocentric_to_barycentric(
         state = CartesianState(
             x=cart_x,
             v=cart_v,
-            time=time.tdb.jd,
+            time_reference=time.tdb.jd,
             acceleration_func_kwargs=acceleration_func_kwargs,
         )
         return state.to_keplerian()

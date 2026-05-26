@@ -184,7 +184,7 @@ def test_different_inits() -> None:
         Omega=jnp.array([183.37291068678854]),
         omega=jnp.array([140.26341029272996]),
         nu=jnp.array([173.59627946476093]),
-        time=Time("2025-01-01").tdb.jd,
+        time_reference=Time("2025-01-01").tdb.jd,
         acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
     p = Particle(name="(274301) Wikipedia", state=k)
@@ -227,10 +227,16 @@ def test_keplerian_integrate() -> None:
     pos_fwd, vel_fwd = p.integrate(Time("2025-01-11"))
     from jorbit.utils.states import CartesianState
 
+    # The forward-propagated state is at Jan 11; we pass it via state= to
+    # integrate back to Jan 1. relative_time must match the *exact* offset
+    # the forward integration used (Jan 11 - Jan 1 in TDB is 10.0 + ~3 ns
+    # because the TDB-TT correction varies slightly); using the Particle's
+    # own conversion guarantees forward/backward symmetry.
     state_fwd = CartesianState(
         x=pos_fwd,
         v=vel_fwd,
-        time=Time("2025-01-11").tdb.jd,
+        relative_time=p._times_to_offsets(Time("2025-01-11")),
+        time_reference=p._t_ref_jd,
         acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
     pos_back, vel_back = p.integrate(Time("2025-01-01"), state=state_fwd)
@@ -322,7 +328,7 @@ def test_keplerian_properties() -> None:
         Omega=jnp.array([183.37291068678854]),
         omega=jnp.array([140.26341029272996]),
         nu=jnp.array([173.59627946476093]),
-        time=Time("2025-01-01").tdb.jd,
+        time_reference=Time("2025-01-01").tdb.jd,
         acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
     p2 = Particle(name="from_elements", state=k, gravity="keplerian")

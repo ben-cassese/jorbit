@@ -26,6 +26,7 @@ from jorbit.accelerations import (
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.astrometry.transformations import (
+    elements_to_cartesian,
     horizons_ecliptic_to_icrs,
     icrs_to_horizons_ecliptic,
 )
@@ -65,6 +66,9 @@ from jorbit.utils.states import (
     LeapfrogIntegratorState,
     SystemState,
 )
+
+# Squared conversion factor from radians^2 to arcsec^2.
+_RAD2ARCSEC_SQ = (180.0 * 3600.0 / jnp.pi) ** 2
 
 
 class Particle:
@@ -239,9 +243,10 @@ class Particle:
     def cartesian_state(self) -> CartesianState:
         """Return the Cartesian state of the particle.
 
-        Note: ``.time`` on the returned state is the internal offset (days from
-        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
-        for the absolute time.
+        The state is self-describing about its absolute epoch via the
+        ``(relative_time, time_reference)`` pair: ``relative_time`` is ``0.0``
+        (the offset in the particle's internal frame) and ``time_reference``
+        is :attr:`t_ref_jd` (the absolute JD anchor).
         """
         return self._cartesian_state
 
@@ -249,9 +254,10 @@ class Particle:
     def keplerian_state(self) -> KeplerianState:
         """Return the Keplerian state of the particle.
 
-        Note: ``.time`` on the returned state is the internal offset (days from
-        :attr:`t_ref`), not an absolute JD. Use :attr:`t_ref` or :attr:`t_ref_jd`
-        for the absolute time.
+        The state is self-describing about its absolute epoch via the
+        ``(relative_time, time_reference)`` pair: ``relative_time`` is ``0.0``
+        (the offset in the particle's internal frame) and ``time_reference``
+        is :attr:`t_ref_jd` (the absolute JD anchor).
         """
         return self._keplerian_state
 
@@ -317,10 +323,13 @@ class Particle:
         time: Time,
         name: str,
     ) -> tuple:
-
         if state is not None:
             assert time is None, "Cannot provide both state and time"
-            time = state.time
+            # The state self-describes its absolute epoch as the sum of its
+            # offset (relative_time) and its anchor (time_reference). We use
+            # the sum as the Particle's absolute reference time, then rebase
+            # the stored state to relative_time=0 against that new anchor.
+            time = state.relative_time + state.time_reference
 
         assert time is not None, "Must provide an epoch for the particle"
 
@@ -340,7 +349,8 @@ class Particle:
             if state.x.ndim != 2:
                 state.x = state.x[None, :]
                 state.v = state.v[None, :]
-            state.time = internal_time
+            state.relative_time = internal_time
+            state.time_reference = t_ref_jd
             keplerian_state = state.to_keplerian()
             cartesian_state = state.to_cartesian()
 
@@ -355,7 +365,8 @@ class Particle:
             cartesian_state = CartesianState(
                 x=jnp.array([x]),
                 v=jnp.array([v]),
-                time=internal_time,
+                relative_time=internal_time,
+                time_reference=t_ref_jd,
                 acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
             )
             keplerian_state = cartesian_state.to_keplerian()
@@ -383,7 +394,6 @@ class Particle:
         )
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
-
         if isinstance(gravity, jax.tree_util.Partial):
             # User-supplied acc funcs pre-date the rebase and expect state.time
             # to be an absolute JD. Internally we now pass state.time as an
@@ -502,7 +512,6 @@ class Particle:
     def _setup_fit_seed(
         self, fit_seed: KeplerianState | CartesianState | None
     ) -> KeplerianState | CartesianState | None:
-
         if self._observations is None:
             return None
 
@@ -528,7 +537,7 @@ class Particle:
                 self._observations.ra[0],
                 self._observations.dec[0],
                 semi=2.5,
-                time=self._time,
+                time=self._t_ref_jd,
             )
 
         return fit_seed
@@ -571,7 +580,7 @@ class Particle:
 
             elif self._integrator_method in ["Y4", "Y6", "Y8"]:
                 times, inds = create_leapfrog_times(
-                    self._cartesian_state.time,
+                    self._cartesian_state.relative_time,
                     obs_times,
                     self._max_step_size,
                 )
@@ -632,7 +641,8 @@ class Particle:
             c = CartesianState(
                 x=jnp.array([x[:3]]),
                 v=jnp.array([x[3:]]),
-                time=self._time,
+                relative_time=self._time,
+                time_reference=self._t_ref_jd,
                 acceleration_func_kwargs=self._acc_func_kwargs,
             )
             return -loglike(c)
@@ -641,7 +651,8 @@ class Particle:
             c = CartesianState(
                 x=jnp.array([x[:3]]),
                 v=jnp.array([x[3:]]),
-                time=self._time,
+                relative_time=self._time,
+                time_reference=self._t_ref_jd,
                 acceleration_func_kwargs=self._acc_func_kwargs,
             )
             c_grad = jax.grad(loglike)(c)
@@ -761,8 +772,14 @@ class Particle:
         if self._is_keplerian:
             if state is not None:
                 state = state.to_cartesian()
-                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
-                t0 = self._times_to_offsets(t0)
+                # relative_time is already in this Particle's offset frame
+                # (provided state.time_reference matches self._t_ref_jd, which
+                # is the standard convention for states passed via state=).
+                x, v, t0 = (
+                    state.x.flatten(),
+                    state.v.flatten(),
+                    state.relative_time,
+                )
             else:
                 x, v, t0 = self._x, self._v, self._time
 
@@ -784,7 +801,9 @@ class Particle:
             times = jnp.array([times])
 
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
+            times, inds = create_leapfrog_times(
+                state.relative_time, times, self._max_step_size
+            )
         else:
             inds = jnp.arange(times.shape[0])
 
@@ -882,7 +901,8 @@ class Particle:
         observer: str | jnp.ndarray,
         state: CartesianState | KeplerianState | None = None,
         interpolate: bool = True,
-    ) -> SkyCoord:
+        uncertainty: bool = False,
+    ) -> SkyCoord | tuple[SkyCoord, jnp.ndarray]:
         """Compute an ephemeris for the particle.
 
         Args:
@@ -900,12 +920,24 @@ class Particle:
             interpolate (bool):
                 Whether to use `integrate` or `integrate_or_interpolate` for the
                 underlying integrations.
+            uncertainty (bool):
+                If True, also propagate the 6x6 covariance matrix stored on the state's
+                ``cov`` field onto the sky plane via forward-mode autodiff (linear error
+                propagation). The covariance is propagated in whichever parameterization
+                the input state uses (Cartesian or Keplerian); no automatic conversion
+                between parameterizations is performed. Expect roughly a ``6x`` cost
+                relative to the nominal call because ``jax.jacfwd`` performs one JVP
+                evaluation per input dimension. Defaults to False.
 
         Returns:
-            coords (SkyCoord):
-                The ephemeris of the particle at the given times, in ICRS coordinates,
-                as seen from that specific observer and correcting for light travel
-                time.
+            coords (SkyCoord | tuple[SkyCoord, jnp.ndarray]):
+                If ``uncertainty=False`` (default), returns a SkyCoord with the
+                ephemeris of the particle at the given times, in ICRS coordinates, as
+                seen from that specific observer and correcting for light travel time.
+                If ``uncertainty=True``, returns a tuple with the same SkyCoord and the
+                propagated ``(N, 2, 2)`` sky-plane covariance in ``arcsec**2``,
+                (the propagated ``(N, 2, 2)`` sky-plane covariance in ``arcsec**2``,
+                axis order (RA, Dec)).
         """
         if isinstance(observer, str):
             observer_positions = get_observer_positions(
@@ -914,18 +946,49 @@ class Particle:
         else:
             observer_positions = observer
 
+        if uncertainty:
+            cov_state = (
+                state
+                if state is not None
+                else (
+                    self._keplerian_state
+                    if self._is_keplerian
+                    else self._cartesian_state
+                )
+            )
+            cov = cov_state.cov
+            if cov.shape != (6, 6):
+                raise ValueError(
+                    "uncertainty=True requires a (6, 6) covariance matrix on the "
+                    f"state's `cov` field, but got shape {tuple(cov.shape)}. "
+                    "Build a CartesianState or KeplerianState with `cov=...` and pass "
+                    "it via the `state=` keyword (or set it on the particle's "
+                    "internal state)."
+                )
+
         if self._is_keplerian:
+            offsets = self._times_to_offsets(times)
+            if offsets.shape == ():
+                offsets = jnp.array([offsets])
+
+            if uncertainty:
+                kep_state = state if state is not None else self._keplerian_state
+                ras, decs, cov_radec = _keplerian_ephem_with_cov(
+                    kep_state, offsets, observer_positions, cov
+                )
+                return (SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs"), cov_radec)
+
             if state is not None:
                 state = state.to_cartesian()
-                x, v, t0 = state.x.flatten(), state.v.flatten(), state.time
+                x, v, t0 = (
+                    state.x.flatten(),
+                    state.v.flatten(),
+                    state.relative_time,
+                )
             else:
                 x, v, t0 = self._x, self._v, self._time
 
-            times = self._times_to_offsets(times)
-            if times.shape == ():
-                times = jnp.array([times])
-
-            ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
+            ras, decs = _keplerian_ephem(x, v, t0, offsets, observer_positions)
             return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
 
         if state is None:
@@ -940,7 +1003,9 @@ class Particle:
             times = jnp.array([times])
 
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            times, inds = create_leapfrog_times(state.time, times, self._max_step_size)
+            times, inds = create_leapfrog_times(
+                state.relative_time, times, self._max_step_size
+            )
         else:
             inds = jnp.arange(times.shape[0])
 
@@ -954,6 +1019,31 @@ class Particle:
             "Y6",
             "Y8",
         )
+        if uncertainty:
+            if use_dense_ltt:
+                ras, decs, cov_radec = _ephem_ias15_with_cov(
+                    times,
+                    state,
+                    self.gravity,
+                    observer_positions,
+                    inds,
+                    self._step_scheduler,
+                    cov,
+                )
+            else:
+                ras, decs, cov_radec = _ephem_with_cov(
+                    times,
+                    state,
+                    self.gravity,
+                    integrator,
+                    integrator_state,
+                    observer_positions,
+                    inds,
+                    self._step_scheduler,
+                    cov,
+                )
+            return (SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs"), cov_radec)
+
         if use_dense_ltt:
             ras, decs = _ephem_ias15(
                 times,
@@ -1058,7 +1148,8 @@ class Particle:
             c = CartesianState(
                 x=jnp.array([result.x[:3]]),
                 v=jnp.array([result.x[3:]]),
-                time=self._time,
+                relative_time=self._time,
+                time_reference=self._t_ref_jd,
                 acceleration_func_kwargs=self._acc_func_kwargs,
             )
             if c.to_keplerian().ecc > 1:
@@ -1311,6 +1402,166 @@ def _ephem_ias15(
     return ras, decs
 
 
+def _state_vec_to_xv(
+    state_vec: jnp.ndarray, is_keplerian_param: bool
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Unpack a (6,) parameter vector to ICRS Cartesian position/velocity.
+
+    If ``is_keplerian_param``, the entries are (semi, ecc, inc, Omega, omega, nu)
+    and we convert via :func:`elements_to_cartesian` followed by an ecliptic ->
+    ICRS rotation. Otherwise the entries are interpreted directly as flat
+    Cartesian (x, y, z, vx, vy, vz) in ICRS.
+
+    Returns ``(x, v)`` each shaped ``(1, 3)``.
+    """
+    if is_keplerian_param:
+        x_ecl, v_ecl = elements_to_cartesian(
+            state_vec[0:1],
+            state_vec[1:2],
+            state_vec[5:6],
+            state_vec[2:3],
+            state_vec[3:4],
+            state_vec[4:5],
+            TOTAL_SOLAR_SYSTEM_GM,
+        )
+        x = horizons_ecliptic_to_icrs(x_ecl)
+        v = horizons_ecliptic_to_icrs(v_ecl)
+    else:
+        x = state_vec[:3].reshape(1, 3)
+        v = state_vec[3:].reshape(1, 3)
+    return x, v
+
+
+def _state_to_vec(state: CartesianState | KeplerianState) -> jnp.ndarray:
+    """Flatten a CartesianState or KeplerianState to a (6,) parameter vector."""
+    if isinstance(state, KeplerianState):
+        return jnp.concatenate(
+            [
+                jnp.atleast_1d(state.semi),
+                jnp.atleast_1d(state.ecc),
+                jnp.atleast_1d(state.inc),
+                jnp.atleast_1d(state.Omega),
+                jnp.atleast_1d(state.omega),
+                jnp.atleast_1d(state.nu),
+            ]
+        )
+    return jnp.concatenate([state.x.flatten(), state.v.flatten()])
+
+
+def _cov_from_jacobian(
+    radec_fn: Callable,
+    nominal_vec: jnp.ndarray,
+    cov: jnp.ndarray,
+    N: int,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Linear error propagation via forward-mode AD.
+
+    ``radec_fn`` must accept a ``(6,)`` parameter vector and return a flat
+    ``(2N,)`` interleaved ``[ra0, dec0, ra1, dec1, ...]`` array (radians).
+    Returns ``(ra, dec, cov_radec)`` where ``cov_radec`` has shape ``(N, 2, 2)``
+    in ``arcsec**2``.
+    """
+    radec_nominal = radec_fn(nominal_vec)
+    ras = radec_nominal[0::2]
+    decs = radec_nominal[1::2]
+    J = jax.jacfwd(radec_fn)(nominal_vec)
+    J_t = J.reshape(N, 2, 6)
+    cov_radec = jnp.einsum("nij,jk,nlk->nil", J_t, cov, J_t) * _RAD2ARCSEC_SQ
+    return ras, decs, cov_radec
+
+
+@jax.jit
+def _ephem_ias15_with_cov(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+    cov: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """IAS15 dense-output ephemeris with sky-plane covariance via forward-mode AD."""
+    is_keplerian_param = isinstance(particle_state, KeplerianState)
+
+    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
+        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
+        state = CartesianState(
+            x=x,
+            v=v,
+            relative_time=particle_state.relative_time,
+            time_reference=particle_state.time_reference,
+            acceleration_func_kwargs=particle_state.acceleration_func_kwargs,
+        )
+        a0 = acc_func(state.to_system())
+        integrator_state = initialize_ias15_integrator_state(a0)
+        ras, decs = _ephem_ias15(
+            times,
+            state,
+            acc_func,
+            integrator_state,
+            observer_positions,
+            relevant_inds,
+            step_scheduler,
+        )
+        return jnp.stack([ras, decs], axis=1).flatten()
+
+    nominal_vec = _state_to_vec(particle_state)
+    return _cov_from_jacobian(radec_fn, nominal_vec, cov, relevant_inds.shape[0])
+
+
+@jax.jit
+def _ephem_with_cov(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_func: Callable,
+    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+    cov: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Generic non-dense ephemeris with sky-plane covariance via forward-mode AD.
+
+    Handles both the IAS15 forced-landing path (``interpolate=False`` + IAS15) and
+    the leapfrog path. For IAS15, the integrator state must be re-initialized
+    inside the AD closure so the initial-acceleration entry tracks the perturbed
+    state vector; for leapfrog, ``LeapfrogIntegratorState`` is independent of
+    the dynamical state and is reused as-is.
+    """
+    is_keplerian_param = isinstance(particle_state, KeplerianState)
+    reinit_ias15 = isinstance(integrator_state, IAS15IntegratorState)
+
+    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
+        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
+        state = CartesianState(
+            x=x,
+            v=v,
+            relative_time=particle_state.relative_time,
+            time_reference=particle_state.time_reference,
+            acceleration_func_kwargs=particle_state.acceleration_func_kwargs,
+        )
+        if reinit_ias15:
+            a0 = acc_func(state.to_system())
+            local_integrator_state = initialize_ias15_integrator_state(a0)
+        else:
+            local_integrator_state = integrator_state
+        ras, decs = _ephem(
+            times,
+            state,
+            acc_func,
+            integrator_func,
+            local_integrator_state,
+            observer_positions,
+            relevant_inds,
+            step_scheduler,
+        )
+        return jnp.stack([ras, decs], axis=1).flatten()
+
+    nominal_vec = _state_to_vec(particle_state)
+    return _cov_from_jacobian(radec_fn, nominal_vec, cov, relevant_inds.shape[0])
+
+
 @jax.jit
 def _residuals(
     times: jnp.ndarray,
@@ -1447,6 +1698,32 @@ def _keplerian_ephem(
 
 
 @jax.jit
+def _keplerian_ephem_with_cov(
+    particle_state: CartesianState | KeplerianState,
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    cov: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Keplerian-path ephemeris with sky-plane covariance via forward-mode AD.
+
+    Supports both Keplerian and Cartesian input parameterizations; the covariance
+    is propagated in whichever space the input state was supplied in.
+    """
+    is_keplerian_param = isinstance(particle_state, KeplerianState)
+    t0 = particle_state.relative_time
+
+    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
+        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
+        ras, decs = _keplerian_ephem(
+            x.flatten(), v.flatten(), t0, times, observer_positions
+        )
+        return jnp.stack([ras, decs], axis=1).flatten()
+
+    nominal_vec = _state_to_vec(particle_state)
+    return _cov_from_jacobian(radec_fn, nominal_vec, cov, times.shape[0])
+
+
+@jax.jit
 def _keplerian_residuals(
     times: jnp.ndarray,
     observer_positions: jnp.ndarray,
@@ -1456,7 +1733,7 @@ def _keplerian_residuals(
 ) -> jnp.ndarray:
     x = particle_state.to_cartesian().x.flatten()
     v = particle_state.to_cartesian().v.flatten()
-    t0 = particle_state.time
+    t0 = particle_state.relative_time
 
     ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
     xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
