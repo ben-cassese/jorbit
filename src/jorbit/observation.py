@@ -129,12 +129,31 @@ class Observations:
         if isinstance(self._observatories, jnp.ndarray):
             observatories = self._slice_observation_axis(self._observatories, index)
 
+        # Preserve the high-precision astropy Time if available. Passing it as
+        # `times` lets the constructor set _times_astropy correctly, so that
+        # downstream code (_observations_times_as_offsets, precompute_likelihood_data)
+        # can still use the full jd1+jd2 precision path.
+        # Integer indexing on an astropy Time array returns a scalar Time, which
+        # doesn't have len() and breaks _input_checks. Wrap it to stay 1-D.
+        if self._times_astropy is not None:
+            t_sliced = self._times_astropy[index]
+            if t_sliced.isscalar:
+                t_sliced = Time([t_sliced.jd], format="jd", scale=t_sliced.scale)
+            times = t_sliced
+
+        # _astrometric_uncertainties is stored internally in arcsec (1-D) or as
+        # dimensionless arcsec² covariance matrices (N, 2, 2). The constructor
+        # distinguishes these by ndim, so we pass the raw JAX array directly:
+        # attaching `* u.arcsec` is wrong for the covariance-matrix path (the
+        # unit would be arcsec, not arcsec²) and unnecessary for the 1-D path
+        # (the values are already in arcsec). mpc_file is cleared: the slice
+        # is no longer the full file.
         return Observations(
             observed_coordinates=SkyCoord(ra=ra, dec=dec, unit=u.rad),
             times=times,
             observatories=observatories,
-            astrometric_uncertainties=astrometric_uncertainties * u.arcsec,
-            mpc_file=self._mpc_file,
+            astrometric_uncertainties=astrometric_uncertainties,
+            mpc_file=None,
         )
 
     @staticmethod

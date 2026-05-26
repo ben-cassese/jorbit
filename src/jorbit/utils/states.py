@@ -354,13 +354,16 @@ def heliocentric_to_barycentric(
             acceleration_func_kwargs=acceleration_func_kwargs,
         )
     elif "a_helio" in heliocentric_dict:
+        # Use .ravel() to handle both scalar floats (from manual user input) and
+        # 1-D arrays (from barycentric_to_heliocentric). jnp.array([array]) would
+        # produce a (1, N) shape for array inputs; .ravel() always gives (N,).
         helio_x, helio_v = elements_to_cartesian(
-            jnp.array([heliocentric_dict["a_helio"]]),
-            jnp.array([heliocentric_dict["ecc_helio"]]),
-            jnp.array([heliocentric_dict["nu_helio"]]),
-            jnp.array([heliocentric_dict["inc_helio"]]),
-            jnp.array([heliocentric_dict["Omega_helio"]]),
-            jnp.array([heliocentric_dict["omega_helio"]]),
+            jnp.asarray(heliocentric_dict["a_helio"]).ravel(),
+            jnp.asarray(heliocentric_dict["ecc_helio"]).ravel(),
+            jnp.asarray(heliocentric_dict["nu_helio"]).ravel(),
+            jnp.asarray(heliocentric_dict["inc_helio"]).ravel(),
+            jnp.asarray(heliocentric_dict["Omega_helio"]).ravel(),
+            jnp.asarray(heliocentric_dict["omega_helio"]).ravel(),
             SUN_GM,
         )
         cart_x = horizons_ecliptic_to_icrs(helio_x) + sun_state["x"].value
