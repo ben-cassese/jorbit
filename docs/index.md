@@ -52,7 +52,7 @@ tutorials/local_mpchecker.ipynb
 tutorials/lightcurve_contamination.ipynb
 tutorials/interact_de_ephemeris.ipynb
 tutorials/generate_particle_ephemeris.ipynb
-tutorials/skip_tests/compare_with_horizons.ipynb
+tutorials/skip_tests/compare_w_horizons.ipynb
 tutorials/max_likelihood_orbit.ipynb
 tutorials/skip_tests/mcmc_orbit.ipynb
 tutorials/covariance_propagation.ipynb
