@@ -129,7 +129,7 @@ def _get_dynamic_intermediate_dts(
     def step_needed(args: tuple) -> tuple:
         system_state, integrator_state, last_meaningful_dt, iter_num = args
 
-        t = system_state.time
+        t = system_state.relative_time
 
         diff = final_time - t
         step_length = jnp.sign(diff) * jnp.min(
@@ -145,7 +145,7 @@ def _get_dynamic_intermediate_dts(
 
     def cond_func(args: tuple) -> bool:
         system_state, integrator_state, _last_meaningful_dt, iter_num = args
-        t = system_state.time
+        t = system_state.relative_time
 
         step_length = jnp.sign(final_time - t) * jnp.min(
             jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
@@ -259,7 +259,7 @@ def get_natural_dynamic_dts(
         jnp.ndarray:
             Array of all step sizes taken by the adaptive integrator.
     """
-    t_start = initial_system_state.time
+    t_start = initial_system_state.relative_time
     direction = jnp.sign(final_time - t_start)
 
     args = (
@@ -270,7 +270,7 @@ def get_natural_dynamic_dts(
     dts = []
     while True:
         system_state, integrator_state, iter_num = args
-        t = system_state.time
+        t = system_state.relative_time
 
         # Check if we've passed final_time
         if direction > 0 and t >= final_time:

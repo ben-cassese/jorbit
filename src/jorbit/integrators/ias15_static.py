@@ -113,7 +113,10 @@ def ias15_static_step(
             The new system state and new integrator state.
     """
     n_pc_iterations = 3
-    t_beginning = initial_system_state.time
+    t_beginning = initial_system_state.relative_time
+    # Constant absolute-JD anchor; carried through the step unchanged while
+    # relative_time advances.
+    t_ref = initial_system_state.time_reference
 
     M = initial_system_state.massive_positions.shape[0]
     if concatenated_x0 is not None:
@@ -168,7 +171,8 @@ def ias15_static_step(
             tracer_positions=x[M:],
             tracer_velocities=v[M:],
             log_gms=initial_system_state.log_gms,
-            time=step_time,
+            time_reference=t_ref,
+            relative_time=step_time,
             fixed_perturber_positions=fixed_perturber_positions[n],
             fixed_perturber_velocities=fixed_perturber_velocities[n],
             fixed_perturber_log_gms=fixed_perturber_log_gms,
@@ -238,7 +242,8 @@ def ias15_static_step(
         tracer_positions=x0[M:],
         tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
-        time=t_beginning + dt_done,
+        time_reference=t_ref,
+        relative_time=t_beginning + dt_done,
         fixed_perturber_positions=fixed_perturber_positions[-1],
         fixed_perturber_velocities=fixed_perturber_velocities[-1],
         fixed_perturber_log_gms=fixed_perturber_log_gms,

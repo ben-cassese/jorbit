@@ -36,7 +36,9 @@ def leapfrog_step(
         SystemState:
             The new system state.
     """
-    t0 = initial_system_state.time
+    t0 = initial_system_state.relative_time
+    # Constant absolute-JD anchor, carried through while relative_time advances.
+    t_ref = initial_system_state.time_reference
     num_massive = initial_system_state.massive_positions.shape[0]
     x0 = jnp.concatenate(
         [initial_system_state.massive_positions, initial_system_state.tracer_positions],
@@ -73,7 +75,8 @@ def leapfrog_step(
                 fixed_perturber_positions=jnp.empty((0, 3)),
                 fixed_perturber_velocities=jnp.empty((0, 3)),
                 fixed_perturber_log_gms=jnp.empty((0,)),
-                time=t0 + tau * dt,
+                time_reference=t_ref,
+                relative_time=t0 + tau * dt,
             )
         )
         v = v + d * acc * dt
@@ -88,7 +91,8 @@ def leapfrog_step(
         tracer_velocities=v[num_massive:],
         log_gms=initial_system_state.log_gms,
         acceleration_func_kwargs=initial_system_state.acceleration_func_kwargs,
-        time=t0 + dt,
+        time_reference=t_ref,
+        relative_time=t0 + dt,
         fixed_perturber_positions=jnp.empty((0, 3)),
         fixed_perturber_velocities=jnp.empty((0, 3)),
         fixed_perturber_log_gms=jnp.empty((0,)),
@@ -135,7 +139,7 @@ def leapfrog_evolve(
     def scan_func(carry: tuple, scan_over: float) -> tuple[tuple, tuple]:
         system_state, integrator_state = carry
         tf = scan_over
-        dt = tf - system_state.time
+        dt = tf - system_state.relative_time
         integrator_state.dt = jnp.abs(dt)
         new_state = leapfrog_step(system_state, acceleration_func, integrator_state)
         return (new_state, integrator_state), (

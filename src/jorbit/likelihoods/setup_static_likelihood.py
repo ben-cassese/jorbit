@@ -95,9 +95,10 @@ def precompute_likelihood_data(
     perturber_pos_chebys = jnp.array(perturber_pos_chebys)
     perturber_vel_chebys = jnp.array(perturber_vel_chebys)
 
-    # cheby_t0/cheby_t1 live in the same offset frame as inputs.time inside
-    # on_sky_acc_func, so the normalization 2*(t - cheby_t0)/(cheby_t1 - cheby_t0) - 1
-    # is frame-agnostic as long as the three quantities are consistent.
+    # cheby_t0/cheby_t1 live in the same offset frame as inputs.relative_time
+    # inside on_sky_acc_func, so the normalization
+    # 2*(t - cheby_t0)/(cheby_t1 - cheby_t0) - 1 is frame-agnostic as long as the
+    # three quantities are consistent.
     cheby_info = {
         "perturber_position_cheby_coeffs": perturber_pos_chebys,
         "perturber_velocity_cheby_coeffs": perturber_vel_chebys,
@@ -106,12 +107,12 @@ def precompute_likelihood_data(
     }
 
     # Use natural adaptive steps from start past the last observation time.
-    # state.time is 0.0 in the rebased frame; obs_times are offsets too.
+    # state.relative_time is 0.0 in the rebased frame; obs_times are offsets too.
+    # The state carries time_reference == p._t_ref_jd, so the acc func recovers
+    # the absolute JD as relative_time + time_reference on its own.
     state = p.keplerian_state.to_system()
-    t0 = state.time
-    dynamic_acc_func = create_default_ephemeris_acceleration_func(
-        ephem.processor, t_ref_jd=p._t_ref_jd
-    )
+    t0 = state.relative_time
+    dynamic_acc_func = create_default_ephemeris_acceleration_func(ephem.processor)
     a0_dynamic = dynamic_acc_func(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)
     # Seed the integrator with the gap from the particle epoch to the first
