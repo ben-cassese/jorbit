@@ -30,3 +30,12 @@ repos:
     hooks:
     - id: codespell
       exclude: '\.ipynb$|\.c$|^src/jorbit/data/observatory_codes\.py$'
+
+  - repo: local
+    hooks:
+      - id: codespell-notebooks
+        name: codespell (notebook markdown cells)
+        entry: python tools/codespell_notebook_markdown.py
+        language: python
+        additional_dependencies: ["codespell==2.4.2"]
+        files: '\.ipynb$'
