@@ -418,7 +418,10 @@ def extra_precision_calcs(
         massive_velocities=jnp.empty((0, 3)),
         log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={},
-        time=Time("2020-01-01"),
+        # The epoch the cached x0/v0 are defined at. System(state=...) recovers
+        # the absolute epoch from relative_time + time_reference.
+        time_reference=Time("2020-01-01").tdb.jd,
+        relative_time=jnp.array(0.0),
         fixed_perturber_positions=jnp.empty((0, 3)),
         fixed_perturber_velocities=jnp.empty((0, 3)),
         fixed_perturber_log_gms=jnp.empty((0,)),

@@ -410,7 +410,10 @@ def ias15_step(
             step just completed, shape (7, n_particles, 3). The converged b is
             what should be stored when building dense output for interpolation.
     """
-    t_beginning = initial_system_state.time
+    t_beginning = initial_system_state.relative_time
+    # The absolute-JD anchor is constant across the step; the integrator marches
+    # relative_time and carries time_reference through unchanged.
+    t_ref = initial_system_state.time_reference
 
     M = initial_system_state.massive_positions.shape[0]
     x0 = jnp.concatenate(
@@ -488,7 +491,8 @@ def ias15_step(
                 tracer_positions=x[M:],
                 tracer_velocities=v[M:],
                 log_gms=initial_system_state.log_gms,
-                time=step_time,
+                time_reference=t_ref,
+                relative_time=step_time,
                 fixed_perturber_positions=jnp.empty(
                     (0, 3),
                 ),
@@ -631,7 +635,8 @@ def ias15_step(
         tracer_positions=x0[M:],
         tracer_velocities=v0[M:],
         log_gms=initial_system_state.log_gms,
-        time=t_beginning + dt_done,
+        time_reference=t_ref,
+        relative_time=t_beginning + dt_done,
         fixed_perturber_positions=initial_system_state.fixed_perturber_positions * 0,
         fixed_perturber_velocities=initial_system_state.fixed_perturber_velocities * 0,
         fixed_perturber_log_gms=initial_system_state.fixed_perturber_log_gms * 0,
@@ -706,7 +711,7 @@ def ias15_evolve_forced_landing(
         def step_needed(args: tuple) -> tuple:
             system_state, integrator_state, last_meaningful_dt, iter_num = args
 
-            t = system_state.time
+            t = system_state.relative_time
 
             diff = final_time - t
             step_length = jnp.sign(diff) * jnp.min(
@@ -721,7 +726,7 @@ def ias15_evolve_forced_landing(
 
         def cond_func(args: tuple) -> bool:
             system_state, integrator_state, _last_meaningful_dt, iter_num = args
-            t = system_state.time
+            t = system_state.relative_time
 
             step_length = jnp.sign(final_time - t) * jnp.min(
                 jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
@@ -850,7 +855,7 @@ def _ias15_evolve_core(
             The acceleration function to use.
         times (jnp.ndarray):
             Times at which to return interpolated positions and velocities. Must be
-            within [initial_system_state.time, t_end_of_last_natural_step].
+            within [initial_system_state.relative_time, t_end_of_last_natural_step].
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
         step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
@@ -894,13 +899,13 @@ def _ias15_evolve_core(
     # valid queries into the accepted-step prefix.
     dts_buf = jnp.full((IAS15_MAX_DYNAMIC_STEPS,), 1e30)
 
-    t0 = initial_system_state.time
+    t0 = initial_system_state.relative_time
     final_time = jnp.max(times)
     direction = jnp.sign(final_time - t0)
 
     def cond_fn(carry: tuple) -> bool:
         system_state, _ig, _b, _a0, _x0, _v0, _dts, n_accepted, iter_num = carry
-        t = system_state.time
+        t = system_state.relative_time
         # Non-strict on `direction` so that direction == 0 (final_time == t0)
         # short-circuits past_final to True at iter 0, skipping the loop body
         # entirely. For direction != 0 only one disjunct is active and the
@@ -1049,7 +1054,7 @@ def ias15_evolve(
             The acceleration function to use.
         times (jnp.ndarray):
             Times at which to return interpolated positions and velocities. Must be
-            within ``[initial_system_state.time, t_end_of_last_natural_step]``.
+            within ``[initial_system_state.relative_time, t_end_of_last_natural_step]``.
         initial_integrator_state (IAS15IntegratorState):
             The initial state of the integrator.
         step_scheduler (Callable):

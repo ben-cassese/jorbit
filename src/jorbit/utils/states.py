@@ -28,14 +28,32 @@ SUN_GM = jnp.exp(ALL_PLANET_LOG_GMS["sun"])
 
 @chex.dataclass
 class SystemState:
-    """Contains the state of a system of particles."""
+    """Contains the state of a system of particles.
+
+    Time is represented as the same ``(relative_time, time_reference)`` pair used
+    by :class:`CartesianState` and :class:`KeplerianState`, so the state is
+    self-describing about its absolute epoch:
+
+    - ``time_reference`` is the absolute JD (TDB) anchor.
+    - ``relative_time`` is the offset in days from ``time_reference``. This is the
+      quantity the integrator marches forward (keeping step/interpolation
+      arithmetic well-conditioned at decadal timescales); ``time_reference`` is
+      carried along unchanged.
+
+    Invariant: ``absolute_jd = relative_time + time_reference``. Acceleration
+    functions that query an ephemeris recover the absolute JD from this sum, so
+    no external ``t_ref_jd`` offset is needed.
+    """
 
     tracer_positions: jnp.ndarray
     tracer_velocities: jnp.ndarray
     massive_positions: jnp.ndarray
     massive_velocities: jnp.ndarray
     log_gms: jnp.ndarray
-    time: float
+    # absolute JD (TDB) anchor that relative_time is measured against
+    time_reference: float
+    # offset in days from time_reference; this is what the integrator advances
+    relative_time: float
     fixed_perturber_positions: (
         jnp.ndarray
     )  # need a leading axis! (n_substeps, n_perturbers, 3)
@@ -54,15 +72,14 @@ class KeplerianState:
     Time is represented as a ``(relative_time, time_reference)`` pair so the
     state is self-describing about its absolute epoch:
 
-    - ``relative_time`` is the value that flows through to ``SystemState.time``
-      and the integrator / acceleration functions. Acceleration functions
-      built with a non-zero ``t_ref_jd`` add it back to recover an absolute
-      JD; standalone factories built with ``t_ref_jd=0`` use this value
-      directly.
-    - ``time_reference`` is the absolute JD (TDB) anchor that
-      ``relative_time`` is measured against. ``Particle.__init__`` reads
-      ``relative_time + time_reference`` to set the particle's reference
-      epoch.
+    - ``relative_time`` is the offset (in days) that flows through to
+      ``SystemState.relative_time`` and is the quantity the integrator marches
+      forward.
+    - ``time_reference`` is the absolute JD (TDB) anchor that ``relative_time``
+      is measured against. It flows through to ``SystemState.time_reference``;
+      acceleration functions recover the absolute JD as
+      ``relative_time + time_reference``. ``Particle.__init__`` reads the same
+      sum to set the particle's reference epoch.
 
     Invariant: ``absolute_jd = relative_time + time_reference``.
     """
@@ -115,9 +132,10 @@ class KeplerianState:
     def to_system(self) -> SystemState:
         """Converts the Keplerian state to a system state.
 
-        ``SystemState.time`` is set from ``self.relative_time``; the
-        ``time_reference`` anchor is dropped, since the acceleration function
-        carries its own ``t_ref_jd`` for converting back to absolute JD.
+        Both ``relative_time`` and ``time_reference`` are carried over unchanged,
+        so the resulting :class:`SystemState` is self-describing about its
+        absolute epoch and acceleration functions can recover the absolute JD
+        directly from ``relative_time + time_reference``.
         """
         c = self.to_cartesian()
         return SystemState(
@@ -126,7 +144,8 @@ class KeplerianState:
             massive_positions=jnp.empty((0, 3)),
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
-            time=self.relative_time,
+            time_reference=self.time_reference,
+            relative_time=self.relative_time,
             fixed_perturber_positions=jnp.empty((0, 3)),
             fixed_perturber_velocities=jnp.empty((0, 3)),
             fixed_perturber_log_gms=jnp.empty((0,)),
@@ -187,9 +206,10 @@ class CartesianState:
     def to_system(self) -> SystemState:
         """Converts the Cartesian state to a system state.
 
-        ``SystemState.time`` is set from ``self.relative_time``; the
-        ``time_reference`` anchor is dropped, since the acceleration function
-        carries its own ``t_ref_jd`` for converting back to absolute JD.
+        Both ``relative_time`` and ``time_reference`` are carried over unchanged,
+        so the resulting :class:`SystemState` is self-describing about its
+        absolute epoch and acceleration functions can recover the absolute JD
+        directly from ``relative_time + time_reference``.
         """
         return SystemState(
             tracer_positions=self.x,
@@ -197,7 +217,8 @@ class CartesianState:
             massive_positions=jnp.empty((0, 3)),
             massive_velocities=jnp.empty((0, 3)),
             log_gms=jnp.empty((0,)),
-            time=self.relative_time,
+            time_reference=self.time_reference,
+            relative_time=self.relative_time,
             fixed_perturber_positions=jnp.empty((0, 3)),
             fixed_perturber_velocities=jnp.empty((0, 3)),
             fixed_perturber_log_gms=jnp.empty((0,)),

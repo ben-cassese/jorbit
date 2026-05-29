@@ -30,8 +30,9 @@ from jorbit.integrators import (
 from jorbit.utils.horizons import get_observer_positions
 
 eph = Ephemeris(ssos="default solar system")
-# t_ref_jd=0 means this func expects absolute JDs in state.time; used only by
-# _test_agreement's on_sky calls where we pass absolute JD obs times.
+# Used only by _test_agreement's on_sky calls, where we pass absolute JD obs times
+# with on_sky's default time_reference=0.0, so relative_time + time_reference recovers
+# the absolute JD directly.
 acc_func_dynamic_abs = create_default_ephemeris_acceleration_func(eph.processor)
 acc_func_static = create_static_default_acceleration_func()
 
@@ -39,9 +40,7 @@ acc_func_static = create_static_default_acceleration_func()
 def _get_dynamic_positions(asteroid: str, times: Time) -> jnp.ndarray:
     p = Particle.from_horizons(asteroid, times[0])
     state = p.keplerian_state.to_system()
-    acc_func_dynamic = create_default_ephemeris_acceleration_func(
-        eph.processor, t_ref_jd=p._t_ref_jd
-    )
+    acc_func_dynamic = create_default_ephemeris_acceleration_func(eph.processor)
     offsets = p._times_to_offsets(times)
 
     a0_dynamic = acc_func_dynamic(state)
@@ -64,11 +63,9 @@ def _get_dynamic_positions(asteroid: str, times: Time) -> jnp.ndarray:
 def _get_static_positions(asteroid: str, times: Time) -> jnp.ndarray:
     p = Particle.from_horizons(asteroid, times[0])
     state = p.keplerian_state.to_system()
-    acc_func_dynamic = create_default_ephemeris_acceleration_func(
-        eph.processor, t_ref_jd=p._t_ref_jd
-    )
+    acc_func_dynamic = create_default_ephemeris_acceleration_func(eph.processor)
     offsets = p._times_to_offsets(times)
-    t0 = state.time
+    t0 = state.relative_time
 
     a0_dynamic = acc_func_dynamic(state)
     integrator_init = initialize_ias15_integrator_state(a0_dynamic)

@@ -92,24 +92,31 @@ def test_observations_sliced_then_added_preserves_times_astropy() -> None:
 
 
 # ===========================================================================
-# 1c.  System(state=SystemState) with float time must raise, not silently misuse
+# 1c.  System(state=SystemState) recovers the epoch from the self-describing state
 # ===========================================================================
 
 
-def test_system_from_systemstate_with_float_time_raises() -> None:
-    """System(state=SystemState) with float time must raise ValueError.
+def test_system_from_systemstate_recovers_epoch() -> None:
+    """System(state=SystemState) recovers the epoch from relative_time + time_reference.
 
-    state.time is a float offset (common case from CartesianState.to_system());
-    this must raise rather than silently set the epoch to JD 0 (~4713 BC).
+    A SystemState is now self-describing (it carries the same
+    ``(relative_time, time_reference)`` pair as CartesianState/KeplerianState), so
+    ``System(state=p.cartesian_state.to_system())`` should reproduce the particle's
+    epoch instead of raising.
     """
-    import pytest
-
     p = Particle(x=_X0, v=_V0, time=_T0, gravity="newtonian planets")
     sys_state = p.cartesian_state.to_system()
-    # sys_state.time == 0.0 (an *offset*, not absolute JD)
+    # sys_state carries relative_time=0.0, time_reference=p._t_ref_jd
 
-    with pytest.raises(ValueError, match="absolute epoch"):
-        System(state=sys_state, gravity="newtonian planets")
+    sys = System(state=sys_state, gravity="newtonian planets")
+
+    assert abs(float(sys._t_ref_jd) - float(p._t_ref_jd)) < 1e-6, (
+        f"System epoch ({float(sys._t_ref_jd)}) doesn't match Particle epoch "
+        f"({float(p._t_ref_jd)})"
+    )
+    # The rebased state should carry relative_time=0.0 against the recovered anchor.
+    assert abs(float(sys._state.relative_time)) < 1e-9
+    assert abs(float(sys._state.time_reference) - float(p._t_ref_jd)) < 1e-6
 
 
 def test_system_from_particles_has_correct_epoch() -> None:

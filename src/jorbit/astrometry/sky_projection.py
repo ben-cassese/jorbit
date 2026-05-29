@@ -101,6 +101,7 @@ def on_sky(
     acc_func: jax.tree_util.Partial,
     acc_func_kwargs: dict = {},
     ltt_position_fn: jax.tree_util.Partial | None = None,
+    time_reference: float = 0.0,
 ) -> tuple[float, float]:
     """Compute the on-sky position of a particle from a given observer position.
 
@@ -123,7 +124,10 @@ def on_sky(
     Args:
         x (jnp.ndarray): Position of the particle, shape (3,).
         v (jnp.ndarray): Velocity of the particle, shape (3,).
-        time (float): Time at which to compute the on-sky position, JD, tdb.
+        time (float): Time at which to compute the on-sky position, expressed as the
+            ``relative_time`` offset (in days) against ``time_reference``. The
+            acceleration is evaluated at the absolute JD ``time + time_reference``.
+            Pass an absolute JD (TDB) here with ``time_reference=0.0`` for standalone use.
         observer_position (jnp.ndarray): Position of the observer, shape (3,).
         acc_func (jax.tree_util.Partial):
             Acceleration function to use during light travel time correction. Must be a
@@ -137,20 +141,28 @@ def on_sky(
             iteration in place of the constant-acceleration Taylor expansion, and
             ``acc_func`` is not called. Default ``None`` preserves the original
             Taylor-based behavior.
+        time_reference (float, optional): Absolute JD (TDB) anchor that ``time`` is
+            measured against. The acceleration is evaluated at ``time + time_reference``.
+            Defaults to ``0.0`` (i.e. ``time`` is treated as an absolute JD). Ignored
+            when ``ltt_position_fn`` is provided.
 
     Returns:
         tuple[float, float]:
             The right ascension and declination of the particle in radians, ICRS.
     """
     if ltt_position_fn is None:
-        # Default: evaluate acceleration once and Taylor-expand backward by LTT
+        # Default: evaluate acceleration once and Taylor-expand backward by LTT.
+        # acc_func recovers the absolute JD as relative_time + time_reference, so
+        # `time` is the offset and `time_reference` its anchor (0.0 if `time` is
+        # already an absolute JD, the standalone default).
         state = SystemState(
             massive_positions=jnp.empty((0, 3)),
             massive_velocities=jnp.empty((0, 3)),
             tracer_positions=jnp.array([x]),
             tracer_velocities=jnp.array([v]),
             log_gms=jnp.empty(0),
-            time=time,
+            time_reference=time_reference,
+            relative_time=time,
             fixed_perturber_positions=jnp.empty((0, 3)),
             fixed_perturber_velocities=jnp.empty((0, 3)),
             fixed_perturber_log_gms=jnp.empty(0),

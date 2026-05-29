@@ -305,6 +305,27 @@ class Particle:
             return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
         return jnp.asarray(times) - self._t_ref_jd
 
+    def _validate_state_epoch(self, state: CartesianState | KeplerianState) -> None:
+        """Guard against a ``state=`` whose epoch disagrees with this particle's.
+
+        Query times handed to ``integrate``/``ephemeris`` are offsets from
+        ``self._t_ref_jd``, so a supplied ``state`` must share that anchor: the
+        integrator marches ``relative_time`` and the acceleration function adds
+        ``state.time_reference`` to recover the absolute JD. If the two disagree
+        the ephemeris would be queried at the wrong epoch (potentially years off)
+        while still "looking" plausible, so we fail loudly instead.
+        """
+        if abs(float(state.time_reference) - float(self._t_ref_jd)) > 1e-6:
+            raise ValueError(
+                "The provided state's time_reference "
+                f"({float(state.time_reference)}) does not match this particle's "
+                f"reference epoch ({float(self._t_ref_jd)}). States passed via "
+                "`state=` must be expressed in the particle's frame "
+                "(time_reference == particle.t_ref_jd, with relative_time the offset "
+                "in days). Build the state at the particle's epoch, or create a new "
+                "Particle at the desired epoch."
+            )
+
     def _observations_times_as_offsets(self) -> jnp.ndarray:
         """Return the observation times as offsets from ``self._t_ref_astropy``.
 
@@ -413,28 +434,14 @@ class Particle:
 
     def _setup_acceleration_func(self, gravity: str) -> Callable:
         if isinstance(gravity, jax.tree_util.Partial):
-            # The wrapper converts from the Particle's internal offset frame
-            # (state.time = days since self._t_ref_jd) to absolute JD before
-            # calling the user's function, which must expect absolute JD.
-            #
-            # CONTRACT: the custom function must be built with t_ref_jd=0 (or
-            # equivalently, must treat state.time as an absolute Julian Date).
-            # Do NOT pass a function returned by jorbit's factory functions
-            # (create_default_ephemeris_acceleration_func, etc.) that was
-            # built with a non-zero t_ref_jd — that would double-count the
-            # offset and silently query the ephemeris at the wrong time.
-            # The safe pattern is to build the function fresh with t_ref_jd=0:
-            #   acc_func = create_default_ephemeris_acceleration_func(
-            #       eph.processor, t_ref_jd=0.0
-            #   )
-            user_func = gravity
-            t_ref_jd = self._t_ref_jd
-
-            def _wrapped_user_acc(state: SystemState) -> jnp.ndarray:
-                shifted = state.replace(time=state.time + t_ref_jd)
-                return user_func(shifted)
-
-            return jax.tree_util.Partial(_wrapped_user_acc)
+            # CONTRACT: the custom function must recover the absolute JD from the
+            # state itself, as ``inputs.relative_time + inputs.time_reference`` —
+            # exactly what jorbit's own factory functions
+            # (create_default_ephemeris_acceleration_func, etc.) now do. The state
+            # the integrator hands to the function carries
+            # ``time_reference == self._t_ref_jd`` and a small ``relative_time``
+            # offset, so no wrapper/shim is needed: the state is self-describing.
+            return gravity
 
         assert self._de_ephemeris_version in ["440", "430"], (
             "de_ephemeris_version must be either '440' or '430' if not using a custom "
@@ -448,9 +455,7 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(
-                eph.processor, t_ref_jd=self._t_ref_jd
-            )
+            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
         elif gravity == "newtonian solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -458,9 +463,7 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_newtonian_ephemeris_acceleration_func(
-                eph.processor, t_ref_jd=self._t_ref_jd
-            )
+            acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
         elif gravity == "gr planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -468,9 +471,7 @@ class Particle:
                 ssos="default planets",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(
-                eph.processor, t_ref_jd=self._t_ref_jd
-            )
+            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
         elif gravity == "gr solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -478,9 +479,7 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_gr_ephemeris_acceleration_func(
-                eph.processor, t_ref_jd=self._t_ref_jd
-            )
+            acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
         elif gravity == "default solar system":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
@@ -488,9 +487,7 @@ class Particle:
                 ssos="default solar system",
                 de_ephemeris_version=self._de_ephemeris_version,
             )
-            acc_func = create_default_ephemeris_acceleration_func(
-                eph.processor, t_ref_jd=self._t_ref_jd
-            )
+            acc_func = create_default_ephemeris_acceleration_func(eph.processor)
         else:
             raise ValueError(
                 f"Unrecognized gravity '{gravity}'. Valid options are: 'newtonian planets', "
@@ -809,12 +806,14 @@ class Particle:
         state: CartesianState | KeplerianState | None = None,
         forced_landing: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        if state is not None:
+            self._validate_state_epoch(state)
+
         if self._is_keplerian:
             if state is not None:
                 state = state.to_cartesian()
                 # relative_time is already in this Particle's offset frame
-                # (provided state.time_reference matches self._t_ref_jd, which
-                # is the standard convention for states passed via state=).
+                # (validated above: state.time_reference == self._t_ref_jd).
                 x, v, t0 = (
                     state.x.flatten(),
                     state.v.flatten(),
@@ -985,6 +984,9 @@ class Particle:
             )
         else:
             observer_positions = observer
+
+        if state is not None:
+            self._validate_state_epoch(state)
 
         if uncertainty:
             cov_state = (
@@ -1341,7 +1343,14 @@ def _ephem(
 
     def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
         position, velocity, time, observer_position = scan_over
-        ra, dec = on_sky(position, velocity, time, observer_position, acc_func)
+        ra, dec = on_sky(
+            position,
+            velocity,
+            time,
+            observer_position,
+            acc_func,
+            time_reference=particle_state.time_reference,
+        )
         return None, (ra, dec)
 
     _, (ras, decs) = jax.lax.scan(
