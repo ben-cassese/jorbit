@@ -1,10 +1,12 @@
 """All functions related to integrating a SystemState."""
 
 __all__ = [
+    "budgeted_forced_landing",
     "create_leapfrog_times",
     "ias15_evolve",
     "ias15_evolve_forced_landing",
     "ias15_evolve_with_dense_output",
+    "ias15_span_probe",
     "ias15_static_evolve",
     "ias15_static_step",
     "ias15_step",
@@ -16,8 +18,16 @@ __all__ = [
     "next_proposed_dt_PRS23",
     "next_proposed_dt_global",
     "precompute_interpolation_indices",
+    "stitched_interpolate",
+    "stitched_per_query_gather",
 ]
 
+from jorbit.integrators.budgeted import (
+    budgeted_forced_landing,
+    ias15_span_probe,
+    stitched_interpolate,
+    stitched_per_query_gather,
+)
 from jorbit.integrators.ias15 import (
     ias15_evolve,
     ias15_evolve_forced_landing,

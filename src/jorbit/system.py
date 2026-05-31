@@ -23,12 +23,13 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
-    ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
     make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
+    stitched_interpolate,
+    stitched_per_query_gather,
 )
 from jorbit.particle import _keplerian_integrate, _keplerian_on_sky
 from jorbit.utils.horizons import get_observer_positions
@@ -299,7 +300,10 @@ class System:
     ################
 
     def integrate(
-        self, times: Time, step_scheduler: str = "prs23"
+        self,
+        times: Time,
+        step_scheduler: str = "prs23",
+        return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the System to a given time.
 
@@ -316,37 +320,39 @@ class System:
                 which uses the PRS23 controller from Pham+ 2023, or "global", which
                 uses the controller from the original IAS15 paper. Default is "prs23".
                 Ignored for leapfrog integrators and keplerian systems.
+            return_steps (bool):
+                If True, also return the total number of integration steps taken (summed
+                across any stitched interpolation chunks), appended as the final element
+                of the returned tuple. ``None`` for the analytic Keplerian and fixed-step
+                leapfrog paths, which cannot truncate. Defaults to False.
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
                 The positions of the particle at the given times, in AU, and the
-                The velocities of the particle at the given times, in AU/day.
+                The velocities of the particle at the given times, in AU/day. If
+                return_steps is True, also the total integration step count.
         """
         times = self._times_to_offsets(times)
         if times.shape == ():
             times = jnp.array([times])
 
         if self._is_keplerian:
-            return _keplerian_system_integrate(
+            positions, velocities = _keplerian_system_integrate(
                 self._state.tracer_positions,
                 self._state.tracer_velocities,
                 self._state.relative_time,
                 times,
             )
-
-        if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            # For leapfrog, need to create intermediate times
+            steps = None
+        elif self._integrator_method in ["Y4", "Y6", "Y8"]:
+            # Leapfrog pre-expands its (uncapped) time array, so it never truncates.
             times, inds = create_leapfrog_times(
                 t0=self._state.relative_time,
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
-        else:
-            inds = jnp.arange(times.shape[0])
-
-        scheduler = self._resolve_step_scheduler(step_scheduler)
-        positions, velocities, _final_system_state, _final_integrator_state = (
-            _integrate(
+            scheduler = self._resolve_step_scheduler(step_scheduler)
+            positions, velocities, _fss, _fis = _integrate(
                 times,
                 self._state,
                 self.gravity,
@@ -355,8 +361,21 @@ class System:
                 inds,
                 scheduler,
             )
-        )
+            steps = None
+        else:
+            # IAS15: stitch dense-output chunks so the 15k buffer can't silently
+            # truncate. See jorbit.integrators.budgeted.
+            scheduler = self._resolve_step_scheduler(step_scheduler)
+            positions, velocities, steps = stitched_interpolate(
+                self._state,
+                self.gravity,
+                times,
+                self._integrator_state,
+                scheduler,
+            )
 
+        if return_steps:
+            return positions, velocities, steps
         return positions, velocities
 
     def ephemeris(
@@ -364,6 +383,7 @@ class System:
         times: Time | jnp.ndarray,
         observer: str | jnp.ndarray,
         step_scheduler: str = "prs23",
+        return_steps: bool = False,
     ) -> SkyCoord:
         """Compute an ephemeris for the system.
 
@@ -381,12 +401,18 @@ class System:
                 which uses the PRS23 controller from Pham+ 2023, or "global", which
                 uses the controller from the original IAS15 paper. Default is "prs23".
                 Ignored for leapfrog integrators and keplerian systems.
+            return_steps (bool):
+                If True, return a tuple of the SkyCoord and the total number of
+                integration steps taken (summed across any stitched interpolation
+                chunks). ``None`` for the analytic Keplerian and fixed-step leapfrog
+                paths, which cannot truncate. Defaults to False.
 
         Returns:
             coords (SkyCoord):
                 The ephemeris of each particle in the system at the given times, in ICRS
                 coordinates and as seen from that specific observer. Each particle has
-                its own light travel time correction applied individually.
+                its own light travel time correction applied individually. If
+                return_steps is True, returns ``(coords, steps)``.
         """
         if isinstance(observer, str):
             observer_positions = get_observer_positions(
@@ -407,34 +433,20 @@ class System:
                 times,
                 observer_positions,
             )
-            return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            if return_steps:
+                return coords, None
+            return coords
 
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
-            # For leapfrog, need to create intermediate times
+            # For leapfrog, need to create intermediate times. Leapfrog has no
+            # b-coefficients; fall back to the original constant-acceleration Taylor.
             times, inds = create_leapfrog_times(
                 t0=self._state.relative_time,
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
-        else:
-            inds = jnp.arange(times.shape[0])
-
-        scheduler = self._resolve_step_scheduler(step_scheduler)
-        # IAS15 has dense-output b-coefficients available, so use them in on_sky's
-        # LTT loop instead of a constant-acceleration Taylor expansion. Leapfrog
-        # has no b-coefficients; fall back to the original Taylor.
-        use_dense_ltt = self._integrator_method not in ("Y4", "Y6", "Y8")
-        if use_dense_ltt:
-            ras, decs = _ephem_ias15(
-                times,
-                self._state,
-                self.gravity,
-                self._integrator_state,
-                observer_positions,
-                inds,
-                scheduler,
-            )
-        else:
+            scheduler = self._resolve_step_scheduler(step_scheduler)
             ras, decs = _ephem(
                 times,
                 self._state,
@@ -445,8 +457,26 @@ class System:
                 inds,
                 scheduler,
             )
+            steps = None
+        else:
+            # IAS15: stitch dense-output chunks (truncation-proof) and use the
+            # b-coefficients for each particle's light-travel-time correction.
+            inds = jnp.arange(times.shape[0])
+            scheduler = self._resolve_step_scheduler(step_scheduler)
+            ras, decs, steps = _ephem_ias15_stitched(
+                times,
+                self._state,
+                self.gravity,
+                self._integrator_state,
+                observer_positions,
+                inds,
+                scheduler,
+            )
 
-        return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+        coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+        if return_steps:
+            return coords, steps
+        return coords
 
 
 @jax.jit
@@ -520,49 +550,26 @@ def _ephem(
 
 
 @jax.jit
-def _ephem_ias15(
-    times: jnp.ndarray,
-    state: SystemState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
+def _dense_ltt_radec_multi(
+    b_per_obs_all: jnp.ndarray,
+    a0_per_obs_all: jnp.ndarray,
+    x0_per_obs_all: jnp.ndarray,
+    v0_per_obs_all: jnp.ndarray,
+    dt_per_obs: jnp.ndarray,
+    h_per_obs: jnp.ndarray,
+    obs_times: jnp.ndarray,
     observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
+    acc_func: Callable,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+    """Per-observation, per-particle dense-output light-travel-time ``on_sky``.
 
-    Vmaps the per-observation polynomial-LTT closure over both the observation axis
-    and the particle axis; each particle gets its own light-travel-time correction.
+    Vmaps the dense-output polynomial-LTT closure over both the observation axis and the
+    particle axis; each particle gets its own light-travel-time correction. Inputs are
+    already gathered per observation: ``b_per_obs_all`` is ``(n_obs, 7, P, 3)``;
+    ``a0/x0/v0_per_obs_all`` are ``(n_obs, P, 3)``; ``dt/h_per_obs/obs_times`` are
+    ``(n_obs,)``; ``observer_positions`` is ``(n_obs, 3)``. Returns ``(ras, decs)`` each
+    shaped ``(P, n_obs)``.
     """
-    (
-        _positions,
-        _velocities,
-        _final_system_state,
-        _final_integrator_state,
-        _iter_num,
-        b_buf,
-        a0_buf,
-        x0_buf,
-        v0_buf,
-        dts_buf,
-        _t_step_starts,
-        step_indices,
-        h_values,
-    ) = ias15_evolve_with_dense_output(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-
-    obs_times = times[relevant_inds]
-    obs_step_indices = step_indices[relevant_inds]
-    obs_h_values = h_values[relevant_inds]
-
-    # Per-obs gather. Shapes: b (n_obs, 7, n_particles, 3), a0/v0/x0 (n_obs, n_particles, 3),
-    # dt (n_obs,).
-    b_per_obs_all = b_buf[obs_step_indices]
-    a0_per_obs_all = a0_buf[obs_step_indices]
-    x0_per_obs_all = x0_buf[obs_step_indices]
-    v0_per_obs_all = v0_buf[obs_step_indices]
-    dt_per_obs = dts_buf[obs_step_indices]
 
     def per_particle_per_obs(
         b_step: jnp.ndarray,
@@ -600,7 +607,7 @@ def _ephem_ias15(
             x0_obs_p,
             v0_obs_p,
             dt_per_obs,
-            obs_h_values,
+            h_per_obs,
             obs_times,
             observer_positions,
         )
@@ -611,6 +618,40 @@ def _ephem_ias15(
         b_per_obs_all, a0_per_obs_all, x0_per_obs_all, v0_per_obs_all
     )
     return ras, decs
+
+
+def _ephem_ias15_stitched(
+    times: jnp.ndarray,
+    state: SystemState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+    """Truncation-proof IAS15 dense-output ephemeris for the whole system.
+
+    Host-side wrapper that stitches as many dense-output chunks as the span requires
+    (see :func:`jorbit.integrators.stitched_per_query_gather`) before the per-obs,
+    per-particle dense-LTT ``on_sky`` evaluation in :func:`_dense_ltt_radec_multi`.
+    """
+    b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+    # Restrict to observation times (drops any intermediate landing times). For IAS15
+    # relevant_inds is the identity, but keep the indexing uniform with other paths.
+    ras, decs = _dense_ltt_radec_multi(
+        b_q[relevant_inds],
+        a0_q[relevant_inds],
+        x0_q[relevant_inds],
+        v0_q[relevant_inds],
+        dt_q[relevant_inds],
+        h_q[relevant_inds],
+        times[relevant_inds],
+        observer_positions,
+        acc_func,
+    )
+    return ras, decs, steps
 
 
 @jax.jit

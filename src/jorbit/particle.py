@@ -43,15 +43,19 @@ from jorbit.data.constants import (
 )
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
+    budgeted_forced_landing,
     create_leapfrog_times,
     ias15_evolve,
     ias15_evolve_forced_landing,
     ias15_evolve_with_dense_output,
+    ias15_span_probe,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
     make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
+    stitched_interpolate,
+    stitched_per_query_gather,
 )
 from jorbit.likelihoods.setup_static_likelihood import (
     create_default_static_residuals_func,
@@ -840,16 +844,12 @@ class Particle:
             times = jnp.array([times])
 
         if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            # Leapfrog pre-expands its (uncapped) time array, so it never truncates.
             times, inds = create_leapfrog_times(
                 state.relative_time, times, self._max_step_size
             )
-        else:
-            inds = jnp.arange(times.shape[0])
-
-        integrator = self._forced_integrator if forced_landing else self._integrator
-
-        positions, velocities, _final_system_state, _final_integrator_state, steps = (
-            _integrate(
+            integrator = self._forced_integrator if forced_landing else self._integrator
+            positions, velocities, _fss, _fis, steps = _integrate(
                 times,
                 state,
                 self.gravity,
@@ -858,7 +858,20 @@ class Particle:
                 inds,
                 self._step_scheduler,
             )
-        )
+            return positions[:, 0, :], velocities[:, 0, :], steps
+
+        # IAS15: orchestrate on the host so neither the dense-output buffer
+        # (interpolation) nor the per-interval cap (forced landing) can silently
+        # truncate. See jorbit.integrators.budgeted.
+        sys_state = state.to_system()
+        if forced_landing:
+            positions, velocities, steps = budgeted_forced_landing(
+                sys_state, self.gravity, times, integrator_state, self._step_scheduler
+            )
+        else:
+            positions, velocities, steps = stitched_interpolate(
+                sys_state, self.gravity, times, integrator_state, self._step_scheduler
+            )
         return positions[:, 0, :], velocities[:, 0, :], steps
 
     def integrate(
@@ -941,7 +954,8 @@ class Particle:
         state: CartesianState | KeplerianState | None = None,
         interpolate: bool = True,
         uncertainty: bool = False,
-    ) -> SkyCoord | tuple[SkyCoord, jnp.ndarray]:
+        return_steps: bool = False,
+    ) -> SkyCoord | tuple:
         """Compute an ephemeris for the particle.
 
         Args:
@@ -967,16 +981,24 @@ class Particle:
                 between parameterizations is performed. Expect roughly a ``6x`` cost
                 relative to the nominal call because ``jax.jacfwd`` performs one JVP
                 evaluation per input dimension. Defaults to False.
+            return_steps (bool):
+                If True, also return the total number of integration steps taken (summed
+                across any stitched interpolation chunks / inserted forced-landing
+                landings). Appended as the final element of the returned tuple. For the
+                IAS15 integrator this is the figure to watch: the nominal ephemeris is
+                truncation-proof, but the count reveals an unusually heavy integration.
+                ``None`` for the analytic Keplerian and fixed-step leapfrog paths, which
+                cannot truncate. Defaults to False.
 
         Returns:
-            coords (SkyCoord | tuple[SkyCoord, jnp.ndarray]):
+            coords (SkyCoord | tuple):
                 If ``uncertainty=False`` (default), returns a SkyCoord with the
                 ephemeris of the particle at the given times, in ICRS coordinates, as
                 seen from that specific observer and correcting for light travel time.
                 If ``uncertainty=True``, returns a tuple with the same SkyCoord and the
-                propagated ``(N, 2, 2)`` sky-plane covariance in ``arcsec**2``,
-                (the propagated ``(N, 2, 2)`` sky-plane covariance in ``arcsec**2``,
-                axis order (RA, Dec)).
+                propagated ``(N, 2, 2)`` sky-plane covariance in ``arcsec**2``
+                (axis order (RA, Dec)). If ``return_steps=True``, the step count is
+                appended as the final tuple element.
         """
         if isinstance(observer, str):
             observer_positions = get_observer_positions(
@@ -1018,7 +1040,11 @@ class Particle:
                 ras, decs, cov_radec = _keplerian_ephem_with_cov(
                     kep_state, offsets, observer_positions, cov
                 )
-                return (SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs"), cov_radec)
+                coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+                # Keplerian propagation is analytic: no integration steps to report.
+                if return_steps:
+                    return (coords, cov_radec, None)
+                return (coords, cov_radec)
 
             if state is not None:
                 state = state.to_cartesian()
@@ -1031,7 +1057,10 @@ class Particle:
                 x, v, t0 = self._x, self._v, self._time
 
             ras, decs = _keplerian_ephem(x, v, t0, offsets, observer_positions)
-            return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            if return_steps:
+                return (coords, None)
+            return coords
 
         if state is None:
             state = self._cartesian_state
@@ -1052,16 +1081,35 @@ class Particle:
             inds = jnp.arange(times.shape[0])
 
         integrator = self._integrator if interpolate else self._forced_integrator
+        is_leapfrog = self._integrator_method in ("Y4", "Y6", "Y8")
         # IAS15 with interpolation has dense-output b-coefficients available, so
         # we can use them to evaluate the polynomial at light-travel-delayed times in on_sky's
         # LTT loop instead of a constant-acceleration Taylor expansion. All other
         # paths (leapfrog, IAS15 forced-landing) fall back to the original Taylor.
-        use_dense_ltt = interpolate and self._integrator_method not in (
-            "Y4",
-            "Y6",
-            "Y8",
-        )
+        use_dense_ltt = interpolate and not is_leapfrog
+
         if uncertainty:
+            # The covariance path runs the integration inside jax.jacfwd, which cannot
+            # be threaded through the host-side stitching loop. For IAS15, detect a span
+            # that would overflow the dense-output buffer and raise rather than silently
+            # truncate (a nominal ephemeris() call auto-handles the same span).
+            steps = None
+            if not is_leapfrog:
+                would_truncate, steps = ias15_span_probe(
+                    state.to_system(),
+                    self.gravity,
+                    times,
+                    integrator_state,
+                    self._step_scheduler,
+                )
+                if would_truncate:
+                    raise RuntimeError(
+                        "ephemeris(uncertainty=True) over this span would exceed the "
+                        "IAS15 dense-output buffer and silently truncate. The covariance "
+                        "path uses forward-mode autodiff and cannot be transparently "
+                        "stitched; request a shorter span or more closely spaced times. "
+                        "(A nominal ephemeris(uncertainty=False) call auto-handles this.)"
+                    )
             if use_dense_ltt:
                 ras, decs, cov_radec = _ephem_ias15_with_cov(
                     times,
@@ -1084,10 +1132,24 @@ class Particle:
                     self._step_scheduler,
                     cov,
                 )
-            return (SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs"), cov_radec)
+            coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            if return_steps:
+                return (coords, cov_radec, steps)
+            return (coords, cov_radec)
 
         if use_dense_ltt:
-            ras, decs = _ephem_ias15(
+            ras, decs, steps = _ephem_ias15_stitched(
+                times,
+                state,
+                self.gravity,
+                integrator_state,
+                observer_positions,
+                inds,
+                self._step_scheduler,
+            )
+        elif not is_leapfrog:
+            # IAS15 forced-landing (interpolate=False): Taylor-LTT on budgeted landings.
+            ras, decs, steps = _ephem_forced_budgeted(
                 times,
                 state,
                 self.gravity,
@@ -1107,7 +1169,11 @@ class Particle:
                 inds,
                 self._step_scheduler,
             )
-        return SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+            steps = None
+        coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
+        if return_steps:
+            return (coords, steps)
+        return coords
 
     def max_likelihood(
         self,
@@ -1140,6 +1206,37 @@ class Particle:
                 fit_seed.to_cartesian().v.flatten(),
             ]
         )
+
+        if (not self._is_keplerian) and self._integrator_method == "ias15":
+            # Best-effort detect-and-raise guard. The likelihood integrates the
+            # observation span with the interpolation path (the 15k dense-output
+            # buffer). The orbit changes during optimization, but if even the seed
+            # already overflows the buffer the fit would silently truncate. Orbit
+            # fitting runs inside forward-mode autodiff and so cannot be transparently
+            # stitched the way the nominal integrate/ephemeris methods are.
+            seed_state = CartesianState(
+                x=jnp.array([x0[:3]]),
+                v=jnp.array([x0[3:]]),
+                relative_time=self._time,
+                time_reference=self._t_ref_jd,
+                acceleration_func_kwargs=self._acc_func_kwargs,
+            )
+            obs_times = self._observations_times_as_offsets()
+            a0 = self.gravity(seed_state.to_system())
+            would_truncate, _steps = ias15_span_probe(
+                seed_state.to_system(),
+                self.gravity,
+                obs_times,
+                initialize_ias15_integrator_state(a0),
+                self._step_scheduler,
+            )
+            if would_truncate:
+                raise RuntimeError(
+                    "The observation time span would exceed the IAS15 dense-output "
+                    "buffer and silently truncate the likelihood integration. Orbit "
+                    "fitting runs inside forward-mode autodiff and cannot be "
+                    "transparently stitched; fit over a shorter arc or split the data."
+                )
 
         if self._is_keplerian:
             # Keplerian propagation produces NaN for hyperbolic orbits, so we
@@ -1368,53 +1465,26 @@ def _ephem(
 
 
 @jax.jit
-def _ephem_ias15(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
+def _dense_ltt_radec(
+    b_per_obs: jnp.ndarray,
+    a0_per_obs: jnp.ndarray,
+    x0_per_obs: jnp.ndarray,
+    v0_per_obs: jnp.ndarray,
+    dt_per_obs: jnp.ndarray,
+    h_per_obs: jnp.ndarray,
+    obs_times: jnp.ndarray,
     observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
+    acc_func: Callable,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """IAS15-only variant of ``_ephem`` that uses dense-output b-coefficients for LTT.
+    """Per-observation dense-output light-travel-time ``on_sky`` for a single particle.
 
     The ``on_sky`` light-travel-time correction defaults to a 2nd-order Taylor with a
-    constant acceleration. For IAS15, we already have the converged 7th-order
-    polynomial per step (the "dense output"). This variant builds a per-observation
-    closure that evaluates that polynomial at the light-travel-delayed time, replacing the
-    Taylor expansion. Only used when ``interpolate=True``.
+    constant acceleration. For IAS15 we already have the converged 7th-order polynomial
+    per step (the "dense output"), so this evaluates that polynomial at the
+    light-travel-delayed time instead. Inputs are already gathered per observation:
+    ``b_per_obs`` is ``(n, 7, 3)``; ``a0/x0/v0_per_obs`` are ``(n, 3)``;
+    ``dt/h_per_obs/obs_times`` are ``(n,)``; ``observer_positions`` is ``(n, 3)``.
     """
-    state = particle_state.to_system()
-    (
-        _positions,
-        _velocities,
-        _final_system_state,
-        _final_integrator_state,
-        _iter_num,
-        b_buf,
-        a0_buf,
-        x0_buf,
-        v0_buf,
-        dts_buf,
-        _t_step_starts,
-        step_indices,
-        h_values,
-    ) = ias15_evolve_with_dense_output(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-
-    # Restrict to observation times only (drops any intermediate landing times).
-    obs_times = times[relevant_inds]
-    obs_step_indices = step_indices[relevant_inds]
-    obs_h_values = h_values[relevant_inds]
-
-    # Per-obs dense-output gather (single tracer at index 0).
-    b_per_obs = b_buf[obs_step_indices][:, :, 0, :]
-    a0_per_obs = a0_buf[obs_step_indices][:, 0, :]
-    x0_per_obs = x0_buf[obs_step_indices][:, 0, :]
-    v0_per_obs = v0_buf[obs_step_indices][:, 0, :]
-    dt_per_obs = dts_buf[obs_step_indices]
 
     def per_obs_on_sky(
         b_step: jnp.ndarray,
@@ -1439,17 +1509,160 @@ def _ephem_ias15(
             ltt_position_fn=propagator,
         )
 
-    ras, decs = jax.vmap(per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
+    return jax.vmap(per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
         b_per_obs,
         a0_per_obs,
         x0_per_obs,
         v0_per_obs,
         dt_per_obs,
-        obs_h_values,
+        h_per_obs,
         obs_times,
         observer_positions,
     )
+
+
+@jax.jit
+def _on_sky_scan(
+    positions: jnp.ndarray,
+    velocities: jnp.ndarray,
+    times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    acc_func: Callable,
+    time_reference: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Scan the (Taylor-LTT) ``on_sky`` over a sequence of single-particle states."""
+
+    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
+        position, velocity, time, observer_position = scan_over
+        ra, dec = on_sky(
+            position,
+            velocity,
+            time,
+            observer_position,
+            acc_func,
+            time_reference=time_reference,
+        )
+        return None, (ra, dec)
+
+    _, (ras, decs) = jax.lax.scan(
+        scan_func, None, (positions, velocities, times, observer_positions)
+    )
     return ras, decs
+
+
+@jax.jit
+def _ephem_ias15(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Single-chunk IAS15 dense-output ephemeris (used inside the autodiff cov path).
+
+    The truncation-proof nominal ephemeris uses :func:`_ephem_ias15_stitched` instead;
+    this single-:func:`ias15_evolve_with_dense_output` version is retained because it is
+    fully JIT-able and so can be wrapped by ``jax.jacfwd`` in
+    :func:`_ephem_ias15_with_cov`.
+    """
+    state = particle_state.to_system()
+    (
+        _positions,
+        _velocities,
+        _final_system_state,
+        _final_integrator_state,
+        _iter_num,
+        b_buf,
+        a0_buf,
+        x0_buf,
+        v0_buf,
+        dts_buf,
+        _t_step_starts,
+        step_indices,
+        h_values,
+    ) = ias15_evolve_with_dense_output(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+
+    # Restrict to observation times only (drops any intermediate landing times).
+    obs_step_indices = step_indices[relevant_inds]
+    return _dense_ltt_radec(
+        b_buf[obs_step_indices][:, :, 0, :],
+        a0_buf[obs_step_indices][:, 0, :],
+        x0_buf[obs_step_indices][:, 0, :],
+        v0_buf[obs_step_indices][:, 0, :],
+        dts_buf[obs_step_indices],
+        h_values[relevant_inds],
+        times[relevant_inds],
+        observer_positions,
+        acc_func,
+    )
+
+
+def _ephem_ias15_stitched(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+    """Truncation-proof IAS15 dense-output ephemeris (nominal ``interpolate=True``).
+
+    Host-side wrapper that stitches as many dense-output chunks as the span requires
+    (see :func:`jorbit.integrators.stitched_per_query_gather`) before the same per-obs
+    dense-LTT ``on_sky`` evaluation as :func:`_ephem_ias15`.
+    """
+    state = particle_state.to_system()
+    b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+    # Single tracer at index 0; restrict to observation times.
+    ras, decs = _dense_ltt_radec(
+        b_q[relevant_inds][:, :, 0, :],
+        a0_q[relevant_inds][:, 0, :],
+        x0_q[relevant_inds][:, 0, :],
+        v0_q[relevant_inds][:, 0, :],
+        dt_q[relevant_inds],
+        h_q[relevant_inds],
+        times[relevant_inds],
+        observer_positions,
+        acc_func,
+    )
+    return ras, decs, steps
+
+
+def _ephem_forced_budgeted(
+    times: jnp.ndarray,
+    particle_state: CartesianState | KeplerianState,
+    acc_func: Callable,
+    integrator_state: IAS15IntegratorState,
+    observer_positions: jnp.ndarray,
+    relevant_inds: jnp.ndarray,
+    step_scheduler: Callable,
+) -> tuple[jnp.ndarray, jnp.ndarray, int]:
+    """Truncation-proof IAS15 forced-landing ephemeris (nominal ``interpolate=False``).
+
+    Host-side wrapper that inserts dummy landing times as needed (see
+    :func:`jorbit.integrators.budgeted_forced_landing`) before the Taylor-LTT
+    ``on_sky`` scan used by the non-dense paths.
+    """
+    state = particle_state.to_system()
+    positions, velocities, steps = budgeted_forced_landing(
+        state, acc_func, times, integrator_state, step_scheduler
+    )
+    ras, decs = _on_sky_scan(
+        positions[relevant_inds][:, 0, :],
+        velocities[relevant_inds][:, 0, :],
+        times[relevant_inds],
+        observer_positions,
+        acc_func,
+        particle_state.time_reference,
+    )
+    return ras, decs, steps
 
 
 def _state_vec_to_xv(
