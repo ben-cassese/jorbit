@@ -4,6 +4,7 @@ Changelog
 **development version**
 
 - Added protections for integrations/ephemerides generated via the front end `Particle` and `System` classes no longer silently truncate when an integration requires more steps than allocated in 1) the cap of 10k steps between time steps and 2) the cap of 15k total accepted steps when using "interpolation". The actual caps remain in the back end implementations.
+- Fixed a bug in the `Particle.integrate_or_interpolate` method that would produce garbage results on very long backwards integrations.
 
 **1.4.0 (05/2026)**
 
