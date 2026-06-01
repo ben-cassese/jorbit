@@ -1,6 +1,10 @@
 Changelog
 +++++++++
 
+**development version**
+
+- Added protections for integrations/ephemerides generated via the front end `Particle` and `System` classes no longer silently truncate when an integration requires more steps than allocated in 1) the cap of 10k steps between time steps and 2) the cap of 15k total accepted steps when using "interpolation". The actual caps remain in the back end implementations.
+
 **1.4.0 (05/2026)**
 
 - Added `uncertainty=True` as an option to `Particle.ephemeris` that returns the propagated on-sky covariance in addition to the propagated state. This is implemented by computing the Jacobian of the dynamics using forward autodiff, then linear error propagation using the initial covariance on the `CartesianState` or `KeplerianState`.
