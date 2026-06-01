@@ -32,6 +32,12 @@ def precompute_interpolation_indices(
         query_times (jnp.ndarray):
             Times at which to interpolate, shape (n_queries,).
 
+    Handles both integration directions. ``jnp.searchsorted`` requires an ascending
+    sequence, but a backward integration (negative ``dts``) produces a *descending*
+    ``t_step_starts``, so the lookup is done in direction-normalized coordinates. Unfilled
+    buffer slots carry a large positive ``dts`` sentinel; their key is forced past every
+    real step so valid queries always route into the filled prefix.
+
     Returns:
         tuple[jnp.ndarray, jnp.ndarray]:
             step_indices: Integer index of the containing step for each query time,
@@ -39,7 +45,10 @@ def precompute_interpolation_indices(
             h_values: Fractional time within each step (0 to 1),
                 shape (n_queries,).
     """
-    step_indices = jnp.searchsorted(t_step_starts, query_times, side="right") - 1
+    direction = jnp.sign(dts[0])
+    filled = jnp.abs(dts) < 1e29
+    key = jnp.where(filled, direction * t_step_starts, jnp.inf)
+    step_indices = jnp.searchsorted(key, direction * query_times, side="right") - 1
     h_values = (query_times - t_step_starts[step_indices]) / dts[step_indices]
     return step_indices, h_values
 

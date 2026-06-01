@@ -199,6 +199,30 @@ def _random_test_cases(n_tests: int, n_subtimes: int) -> tuple:
     return asteroids, times_list
 
 
+def test_precompute_interpolation_indices_backward() -> None:
+    """Regression: precompute_interpolation_indices must handle backward integrations.
+
+    The lookup uses jnp.searchsorted, which assumes an ascending sequence. A backward
+    integration has negative dts, so t_step_starts is *descending*; searchsorted then
+    returned 0 -> step_index -1, which indexes the zero-filled buffer tail and yields
+    (0, 0, 0) positions from interpolate_from_dense_output. The forward and backward cases
+    here mirror the real dense-output buffer layout (four real 10-day steps followed by an
+    unfilled +1e30 dts sentinel) and must produce matching interior indices and h values.
+    """
+    real_dts = jnp.array([10.0, 10.0, 10.0, 10.0])
+    sentinel = jnp.array([1e30, 1e30])  # unfilled slots, as in ias15_evolve's buffers
+    queries = jnp.array([5.0, 15.0, 35.0])  # interior to steps 0, 1, 3
+    expect_idx = jnp.array([0, 1, 3])
+    expect_h = jnp.array([0.5, 0.5, 0.5])
+
+    for sign in (1.0, -1.0):
+        dts = jnp.concatenate([sign * real_dts, sentinel])
+        t_step_starts = jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
+        idx, h = precompute_interpolation_indices(t_step_starts, dts, sign * queries)
+        assert jnp.array_equal(idx, expect_idx)
+        assert jnp.allclose(h, expect_h)
+
+
 # def test_dynamic_interp_matches_forced_landing() -> None:
 #     """
 

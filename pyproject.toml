@@ -102,3 +102,6 @@ skip = "./docs/_build/*, **/*.ipynb, ./src/jorbit/data/observatory_codes.py"
 [tool.pytest.ini_options]
 addopts = "--nbmake --ignore=docs/tutorials/skip_tests/"
 testpaths = ["tests", "docs/tutorials"]
+markers = [
+    "slow: long-running tests that also need local-only resources (e.g. the ASSIST ephemeris files); deselected in CI via `-m 'not slow'`",
+]

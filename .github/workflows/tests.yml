@@ -42,7 +42,9 @@ jobs:
         run: uv sync --all-groups
 
       - name: Run tests
-        run: uv run pytest tests --cov --cov-config=pyproject.toml --cov-report=xml
+        # `-m "not slow"` deselects long-running tests that need local-only resources
+        # (e.g. test_long_integrate_vs_assist, which needs the ASSIST ephemeris files).
+        run: uv run pytest tests -m "not slow" --cov --cov-config=pyproject.toml --cov-report=xml
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
         if: ${{ matrix.python-version == '3.13' && matrix.os == 'macos-latest' }}

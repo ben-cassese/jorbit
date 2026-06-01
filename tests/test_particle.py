@@ -1,5 +1,7 @@
 """Test the Particle class."""
 
+import os
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -7,17 +9,21 @@ jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from astroquery.jplhorizons import Horizons
 
 from jorbit import Observations, Particle
 from jorbit.data.constants import SPEED_OF_LIGHT
+from jorbit.integrators.budgeted import FORCED_LANDING_STEP_BUDGET
+from jorbit.integrators.ias15 import IAS15_MAX_DYNAMIC_STEPS
 from jorbit.system import System
 from jorbit.utils.horizons import (
     horizons_bulk_astrometry_query,
     horizons_bulk_vector_query,
 )
+from jorbit.utils.kepler import kepler
 from jorbit.utils.states import KeplerianState
 
 
@@ -407,6 +413,135 @@ def test_elongation_angle() -> None:
     mask = p.is_observable(times=times, observer="kitt peak", ephem=ephem)
     assert mask.shape == (5,)
     assert mask[0] == (angles[0] > np.deg2rad(20))
+
+
+def _assist_position_at(
+    x0: np.ndarray,
+    v0: np.ndarray,
+    epoch_jd: float,
+    target_jd: float,
+    planets: str,
+    asteroids: str,
+) -> np.ndarray:
+    """ASSIST barycentric position [AU] of a test particle (x0, v0 at epoch_jd TDB).
+
+    Force model matches jorbit's "default solar system": Sun + planets + 16 asteroids
+    + parameterized post-Newtonian GR, no harmonics or non-gravitational terms. Callers
+    must have imported rebound before assist (done via importorskip in the test) so
+    assist's C extension can find librebound.
+    """
+    import assist
+    import rebound
+
+    sim = rebound.Simulation()
+    eph = assist.Ephem(planets, asteroids)
+    sim.add(
+        rebound.Particle(
+            x=float(x0[0]),
+            y=float(x0[1]),
+            z=float(x0[2]),
+            vx=float(v0[0]),
+            vy=float(v0[1]),
+            vz=float(v0[2]),
+        )
+    )
+    sim.t = float(epoch_jd) - eph.jd_ref
+    extras = assist.Extras(sim, eph)
+    extras.forces = ["SUN", "PLANETS", "ASTEROIDS", "GR_EIH"]
+    extras.gr_eih_sources = 11
+    extras.integrate_or_interpolate(float(target_jd) - eph.jd_ref)
+    p = sim.particles[0]
+    return np.array([p.x, p.y, p.z])
+
+
+@pytest.mark.slow
+def test_long_integrate_vs_assist() -> None:
+    """Regression: long integrations must not truncate and must match ASSIST both ways.
+
+    A synthetic a=0.1 AU, e=0.2 orbit (period ~11.5 days) integrated 20 years in each
+    direction is ~630 revolutions taking >20000 adaptive steps as ONE interval. That
+    overflows both backend caps, so the host-side orchestration in
+    jorbit.integrators.budgeted must kick in, and both directions are exercised:
+
+    - integrate (forced landing): overflows the 10000-iteration per-interval cap, so
+      budgeted_forced_landing subdivides via insert_budget_dummy_times and re-runs.
+      Guards the interior[::-1] reversal that mis-placed dummy landings for backward runs
+      (which raised RuntimeError on the re-run).
+    - integrate_or_interpolate (dense output): overflows the 15000-step buffer, so
+      stitched_interpolate stitches multiple chunks. Guards the searchsorted-on-descending
+      t_step_starts bug in precompute_interpolation_indices, which returned a -1 step index
+      for backward queries and yielded (0, 0, 0) positions.
+
+    A sign or ordering error puts the particle at the wrong orbital phase, an AU-scale
+    error; jorbit and ASSIST agree to <15 m here, so 1 km leaves a wide margin.
+    """
+    pytest.importorskip("rebound")
+    pytest.importorskip("assist")
+    planets = os.path.expanduser("~/Downloads/linux_p1550p2650.440")
+    asteroids = os.path.expanduser("~/Downloads/sb441-n16.bsp")
+    if not (os.path.exists(planets) and os.path.exists(asteroids)):
+        pytest.skip("ASSIST ephemeris files not available locally")
+
+    t_ref = 2462502.5
+    epoch_jd = float(Time(46066.0, format="mjd", scale="utc").tdb.jd) + 20.0 * 365.25
+    nu = float(kepler(jnp.asarray(np.radians(180.0)), jnp.asarray(0.2)))
+    state = KeplerianState(
+        semi=jnp.asarray([0.1]),
+        ecc=jnp.asarray([0.2]),
+        inc=jnp.asarray([10.0]),
+        Omega=jnp.asarray([0.0]),
+        omega=jnp.asarray([0.0]),
+        nu=jnp.asarray([np.degrees(nu)]),
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+        time_reference=jnp.asarray(t_ref),
+        relative_time=jnp.asarray(epoch_jd - t_ref),
+    )
+    cart = state.to_cartesian()
+    x0 = np.asarray(cart.x).reshape(-1)
+    v0 = np.asarray(cart.v).reshape(-1)
+
+    particle = Particle(
+        state=KeplerianState(
+            semi=jnp.asarray([2.5]),
+            ecc=jnp.asarray([0.1]),
+            inc=jnp.asarray([5.0]),
+            Omega=jnp.asarray([80.0]),
+            omega=jnp.asarray([40.0]),
+            nu=jnp.asarray([0.0]),
+            acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+            time_reference=t_ref,
+        ),
+        gravity="default solar system",
+    )
+
+    span_days = 20.0 * 365.25
+    # (method, min steps proving the no-truncation orchestration was exercised): integrate
+    # subdivides once it overflows the per-interval cap; integrate_or_interpolate stitches
+    # once it overflows the dense-output buffer.
+    methods = [
+        ("integrate", FORCED_LANDING_STEP_BUDGET),
+        ("integrate_or_interpolate", IAS15_MAX_DYNAMIC_STEPS),
+    ]
+    for method, min_steps in methods:
+        fn = getattr(particle, method)
+        for label, target_jd in [
+            ("backward", epoch_jd - span_days),
+            ("forward", epoch_jd + span_days),
+        ]:
+            pos, _, steps = fn(
+                times=Time(target_jd, format="jd", scale="tdb"),
+                state=state,
+                return_steps=True,
+            )
+            assert int(np.asarray(steps).sum()) > min_steps
+
+            assist_x = _assist_position_at(
+                x0, v0, epoch_jd, target_jd, planets, asteroids
+            )
+            err_m = float(np.linalg.norm(np.asarray(pos[0]) - assist_x)) * u.au.to(u.m)
+            assert (
+                err_m < 1_000
+            ), f"{method} {label} vs ASSIST: {err_m:.1f} m exceeds 1 km"
 
 
 def test_static_residuals() -> None:

@@ -294,9 +294,9 @@ def insert_budget_dummy_times(
     for tq in [float(t) for t in requested_times]:
         lo, hi = (prev, tq) if tq >= prev else (tq, prev)
         # Natural step boundaries strictly inside this interval, in integration order.
+        # nst is monotone in the integration direction (increasing for forward, decreasing
+        # for backward), so the filtered interior is already in integration order.
         interior = nst[(nst > lo) & (nst < hi)]
-        if tq < prev:
-            interior = interior[::-1]
         n = int(interior.shape[0])
         if n > budget:
             for k in range(budget, n, budget):
