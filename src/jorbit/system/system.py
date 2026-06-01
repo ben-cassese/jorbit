@@ -1,11 +1,19 @@
-"""The System class and its supporting functions."""
+"""The System class.
 
-import jax
+The jitted/host helper functions that implement each integration branch live in sibling
+modules of this subpackage:
 
-jax.config.update("jax_enable_x64", True)
+- :mod:`jorbit.system.ephem` (generic integrate/ephem, leapfrog)
+- :mod:`jorbit.system.ias15_dense` (IAS15 ``interpolate=True``)
+- :mod:`jorbit.system.keplerian` (analytic two-body path)
+"""
+
+from __future__ import annotations
+
 from collections.abc import Callable
 
 import astropy.units as u
+import jax
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
@@ -17,7 +25,6 @@ from jorbit.accelerations import (
     newtonian_gravity,
     ppn_gravity,
 )
-from jorbit.astrometry.sky_projection import on_sky
 from jorbit.data.constants import Y4_C, Y4_D, Y6_C, Y6_D, Y8_C, Y8_D
 from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
@@ -25,13 +32,13 @@ from jorbit.integrators import (
     ias15_evolve,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
-    make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
     stitched_interpolate,
-    stitched_per_query_gather,
 )
-from jorbit.particle import _keplerian_integrate, _keplerian_on_sky
+from jorbit.system.ephem import _ephem, _integrate
+from jorbit.system.ias15_dense import _ephem_ias15_stitched
+from jorbit.system.keplerian import _keplerian_system_ephem, _keplerian_system_integrate
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.states import (
     IAS15IntegratorState,
@@ -477,214 +484,3 @@ class System:
         if return_steps:
             return coords, steps
         return coords
-
-
-@jax.jit
-def _integrate(
-    times: jnp.ndarray,
-    state: SystemState,
-    acc_func: Callable,
-    integrator_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    positions, velocities, final_system_state, final_integrator_state, _steps = (
-        integrator_func(state, acc_func, times, integrator_state, step_scheduler)
-    )
-
-    return (
-        positions[relevant_inds],
-        velocities[relevant_inds],
-        final_system_state,
-        final_integrator_state,
-    )
-
-
-@jax.jit
-def _ephem(
-    times: jnp.ndarray,
-    state: SystemState,
-    acc_func: Callable,
-    integrator_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    positions, velocities, _, _ = _integrate(
-        times,
-        state,
-        acc_func,
-        integrator_func,
-        integrator_state,
-        relevant_inds,
-        step_scheduler,
-    )
-
-    def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        def scan_func(
-            carry: None, scan_over: tuple[jnp.ndarray, jnp.ndarray]
-        ) -> tuple[None, tuple[jnp.ndarray, jnp.ndarray]]:
-            position, velocity, time, observer_position = scan_over
-            ra, dec = on_sky(
-                position,
-                velocity,
-                time,
-                observer_position,
-                acc_func,
-                time_reference=state.time_reference,
-            )
-            return None, (ra, dec)
-
-        _, (ras, decs) = jax.lax.scan(
-            scan_func,
-            None,
-            (px, pv, times, observer_positions),
-        )
-
-        return ras, decs
-
-    ras, decs = jax.vmap(interior, in_axes=(1, 1))(positions, velocities)
-    return ras, decs
-
-
-@jax.jit
-def _dense_ltt_radec_multi(
-    b_per_obs_all: jnp.ndarray,
-    a0_per_obs_all: jnp.ndarray,
-    x0_per_obs_all: jnp.ndarray,
-    v0_per_obs_all: jnp.ndarray,
-    dt_per_obs: jnp.ndarray,
-    h_per_obs: jnp.ndarray,
-    obs_times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    acc_func: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Per-observation, per-particle dense-output light-travel-time ``on_sky``.
-
-    Vmaps the dense-output polynomial-LTT closure over both the observation axis and the
-    particle axis; each particle gets its own light-travel-time correction. Inputs are
-    already gathered per observation: ``b_per_obs_all`` is ``(n_obs, 7, P, 3)``;
-    ``a0/x0/v0_per_obs_all`` are ``(n_obs, P, 3)``; ``dt/h_per_obs/obs_times`` are
-    ``(n_obs,)``; ``observer_positions`` is ``(n_obs, 3)``. Returns ``(ras, decs)`` each
-    shaped ``(P, n_obs)``.
-    """
-
-    def per_particle_per_obs(
-        b_step: jnp.ndarray,
-        a0_step: jnp.ndarray,
-        x0_step: jnp.ndarray,
-        v0_step: jnp.ndarray,
-        dt_step: jnp.ndarray,
-        h_obs: jnp.ndarray,
-        time: jnp.ndarray,
-        observer_pos: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        propagator = make_ltt_propagator(
-            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
-        )
-        x_obs = propagator(jnp.array(0.0))
-        return on_sky(
-            x_obs,
-            jnp.zeros(3),
-            time,
-            observer_pos,
-            acc_func,
-            ltt_position_fn=propagator,
-        )
-
-    def for_single_particle(
-        b_obs_p: jnp.ndarray,
-        a0_obs_p: jnp.ndarray,
-        x0_obs_p: jnp.ndarray,
-        v0_obs_p: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        # b_obs_p: (n_obs, 7, 3); a0/v0/x0_obs_p: (n_obs, 3)
-        return jax.vmap(per_particle_per_obs, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
-            b_obs_p,
-            a0_obs_p,
-            x0_obs_p,
-            v0_obs_p,
-            dt_per_obs,
-            h_per_obs,
-            obs_times,
-            observer_positions,
-        )
-
-    # Vmap over particle axis: 2 in b_per_obs_all (axes are obs/coeff/particle/xyz),
-    # 1 in a0/v0/x0_per_obs_all (axes are obs/particle/xyz).
-    ras, decs = jax.vmap(for_single_particle, in_axes=(2, 1, 1, 1))(
-        b_per_obs_all, a0_per_obs_all, x0_per_obs_all, v0_per_obs_all
-    )
-    return ras, decs
-
-
-def _ephem_ias15_stitched(
-    times: jnp.ndarray,
-    state: SystemState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray, int]:
-    """Truncation-proof IAS15 dense-output ephemeris for the whole system.
-
-    Host-side wrapper that stitches as many dense-output chunks as the span requires
-    (see :func:`jorbit.integrators.stitched_per_query_gather`) before the per-obs,
-    per-particle dense-LTT ``on_sky`` evaluation in :func:`_dense_ltt_radec_multi`.
-    """
-    b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-    # Restrict to observation times (drops any intermediate landing times). For IAS15
-    # relevant_inds is the identity, but keep the indexing uniform with other paths.
-    ras, decs = _dense_ltt_radec_multi(
-        b_q[relevant_inds],
-        a0_q[relevant_inds],
-        x0_q[relevant_inds],
-        v0_q[relevant_inds],
-        dt_q[relevant_inds],
-        h_q[relevant_inds],
-        times[relevant_inds],
-        observer_positions,
-        acc_func,
-    )
-    return ras, decs, steps
-
-
-@jax.jit
-def _keplerian_system_integrate(
-    xs: jnp.ndarray,
-    vs: jnp.ndarray,
-    t0: float,
-    times: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    # vmap _keplerian_integrate over particles: (N,T,3) for each
-    positions, velocities = jax.vmap(_keplerian_integrate, in_axes=(0, 0, None, None))(
-        xs, vs, t0, times
-    )
-    # transpose to (T,N,3) to match existing convention
-    positions = jnp.transpose(positions, (1, 0, 2))
-    velocities = jnp.transpose(velocities, (1, 0, 2))
-    return positions, velocities
-
-
-@jax.jit
-def _keplerian_system_ephem(
-    xs: jnp.ndarray,
-    vs: jnp.ndarray,
-    t0: float,
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    positions, velocities = _keplerian_system_integrate(xs, vs, t0, times)
-
-    # _keplerian_on_sky operates on a single (position, velocity, time, observer)
-    # vmap over times (axis 0 of positions[n]), then over particles (axis 1)
-    _on_sky_over_times = jax.vmap(_keplerian_on_sky, in_axes=(0, 0, 0, 0))
-    _on_sky_over_particles = jax.vmap(_on_sky_over_times, in_axes=(1, 1, None, None))
-
-    ras, decs = _on_sky_over_particles(positions, velocities, times, observer_positions)
-    return ras, decs

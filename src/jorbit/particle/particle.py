@@ -1,20 +1,27 @@
-"""The Particle class and its supporting functions."""
+"""The Particle class.
+
+The jitted/host helper functions that implement each integration branch live in sibling
+modules of this subpackage:
+
+- :mod:`jorbit.particle.ephem` (generic integrate/ephem, leapfrog)
+- :mod:`jorbit.particle.ias15_dense` (IAS15 ``interpolate=True``)
+- :mod:`jorbit.particle.ias15_forced` (IAS15 ``interpolate=False``)
+- :mod:`jorbit.particle.keplerian` (analytic two-body path)
+- :mod:`jorbit.particle.covariance` (shared forward-mode-AD covariance leaves)
+- :mod:`jorbit.particle.likelihood` (residuals/log-likelihood for fitting)
+"""
 
 from __future__ import annotations
 
-import jax
-
-jax.config.update("jax_enable_x64", True)
 import warnings
 from collections.abc import Callable
 from copy import deepcopy
 
 import astropy.units as u
+import jax
 import jax.numpy as jnp
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
-
-# from jaxlib.xla_extension import PjitFunction
 from scipy.optimize import minimize
 
 from jorbit import Observations
@@ -24,16 +31,8 @@ from jorbit.accelerations import (
     create_newtonian_ephemeris_acceleration_func,
 )
 from jorbit.astrometry.orbit_fit_seeds import gauss_method_orbit, simple_circular
-from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
-from jorbit.astrometry.transformations import (
-    elements_to_cartesian,
-    horizons_ecliptic_to_icrs,
-    icrs_to_horizons_ecliptic,
-)
 from jorbit.data.constants import (
-    INV_SPEED_OF_LIGHT,
     SPEED_OF_LIGHT,
-    TOTAL_SOLAR_SYSTEM_GM,
     Y4_C,
     Y4_D,
     Y6_C,
@@ -47,32 +46,35 @@ from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
     ias15_evolve_forced_landing,
-    ias15_evolve_with_dense_output,
     ias15_span_probe,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
-    make_ltt_propagator,
     next_proposed_dt_global,
     next_proposed_dt_PRS23,
     stitched_interpolate,
-    stitched_per_query_gather,
 )
 from jorbit.likelihoods.setup_static_likelihood import (
     create_default_static_residuals_func,
     precompute_likelihood_data,
 )
+from jorbit.particle.ephem import _ephem, _ephem_with_cov, _integrate
+from jorbit.particle.ias15_dense import _ephem_ias15_stitched, _ephem_ias15_with_cov
+from jorbit.particle.ias15_forced import _ephem_forced_budgeted
+from jorbit.particle.keplerian import (
+    _keplerian_ephem,
+    _keplerian_ephem_with_cov,
+    _keplerian_integrate,
+    _keplerian_loglike,
+    _keplerian_residuals,
+)
+from jorbit.particle.likelihood import _loglike, _residuals
 from jorbit.utils.horizons import get_observer_positions, horizons_bulk_vector_query
-from jorbit.utils.kepler import keplerian_propagate
 from jorbit.utils.states import (
     CartesianState,
     IAS15IntegratorState,
     KeplerianState,
     LeapfrogIntegratorState,
-    SystemState,
 )
-
-# Squared conversion factor from radians^2 to arcsec^2.
-_RAD2ARCSEC_SQ = (180.0 * 3600.0 / jnp.pi) ** 2
 
 
 class Particle:
@@ -1381,639 +1383,3 @@ class Particle:
             return jnp.rad2deg(angle)
         else:
             return angle > jnp.deg2rad(sun_limit)
-
-
-###########################
-# EXTERNAL JITTED FUNCTIONS
-###########################
-
-
-@jax.jit
-def _integrate(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_func: Callable,
-    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[
-    jnp.ndarray,
-    jnp.ndarray,
-    SystemState,
-    IAS15IntegratorState | LeapfrogIntegratorState,
-]:
-    state = particle_state.to_system()
-    positions, velocities, final_system_state, final_integrator_state, steps = (
-        integrator_func(state, acc_func, times, integrator_state, step_scheduler)
-    )
-
-    return (
-        positions[relevant_inds],
-        velocities[relevant_inds],
-        final_system_state,
-        final_integrator_state,
-        steps,
-    )
-
-
-@jax.jit
-def _ephem(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_func: Callable,
-    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    positions, velocities, _, _, _ = _integrate(
-        times,
-        particle_state,
-        acc_func,
-        integrator_func,
-        integrator_state,
-        relevant_inds,
-        step_scheduler,
-    )
-
-    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
-        position, velocity, time, observer_position = scan_over
-        ra, dec = on_sky(
-            position,
-            velocity,
-            time,
-            observer_position,
-            acc_func,
-            time_reference=particle_state.time_reference,
-        )
-        return None, (ra, dec)
-
-    _, (ras, decs) = jax.lax.scan(
-        scan_func,
-        None,
-        (
-            positions[:, 0, :],
-            velocities[:, 0, :],
-            times[relevant_inds],
-            observer_positions,
-        ),
-    )
-
-    return ras, decs
-
-
-@jax.jit
-def _dense_ltt_radec(
-    b_per_obs: jnp.ndarray,
-    a0_per_obs: jnp.ndarray,
-    x0_per_obs: jnp.ndarray,
-    v0_per_obs: jnp.ndarray,
-    dt_per_obs: jnp.ndarray,
-    h_per_obs: jnp.ndarray,
-    obs_times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    acc_func: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Per-observation dense-output light-travel-time ``on_sky`` for a single particle.
-
-    The ``on_sky`` light-travel-time correction defaults to a 2nd-order Taylor with a
-    constant acceleration. For IAS15 we already have the converged 7th-order polynomial
-    per step (the "dense output"), so this evaluates that polynomial at the
-    light-travel-delayed time instead. Inputs are already gathered per observation:
-    ``b_per_obs`` is ``(n, 7, 3)``; ``a0/x0/v0_per_obs`` are ``(n, 3)``;
-    ``dt/h_per_obs/obs_times`` are ``(n,)``; ``observer_positions`` is ``(n, 3)``.
-    """
-
-    def per_obs_on_sky(
-        b_step: jnp.ndarray,
-        a0_step: jnp.ndarray,
-        x0_step: jnp.ndarray,
-        v0_step: jnp.ndarray,
-        dt_step: jnp.ndarray,
-        h_obs: jnp.ndarray,
-        time: jnp.ndarray,
-        observer_pos: jnp.ndarray,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        propagator = make_ltt_propagator(
-            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
-        )
-        x_obs = propagator(jnp.array(0.0))
-        return on_sky(
-            x_obs,
-            jnp.zeros(3),
-            time,
-            observer_pos,
-            acc_func,
-            ltt_position_fn=propagator,
-        )
-
-    return jax.vmap(per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
-        b_per_obs,
-        a0_per_obs,
-        x0_per_obs,
-        v0_per_obs,
-        dt_per_obs,
-        h_per_obs,
-        obs_times,
-        observer_positions,
-    )
-
-
-@jax.jit
-def _on_sky_scan(
-    positions: jnp.ndarray,
-    velocities: jnp.ndarray,
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    acc_func: Callable,
-    time_reference: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Scan the (Taylor-LTT) ``on_sky`` over a sequence of single-particle states."""
-
-    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
-        position, velocity, time, observer_position = scan_over
-        ra, dec = on_sky(
-            position,
-            velocity,
-            time,
-            observer_position,
-            acc_func,
-            time_reference=time_reference,
-        )
-        return None, (ra, dec)
-
-    _, (ras, decs) = jax.lax.scan(
-        scan_func, None, (positions, velocities, times, observer_positions)
-    )
-    return ras, decs
-
-
-@jax.jit
-def _ephem_ias15(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Single-chunk IAS15 dense-output ephemeris (used inside the autodiff cov path).
-
-    The truncation-proof nominal ephemeris uses :func:`_ephem_ias15_stitched` instead;
-    this single-:func:`ias15_evolve_with_dense_output` version is retained because it is
-    fully JIT-able and so can be wrapped by ``jax.jacfwd`` in
-    :func:`_ephem_ias15_with_cov`.
-    """
-    state = particle_state.to_system()
-    (
-        _positions,
-        _velocities,
-        _final_system_state,
-        _final_integrator_state,
-        _iter_num,
-        b_buf,
-        a0_buf,
-        x0_buf,
-        v0_buf,
-        dts_buf,
-        _t_step_starts,
-        step_indices,
-        h_values,
-    ) = ias15_evolve_with_dense_output(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-
-    # Restrict to observation times only (drops any intermediate landing times).
-    obs_step_indices = step_indices[relevant_inds]
-    return _dense_ltt_radec(
-        b_buf[obs_step_indices][:, :, 0, :],
-        a0_buf[obs_step_indices][:, 0, :],
-        x0_buf[obs_step_indices][:, 0, :],
-        v0_buf[obs_step_indices][:, 0, :],
-        dts_buf[obs_step_indices],
-        h_values[relevant_inds],
-        times[relevant_inds],
-        observer_positions,
-        acc_func,
-    )
-
-
-def _ephem_ias15_stitched(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray, int]:
-    """Truncation-proof IAS15 dense-output ephemeris (nominal ``interpolate=True``).
-
-    Host-side wrapper that stitches as many dense-output chunks as the span requires
-    (see :func:`jorbit.integrators.stitched_per_query_gather`) before the same per-obs
-    dense-LTT ``on_sky`` evaluation as :func:`_ephem_ias15`.
-    """
-    state = particle_state.to_system()
-    b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-    # Single tracer at index 0; restrict to observation times.
-    ras, decs = _dense_ltt_radec(
-        b_q[relevant_inds][:, :, 0, :],
-        a0_q[relevant_inds][:, 0, :],
-        x0_q[relevant_inds][:, 0, :],
-        v0_q[relevant_inds][:, 0, :],
-        dt_q[relevant_inds],
-        h_q[relevant_inds],
-        times[relevant_inds],
-        observer_positions,
-        acc_func,
-    )
-    return ras, decs, steps
-
-
-def _ephem_forced_budgeted(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_state: IAS15IntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-) -> tuple[jnp.ndarray, jnp.ndarray, int]:
-    """Truncation-proof IAS15 forced-landing ephemeris (nominal ``interpolate=False``).
-
-    Host-side wrapper that inserts dummy landing times as needed (see
-    :func:`jorbit.integrators.budgeted_forced_landing`) before the Taylor-LTT
-    ``on_sky`` scan used by the non-dense paths.
-    """
-    state = particle_state.to_system()
-    positions, velocities, steps = budgeted_forced_landing(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
-    ras, decs = _on_sky_scan(
-        positions[relevant_inds][:, 0, :],
-        velocities[relevant_inds][:, 0, :],
-        times[relevant_inds],
-        observer_positions,
-        acc_func,
-        particle_state.time_reference,
-    )
-    return ras, decs, steps
-
-
-def _state_vec_to_xv(
-    state_vec: jnp.ndarray, is_keplerian_param: bool
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Unpack a (6,) parameter vector to ICRS Cartesian position/velocity.
-
-    If ``is_keplerian_param``, the entries are (semi, ecc, inc, Omega, omega, nu)
-    and we convert via :func:`elements_to_cartesian` followed by an ecliptic ->
-    ICRS rotation. Otherwise the entries are interpreted directly as flat
-    Cartesian (x, y, z, vx, vy, vz) in ICRS.
-
-    Returns ``(x, v)`` each shaped ``(1, 3)``.
-    """
-    if is_keplerian_param:
-        x_ecl, v_ecl = elements_to_cartesian(
-            state_vec[0:1],
-            state_vec[1:2],
-            state_vec[5:6],
-            state_vec[2:3],
-            state_vec[3:4],
-            state_vec[4:5],
-            TOTAL_SOLAR_SYSTEM_GM,
-        )
-        x = horizons_ecliptic_to_icrs(x_ecl)
-        v = horizons_ecliptic_to_icrs(v_ecl)
-    else:
-        x = state_vec[:3].reshape(1, 3)
-        v = state_vec[3:].reshape(1, 3)
-    return x, v
-
-
-def _state_to_vec(state: CartesianState | KeplerianState) -> jnp.ndarray:
-    """Flatten a CartesianState or KeplerianState to a (6,) parameter vector."""
-    if isinstance(state, KeplerianState):
-        return jnp.concatenate(
-            [
-                jnp.atleast_1d(state.semi),
-                jnp.atleast_1d(state.ecc),
-                jnp.atleast_1d(state.inc),
-                jnp.atleast_1d(state.Omega),
-                jnp.atleast_1d(state.omega),
-                jnp.atleast_1d(state.nu),
-            ]
-        )
-    return jnp.concatenate([state.x.flatten(), state.v.flatten()])
-
-
-def _cov_from_jacobian(
-    radec_fn: Callable,
-    nominal_vec: jnp.ndarray,
-    cov: jnp.ndarray,
-    N: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Linear error propagation via forward-mode AD.
-
-    ``radec_fn`` must accept a ``(6,)`` parameter vector and return a flat
-    ``(2N,)`` interleaved ``[ra0, dec0, ra1, dec1, ...]`` array (radians).
-    Returns ``(ra, dec, cov_radec)`` where ``cov_radec`` has shape ``(N, 2, 2)``
-    in ``arcsec**2``.
-    """
-    radec_nominal = radec_fn(nominal_vec)
-    ras = radec_nominal[0::2]
-    decs = radec_nominal[1::2]
-    J = jax.jacfwd(radec_fn)(nominal_vec)
-    J_t = J.reshape(N, 2, 6)
-    cov_radec = jnp.einsum("nij,jk,nlk->nil", J_t, cov, J_t) * _RAD2ARCSEC_SQ
-    return ras, decs, cov_radec
-
-
-@jax.jit
-def _ephem_ias15_with_cov(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-    cov: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """IAS15 dense-output ephemeris with sky-plane covariance via forward-mode AD."""
-    is_keplerian_param = isinstance(particle_state, KeplerianState)
-
-    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
-        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
-        state = CartesianState(
-            x=x,
-            v=v,
-            relative_time=particle_state.relative_time,
-            time_reference=particle_state.time_reference,
-            acceleration_func_kwargs=particle_state.acceleration_func_kwargs,
-        )
-        a0 = acc_func(state.to_system())
-        integrator_state = initialize_ias15_integrator_state(a0)
-        ras, decs = _ephem_ias15(
-            times,
-            state,
-            acc_func,
-            integrator_state,
-            observer_positions,
-            relevant_inds,
-            step_scheduler,
-        )
-        return jnp.stack([ras, decs], axis=1).flatten()
-
-    nominal_vec = _state_to_vec(particle_state)
-    return _cov_from_jacobian(radec_fn, nominal_vec, cov, relevant_inds.shape[0])
-
-
-@jax.jit
-def _ephem_with_cov(
-    times: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    acc_func: Callable,
-    integrator_func: Callable,
-    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
-    observer_positions: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    step_scheduler: Callable,
-    cov: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Generic non-dense ephemeris with sky-plane covariance via forward-mode AD.
-
-    Handles both the IAS15 forced-landing path (``interpolate=False`` + IAS15) and
-    the leapfrog path. For IAS15, the integrator state must be re-initialized
-    inside the AD closure so the initial-acceleration entry tracks the perturbed
-    state vector; for leapfrog, ``LeapfrogIntegratorState`` is independent of
-    the dynamical state and is reused as-is.
-    """
-    is_keplerian_param = isinstance(particle_state, KeplerianState)
-    reinit_ias15 = isinstance(integrator_state, IAS15IntegratorState)
-
-    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
-        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
-        state = CartesianState(
-            x=x,
-            v=v,
-            relative_time=particle_state.relative_time,
-            time_reference=particle_state.time_reference,
-            acceleration_func_kwargs=particle_state.acceleration_func_kwargs,
-        )
-        if reinit_ias15:
-            a0 = acc_func(state.to_system())
-            local_integrator_state = initialize_ias15_integrator_state(a0)
-        else:
-            local_integrator_state = integrator_state
-        ras, decs = _ephem(
-            times,
-            state,
-            acc_func,
-            integrator_func,
-            local_integrator_state,
-            observer_positions,
-            relevant_inds,
-            step_scheduler,
-        )
-        return jnp.stack([ras, decs], axis=1).flatten()
-
-    nominal_vec = _state_to_vec(particle_state)
-    return _cov_from_jacobian(radec_fn, nominal_vec, cov, relevant_inds.shape[0])
-
-
-@jax.jit
-def _residuals(
-    times: jnp.ndarray,
-    gravity: Callable,
-    integrator: Callable,
-    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
-    observer_positions: jnp.ndarray,
-    ra: jnp.ndarray,
-    dec: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    step_scheduler: Callable,
-) -> jnp.ndarray:
-    ras, decs = _ephem(
-        times,
-        particle_state,
-        gravity,
-        integrator,
-        integrator_state,
-        observer_positions,
-        relevant_inds,
-        step_scheduler,
-    )
-
-    xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
-
-    return xis_etas
-
-
-# note: this external jitted function does not have fwd mode autodiff enforced, will
-# break on reverse mode when using ias15
-@jax.jit
-def _loglike(
-    times: jnp.ndarray,
-    gravity: Callable,
-    integrator: Callable,
-    integrator_state: IAS15IntegratorState | LeapfrogIntegratorState,
-    observer_positions: jnp.ndarray,
-    ra: jnp.ndarray,
-    dec: jnp.ndarray,
-    inv_cov_matrices: jnp.ndarray,
-    cov_log_dets: jnp.ndarray,
-    relevant_inds: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-    step_scheduler: Callable,
-) -> float:
-    xis_etas = _residuals(
-        times,
-        gravity,
-        integrator,
-        integrator_state,
-        observer_positions,
-        ra,
-        dec,
-        relevant_inds,
-        particle_state,
-        step_scheduler,
-    )
-
-    quad = jnp.einsum("bi,bij,bj->b", xis_etas, inv_cov_matrices, xis_etas)
-
-    ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
-
-    return ll
-
-
-###################################
-# KEPLERIAN EXTERNAL JITTED FUNCTIONS
-###################################
-
-
-@jax.jit
-def _keplerian_integrate(
-    x: jnp.ndarray,
-    v: jnp.ndarray,
-    t0: float,
-    times: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    x_ecl = icrs_to_horizons_ecliptic(x[None, :])
-    v_ecl = icrs_to_horizons_ecliptic(v[None, :])
-
-    positions_ecl, velocities_ecl = keplerian_propagate(
-        x_ecl, v_ecl, t0, times, TOTAL_SOLAR_SYSTEM_GM
-    )
-
-    positions = horizons_ecliptic_to_icrs(positions_ecl)
-    velocities = horizons_ecliptic_to_icrs(velocities_ecl)
-    return positions, velocities
-
-
-@jax.jit
-def _keplerian_on_sky(
-    x: jnp.ndarray,
-    v: jnp.ndarray,
-    time: float,
-    observer_position: jnp.ndarray,
-) -> tuple[float, float]:
-    r = jnp.linalg.norm(x)
-    a0 = -TOTAL_SOLAR_SYSTEM_GM * x / (r**3)
-
-    xz = x
-    for _ in range(3):
-        earth_distance = jnp.linalg.norm(xz - observer_position)
-        dt = -earth_distance * INV_SPEED_OF_LIGHT
-        xz = x + v * dt + 0.5 * a0 * dt * dt
-
-    X = xz - observer_position
-    calc_ra = jnp.mod(jnp.arctan2(X[1], X[0]) + 2 * jnp.pi, 2 * jnp.pi)
-    calc_dec = jnp.pi / 2 - jnp.arccos(X[-1] / jnp.linalg.norm(X))
-    return calc_ra, calc_dec
-
-
-@jax.jit
-def _keplerian_ephem(
-    x: jnp.ndarray,
-    v: jnp.ndarray,
-    t0: float,
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
-    positions, velocities = _keplerian_integrate(x, v, t0, times)
-
-    def scan_func(carry: None, scan_over: tuple) -> tuple[None, tuple]:
-        position, velocity, time, observer_position = scan_over
-        ra, dec = _keplerian_on_sky(position, velocity, time, observer_position)
-        return None, (ra, dec)
-
-    _, (ras, decs) = jax.lax.scan(
-        scan_func,
-        None,
-        (positions, velocities, times, observer_positions),
-    )
-    return ras, decs
-
-
-@jax.jit
-def _keplerian_ephem_with_cov(
-    particle_state: CartesianState | KeplerianState,
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    cov: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Keplerian-path ephemeris with sky-plane covariance via forward-mode AD.
-
-    Supports both Keplerian and Cartesian input parameterizations; the covariance
-    is propagated in whichever space the input state was supplied in.
-    """
-    is_keplerian_param = isinstance(particle_state, KeplerianState)
-    t0 = particle_state.relative_time
-
-    def radec_fn(state_vec: jnp.ndarray) -> jnp.ndarray:
-        x, v = _state_vec_to_xv(state_vec, is_keplerian_param)
-        ras, decs = _keplerian_ephem(
-            x.flatten(), v.flatten(), t0, times, observer_positions
-        )
-        return jnp.stack([ras, decs], axis=1).flatten()
-
-    nominal_vec = _state_to_vec(particle_state)
-    return _cov_from_jacobian(radec_fn, nominal_vec, cov, times.shape[0])
-
-
-@jax.jit
-def _keplerian_residuals(
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    ra: jnp.ndarray,
-    dec: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-) -> jnp.ndarray:
-    x = particle_state.to_cartesian().x.flatten()
-    v = particle_state.to_cartesian().v.flatten()
-    t0 = particle_state.relative_time
-
-    ras, decs = _keplerian_ephem(x, v, t0, times, observer_positions)
-    xis_etas = jax.vmap(tangent_plane_projection)(ra, dec, ras, decs)
-    return xis_etas
-
-
-@jax.jit
-def _keplerian_loglike(
-    times: jnp.ndarray,
-    observer_positions: jnp.ndarray,
-    ra: jnp.ndarray,
-    dec: jnp.ndarray,
-    inv_cov_matrices: jnp.ndarray,
-    cov_log_dets: jnp.ndarray,
-    particle_state: CartesianState | KeplerianState,
-) -> float:
-    xis_etas = _keplerian_residuals(times, observer_positions, ra, dec, particle_state)
-    quad = jnp.einsum("bi,bij,bj->b", xis_etas, inv_cov_matrices, xis_etas)
-    ll = jnp.sum(-0.5 * (2 * jnp.log(2 * jnp.pi) + cov_log_dets + quad))
-    return ll
