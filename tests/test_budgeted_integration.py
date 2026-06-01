@@ -64,13 +64,17 @@ def _shrink_cap(value: int) -> Callable[[], None]:
     Returns a (restore) callable. Patching the module constant before clearing the jit
     caches forces the backend to re-trace with the smaller buffer, so a normal-length
     span is driven to truncate without needing a genuinely enormous integration.
+
+    The constant must be patched on the ``evolve`` submodule, since that is the
+    namespace the dense-output loops read it from; patching the re-exported binding on
+    the ``ias15`` package would not change what those functions see.
     """
-    original = ias15_module.IAS15_MAX_DYNAMIC_STEPS
-    ias15_module.IAS15_MAX_DYNAMIC_STEPS = value
+    original = ias15_module.evolve.IAS15_MAX_DYNAMIC_STEPS
+    ias15_module.evolve.IAS15_MAX_DYNAMIC_STEPS = value
     jax.clear_caches()
 
     def restore() -> None:
-        ias15_module.IAS15_MAX_DYNAMIC_STEPS = original
+        ias15_module.evolve.IAS15_MAX_DYNAMIC_STEPS = original
         jax.clear_caches()
 
     return restore

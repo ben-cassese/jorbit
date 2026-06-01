@@ -3,7 +3,7 @@
 Particle
 ========
 
-.. automodule:: jorbit.particle
+.. automodule:: jorbit.particle.particle
     :members:
     :member-order: groupwise
     :undoc-members:
