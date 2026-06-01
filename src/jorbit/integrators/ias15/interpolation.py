@@ -49,6 +49,11 @@ def precompute_interpolation_indices(
     filled = jnp.abs(dts) < 1e29
     key = jnp.where(filled, direction * t_step_starts, jnp.inf)
     step_indices = jnp.searchsorted(key, direction * query_times, side="right") - 1
+    # A query at the integration epoch (zero-span: every dts is the unfilled sentinel, or
+    # a query landing exactly on the first step start) keys past every slot and yields -1,
+    # which would index the zero-filled buffer tail (origin). Clamp it into slot 0, whose
+    # state buffers always hold the initial condition.
+    step_indices = jnp.maximum(step_indices, 0)
     h_values = (query_times - t_step_starts[step_indices]) / dts[step_indices]
     return step_indices, h_values
 

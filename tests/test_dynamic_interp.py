@@ -223,6 +223,25 @@ def test_precompute_interpolation_indices_backward() -> None:
         assert jnp.allclose(h, expect_h)
 
 
+def test_precompute_interpolation_indices_zero_span() -> None:
+    """Regression: a query at the integration epoch (zero-span) must route to slot 0.
+
+    When the requested time equals the particle epoch, ias15_evolve takes zero steps, so
+    every dts slot holds the +1e30 unfilled sentinel and only slot 0 of the state buffers
+    carries the initial condition. The direction-normalized searchsorted then keyed every
+    slot to +inf and returned step_index -1, which indexes the zero-filled buffer tail and
+    placed the particle at the barycenter (origin) -- e.g. is_observable/ephemeris at the
+    epoch returned a ~0 elongation. The lookup must clamp to slot 0 (h = 0) so
+    interpolate_from_dense_output returns the initial state.
+    """
+    t0 = 2461041.5
+    dts = jnp.full((15,), 1e30)  # all unfilled, mirrors n_accepted == 0
+    t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
+    idx, h = precompute_interpolation_indices(t_step_starts, dts, jnp.array([t0]))
+    assert int(idx[0]) == 0
+    assert jnp.allclose(h, 0.0)
+
+
 # def test_dynamic_interp_matches_forced_landing() -> None:
 #     """
 
