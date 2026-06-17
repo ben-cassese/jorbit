@@ -78,14 +78,27 @@ def _iterate_evolve_chunks(
     """
     state = initial_system_state
     integrator_state = initial_integrator_state
-    target = float(jnp.max(times))
     t0 = float(state.relative_time)
+    max_t = float(jnp.max(times))
+    min_t = float(jnp.min(times))
+    target = max_t if abs(max_t - t0) >= abs(min_t - t0) else min_t
+    is_forward = target >= t0
     direction = 0.0
     chunk_start = t0
 
     while True:
+        # Re-clamp times to the current state so _ias15_evolve_core's direction
+        # inference stays correct across multi-chunk stitching passes.
+        cur_t0 = float(state.relative_time)
+        current_times = (
+            jnp.maximum(times, cur_t0) if is_forward else jnp.minimum(times, cur_t0)
+        )
         out = ias15_evolve_with_dense_output(
-            state, acceleration_func, times, integrator_state, step_scheduler
+            state,
+            acceleration_func,
+            current_times,
+            integrator_state,
+            step_scheduler,
         )
         final_system_state = out[2]
         t_reached = float(final_system_state.relative_time)
@@ -139,63 +152,71 @@ def stitched_per_query_gather(
         iteration count across all chunks.
     """
     n_times = times.shape[0]
+    t0 = float(initial_system_state.relative_time)
     b_q = a0_q = x0_q = v0_q = dt_q = h_q = None
     covered = jnp.zeros(n_times, dtype=bool)
     total_steps = 0
 
-    for out, _chunk_start, t_reached, direction in _iterate_evolve_chunks(
-        initial_system_state,
-        acceleration_func,
-        times,
-        initial_integrator_state,
-        step_scheduler,
-    ):
-        (
-            _positions,
-            _velocities,
-            _final_system_state,
-            _final_integrator_state,
-            iter_num,
-            b_buf,
-            a0_buf,
-            x0_buf,
-            v0_buf,
-            dts_buf,
-            _t_step_starts,
-            step_indices,
-            h_values,
-        ) = out
-        total_steps += int(iter_num)
+    for forward_pass in [True, False]:
+        pass_mask = times >= t0 if forward_pass else times < t0
+        if not jnp.any(pass_mask):
+            continue
 
-        if b_q is None:
-            # Allocate accumulators now that we know the per-step shapes.
-            b_q = jnp.zeros((n_times, *b_buf.shape[1:]))
-            a0_q = jnp.zeros((n_times, *a0_buf.shape[1:]))
-            x0_q = jnp.zeros((n_times, *x0_buf.shape[1:]))
-            v0_q = jnp.zeros((n_times, *v0_buf.shape[1:]))
-            dt_q = jnp.zeros((n_times,))
-            h_q = jnp.zeros((n_times,))
+        chunk_times = jnp.where(pass_mask, times, t0)
 
-        # Times this chunk newly covers: not yet covered and at/before t_reached in the
-        # integration direction. Already-covered times keep their earlier gather; times
-        # past t_reached are left for a later chunk.
-        reached = direction * (t_reached - times) >= -_TIME_TOL
-        newly = (~covered) & reached
+        for out, _chunk_start, t_reached, direction in _iterate_evolve_chunks(
+            initial_system_state,
+            acceleration_func,
+            chunk_times,
+            initial_integrator_state,
+            step_scheduler,
+        ):
+            (
+                _positions,
+                _velocities,
+                _final_system_state,
+                _final_integrator_state,
+                iter_num,
+                b_buf,
+                a0_buf,
+                x0_buf,
+                v0_buf,
+                dts_buf,
+                _t_step_starts,
+                step_indices,
+                h_values,
+            ) = out
+            total_steps += int(iter_num)
 
-        b_chunk = b_buf[step_indices]
-        a0_chunk = a0_buf[step_indices]
-        x0_chunk = x0_buf[step_indices]
-        v0_chunk = v0_buf[step_indices]
-        dt_chunk = dts_buf[step_indices]
+            if b_q is None:
+                # Allocate accumulators now that we know the per-step shapes.
+                b_q = jnp.zeros((n_times, *b_buf.shape[1:]))
+                a0_q = jnp.zeros((n_times, *a0_buf.shape[1:]))
+                x0_q = jnp.zeros((n_times, *x0_buf.shape[1:]))
+                v0_q = jnp.zeros((n_times, *v0_buf.shape[1:]))
+                dt_q = jnp.zeros((n_times,))
+                h_q = jnp.zeros((n_times,))
 
-        b_q = jnp.where(newly[:, None, None, None], b_chunk, b_q)
-        a0_q = jnp.where(newly[:, None, None], a0_chunk, a0_q)
-        x0_q = jnp.where(newly[:, None, None], x0_chunk, x0_q)
-        v0_q = jnp.where(newly[:, None, None], v0_chunk, v0_q)
-        dt_q = jnp.where(newly, dt_chunk, dt_q)
-        h_q = jnp.where(newly, h_values, h_q)
+            # Times this chunk newly covers: not yet covered and at/before t_reached in the
+            # integration direction. Already-covered times keep their earlier gather; times
+            # past t_reached are left for a later chunk.
+            reached = direction * (t_reached - times) >= -_TIME_TOL
+            newly = (~covered) & reached & pass_mask
 
-        covered = covered | newly
+            b_chunk = b_buf[step_indices]
+            a0_chunk = a0_buf[step_indices]
+            x0_chunk = x0_buf[step_indices]
+            v0_chunk = v0_buf[step_indices]
+            dt_chunk = dts_buf[step_indices]
+
+            b_q = jnp.where(newly[:, None, None, None], b_chunk, b_q)
+            a0_q = jnp.where(newly[:, None, None], a0_chunk, a0_q)
+            x0_q = jnp.where(newly[:, None, None], x0_chunk, x0_q)
+            v0_q = jnp.where(newly[:, None, None], v0_chunk, v0_q)
+            dt_q = jnp.where(newly, dt_chunk, dt_q)
+            h_q = jnp.where(newly, h_values, h_q)
+
+            covered = covered | newly
 
     return b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps
 
@@ -245,22 +266,33 @@ def discover_natural_step_times(
     per-step Python loop capped at 10000 steps), this rides the fast JIT'd chunk loop and
     is uncapped. Used to place forced-landing dummy times at natural step boundaries.
     """
-    all_dts = []
-    for out, _chunk_start, _t_reached, _direction in _iterate_evolve_chunks(
-        initial_system_state,
-        acceleration_func,
-        times,
-        initial_integrator_state,
-        step_scheduler,
-    ):
-        dts_buf = out[9]
-        # Keep only the filled prefix; unused slots hold the large sentinel.
-        valid = dts_buf[dts_buf < _DTS_SENTINEL]
-        all_dts.append(valid)
+    t0 = float(initial_system_state.relative_time)
+    nst_all = []
 
-    t0 = initial_system_state.relative_time
-    dts = jnp.concatenate(all_dts) if all_dts else jnp.array([])
-    return t0 + jnp.cumsum(dts)
+    for forward_pass in [True, False]:
+        pass_mask = times >= t0 if forward_pass else times < t0
+        if not jnp.any(pass_mask):
+            continue
+
+        chunk_times = jnp.where(pass_mask, times, t0)
+        all_dts = []
+        for out, _chunk_start, _t_reached, _direction in _iterate_evolve_chunks(
+            initial_system_state,
+            acceleration_func,
+            chunk_times,
+            initial_integrator_state,
+            step_scheduler,
+        ):
+            dts_buf = out[9]
+            # Keep only the filled prefix; unused slots hold the large sentinel.
+            valid = dts_buf[dts_buf < _DTS_SENTINEL]
+            all_dts.append(valid)
+
+        if all_dts:
+            dts = jnp.concatenate(all_dts)
+            nst_all.append(t0 + jnp.cumsum(dts))
+
+    return jnp.concatenate(nst_all) if nst_all else jnp.array([])
 
 
 def insert_budget_dummy_times(
@@ -293,14 +325,16 @@ def insert_budget_dummy_times(
 
     for tq in [float(t) for t in requested_times]:
         lo, hi = (prev, tq) if tq >= prev else (tq, prev)
-        # Natural step boundaries strictly inside this interval, in integration order.
-        # nst is monotone in the integration direction (increasing for forward, decreasing
-        # for backward), so the filtered interior is already in integration order.
         interior = nst[(nst > lo) & (nst < hi)]
-        n = int(interior.shape[0])
+
+        interior_sorted = jnp.sort(interior)
+        if tq < prev:
+            interior_sorted = interior_sorted[::-1]
+
+        n = int(interior_sorted.shape[0])
         if n > budget:
             for k in range(budget, n, budget):
-                augmented.append(float(interior[k]))
+                augmented.append(float(interior_sorted[k]))
         augmented.append(tq)
         relevant_inds.append(len(augmented) - 1)
         prev = tq
@@ -397,19 +431,31 @@ def ias15_span_probe(
     likelihood paths, where the host-side stitching loop cannot be threaded through
     ``jax.jacfwd``.
     """
-    out = ias15_evolve(
-        initial_system_state,
-        acceleration_func,
-        times,
-        initial_integrator_state,
-        step_scheduler,
-    )
-    final_system_state = out[2]
-    total_steps = int(out[4])
-    target = float(jnp.max(times))
     t0 = float(initial_system_state.relative_time)
-    direction = 1.0 if target >= t0 else -1.0
-    would_truncate = bool(
-        direction * (float(final_system_state.relative_time) - target) < -_TIME_TOL
-    )
+    would_truncate = False
+    total_steps = 0
+
+    for forward_pass in [True, False]:
+        pass_mask = times >= t0 if forward_pass else times < t0
+        if not jnp.any(pass_mask):
+            continue
+
+        chunk_times = jnp.where(pass_mask, times, t0)
+        target = (
+            float(jnp.max(chunk_times)) if forward_pass else float(jnp.min(chunk_times))
+        )
+        out = ias15_evolve(
+            initial_system_state,
+            acceleration_func,
+            chunk_times,
+            initial_integrator_state,
+            step_scheduler,
+        )
+        final_system_state = out[2]
+        total_steps += int(out[4])
+        direction = 1.0 if forward_pass else -1.0
+        would_truncate = would_truncate or bool(
+            direction * (float(final_system_state.relative_time) - target) < -_TIME_TOL
+        )
+
     return would_truncate, total_steps

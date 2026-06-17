@@ -97,37 +97,77 @@ def _ephem_ias15(
     :func:`_ephem_ias15_with_cov`.
     """
     state = particle_state.to_system()
-    (
-        _positions,
-        _velocities,
-        _final_system_state,
-        _final_integrator_state,
-        _iter_num,
-        b_buf,
-        a0_buf,
-        x0_buf,
-        v0_buf,
-        dts_buf,
-        _t_step_starts,
-        step_indices,
-        h_values,
-    ) = ias15_evolve_with_dense_output(
-        state, acc_func, times, integrator_state, step_scheduler
-    )
+    t0 = state.relative_time
 
-    # Restrict to observation times only (drops any intermediate landing times).
-    obs_step_indices = step_indices[relevant_inds]
-    return _dense_ltt_radec(
-        b_buf[obs_step_indices][:, :, 0, :],
-        a0_buf[obs_step_indices][:, 0, :],
-        x0_buf[obs_step_indices][:, 0, :],
-        v0_buf[obs_step_indices][:, 0, :],
-        dts_buf[obs_step_indices],
-        h_values[relevant_inds],
-        times[relevant_inds],
+    times_fwd = jnp.where(times >= t0, times, t0)
+    times_bwd = jnp.where(times < t0, times, t0)
+
+    out_fwd = ias15_evolve_with_dense_output(
+        state,
+        acc_func,
+        times_fwd,
+        integrator_state,
+        step_scheduler,
+    )
+    (
+        b_buf_fwd,
+        a0_buf_fwd,
+        x0_buf_fwd,
+        v0_buf_fwd,
+        dts_buf_fwd,
+        _,
+        step_indices_fwd,
+        h_values_fwd,
+    ) = out_fwd[5:13]
+
+    out_bwd = ias15_evolve_with_dense_output(
+        state,
+        acc_func,
+        times_bwd,
+        integrator_state,
+        step_scheduler,
+    )
+    (
+        b_buf_bwd,
+        a0_buf_bwd,
+        x0_buf_bwd,
+        v0_buf_bwd,
+        dts_buf_bwd,
+        _,
+        step_indices_bwd,
+        h_values_bwd,
+    ) = out_bwd[5:13]
+
+    obs_step_indices_fwd = step_indices_fwd[relevant_inds]
+    ras_fwd, decs_fwd = _dense_ltt_radec(
+        b_buf_fwd[obs_step_indices_fwd][:, :, 0, :],
+        a0_buf_fwd[obs_step_indices_fwd][:, 0, :],
+        x0_buf_fwd[obs_step_indices_fwd][:, 0, :],
+        v0_buf_fwd[obs_step_indices_fwd][:, 0, :],
+        dts_buf_fwd[obs_step_indices_fwd],
+        h_values_fwd[relevant_inds],
+        times_fwd[relevant_inds],
         observer_positions,
         acc_func,
     )
+
+    obs_step_indices_bwd = step_indices_bwd[relevant_inds]
+    ras_bwd, decs_bwd = _dense_ltt_radec(
+        b_buf_bwd[obs_step_indices_bwd][:, :, 0, :],
+        a0_buf_bwd[obs_step_indices_bwd][:, 0, :],
+        x0_buf_bwd[obs_step_indices_bwd][:, 0, :],
+        v0_buf_bwd[obs_step_indices_bwd][:, 0, :],
+        dts_buf_bwd[obs_step_indices_bwd],
+        h_values_bwd[relevant_inds],
+        times_bwd[relevant_inds],
+        observer_positions,
+        acc_func,
+    )
+
+    is_fwd = times[relevant_inds] >= t0
+    ras = jnp.where(is_fwd, ras_fwd, ras_bwd)
+    decs = jnp.where(is_fwd, decs_fwd, decs_bwd)
+    return ras, decs
 
 
 def _ephem_ias15_stitched(

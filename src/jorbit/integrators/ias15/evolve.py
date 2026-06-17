@@ -261,7 +261,10 @@ def _ias15_evolve_core(
     dts_buf = jnp.full((IAS15_MAX_DYNAMIC_STEPS,), 1e30)
 
     t0 = initial_system_state.relative_time
-    final_time = jnp.max(times)
+    max_t = jnp.max(times)
+    min_t = jnp.min(times)
+    final_time = jnp.where(jnp.abs(max_t - t0) >= jnp.abs(min_t - t0), max_t, min_t)
+
     direction = jnp.sign(final_time - t0)
 
     def cond_fn(carry: tuple) -> bool:
