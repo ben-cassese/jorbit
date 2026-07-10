@@ -36,9 +36,14 @@ from jorbit.integrators import (
     next_proposed_dt_PRS23,
     stitched_interpolate,
 )
+from jorbit.observation import Observations
 from jorbit.system.ephem import _ephem, _integrate
 from jorbit.system.ias15_dense import _ephem_ias15_stitched
 from jorbit.system.keplerian import _keplerian_system_ephem, _keplerian_system_integrate
+from jorbit.system.likelihood import (
+    create_system_forward_model,
+    precompute_system_forward_model_data,
+)
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.states import (
     IAS15IntegratorState,
@@ -64,6 +69,7 @@ class System:
         earliest_time: Time = Time("1980-01-01"),
         latest_time: Time = Time("2050-01-01"),
         max_step_size: u.Quantity | None = None,
+        observations: Observations | None = None,
     ) -> None:
         """Initialize a System.
 
@@ -72,6 +78,14 @@ class System:
                 A list of Particle objects. None if state is provided. Defaults to None.
             state (SystemState, optional):
                 A SystemState object. None if particles is provided. Defaults to None.
+            observations (Observations, optional):
+                Shared astrometric observations. The component particles remain
+                dynamically independent (they could represent different asteroids), but
+                when observations are provided **every particle is scored against this
+                same data**. Enables the fast, reusable ``loglike``/``residuals``/
+                ``chi2``/``model_radec`` attributes (see below). Only supported for the
+                IAS15 integrator; otherwise those attributes are ``None``. Defaults to
+                None.
             gravity (str | Callable):
                 The gravitational acceleration function to use when integrating the
                 particle's orbit. Defaults to "default solar system", which corresponds
@@ -109,6 +123,7 @@ class System:
         self._latest_time = latest_time
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
+        self._observations = observations
 
         # Mirrors the Particle rebase: the JAX-visible state always carries
         # relative_time=0.0, the absolute epoch lives on self._t_ref_astropy /
@@ -164,6 +179,20 @@ class System:
             )
             self._integrator_method = integrator
             self._max_step_size = max_step_size
+
+        # When shared observations are supplied, build the fast, reusable forward-model
+        # callables once. jit compilation stays lazy (first call). None when unavailable.
+        forward_model = self._setup_forward_model()
+        if forward_model is None:
+            self.loglike = None
+            self.residuals = None
+            self.chi2 = None
+            self.model_radec = None
+        else:
+            self.loglike = forward_model["loglike"]
+            self.residuals = forward_model["residuals"]
+            self.chi2 = forward_model["chi2"]
+            self.model_radec = forward_model["model_radec"]
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
@@ -301,6 +330,22 @@ class System:
             integrator = jax.tree_util.Partial(leapfrog_evolve)
 
         return integrator_state, integrator
+
+    def _setup_forward_model(self) -> dict | None:
+        """Build the fast batched forward model when shared observations are available.
+
+        Returns None (leaving loglike/residuals/chi2/model_radec unset) unless the System
+        has an Observations object and uses the IAS15 dense path.
+        """
+        if (
+            self._observations is None
+            or self._is_keplerian
+            or self._integrator_method != "ias15"
+        ):
+            return None
+        scheduler = self._resolve_step_scheduler("prs23")
+        data = precompute_system_forward_model_data(self, self._observations, scheduler)
+        return create_system_forward_model(data)
 
     ################
     # PUBLIC METHODS
