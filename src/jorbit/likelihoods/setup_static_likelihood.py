@@ -27,7 +27,9 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
     ias15_static_evolve,
     initialize_ias15_integrator_state,
+    ltt_seed_floor,
     precompute_interpolation_indices,
+    warn_if_ltt_extrapolating,
 )
 from jorbit.integrators.ias15 import make_ltt_propagator
 from jorbit.utils.states import CartesianState, KeplerianState
@@ -122,6 +124,15 @@ def precompute_likelihood_data(
     dt_seed = float(obs_times[0] - t0) if len(obs_times) > 0 else 10.0
     if abs(dt_seed) < 1e-6:  # < ~0.1 s; treat as zero (floating-point rounding)
         dt_seed = 0.1
+    # Floor the seed at >= 2x the reference orbit's max light travel time so the
+    # dense-LTT polynomial evaluation never extrapolates by more than ~1 step length.
+    # Since these dts are frozen and reused for perturbed states, the 2x margin covers
+    # states out to ~2x the reference topocentric distance; beyond that the
+    # extrapolation grows again (see the warning below, which checks the reference).
+    seed_floor = float(
+        ltt_seed_floor(state.tracer_positions, p.observations.observer_positions)
+    )
+    dt_seed = (1.0 if dt_seed >= 0 else -1.0) * max(abs(dt_seed), seed_floor)
     integrator_init.dt = dt_seed
     dts = get_natural_dynamic_dts(
         initial_system_state=state,
@@ -136,6 +147,14 @@ def precompute_likelihood_data(
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
     step_indices, h_values = precompute_interpolation_indices(
         t_step_starts, dts, obs_times
+    )
+    # Catch residual extrapolation (e.g. the scheduler shrank steps below the seed
+    # floor for accuracy). The reference epoch position stands in for the per-step
+    # positions; plenty accurate for a >1-step-length threshold.
+    warn_if_ltt_extrapolating(
+        jnp.broadcast_to(state.tracer_positions[0], (len(obs_times), 3)),
+        dts[step_indices],
+        p.observations.observer_positions,
     )
 
     # precompute the positions and velocities of all perturbers at each intermediate

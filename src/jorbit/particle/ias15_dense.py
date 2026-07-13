@@ -9,10 +9,12 @@ import jax.numpy as jnp
 
 from jorbit.astrometry.sky_projection import on_sky
 from jorbit.integrators import (
+    apply_ltt_seed_floor,
     ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     make_ltt_propagator,
     stitched_per_query_gather,
+    warn_if_ltt_extrapolating,
 )
 from jorbit.particle.covariance import (
     _cov_from_jacobian,
@@ -98,6 +100,12 @@ def _ephem_ias15(
     """
     state = particle_state.to_system()
     t0 = state.relative_time
+
+    # Seed the first proposed step at >= 2x the max light travel time so the dense-LTT
+    # polynomial evaluation never extrapolates by more than ~1 step length.
+    integrator_state = apply_ltt_seed_floor(
+        integrator_state, state.tracer_positions, observer_positions
+    )
 
     times_fwd = jnp.where(times >= t0, times, t0)
     times_bwd = jnp.where(times < t0, times, t0)
@@ -186,8 +194,16 @@ def _ephem_ias15_stitched(
     dense-LTT ``on_sky`` evaluation as :func:`_ephem_ias15`.
     """
     state = particle_state.to_system()
+    # Seed the first proposed step at >= 2x the max light travel time so the dense-LTT
+    # polynomial evaluation never extrapolates by more than ~1 step length.
+    integrator_state = apply_ltt_seed_floor(
+        integrator_state, state.tracer_positions, observer_positions
+    )
     b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
         state, acc_func, times, integrator_state, step_scheduler
+    )
+    warn_if_ltt_extrapolating(
+        x0_q[relevant_inds], dt_q[relevant_inds], observer_positions
     )
     # Single tracer at index 0; restrict to observation times.
     ras, decs = _dense_ltt_radec(
