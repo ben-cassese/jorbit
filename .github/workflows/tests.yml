@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest] # still running into issues w/ installing reboundx on ubuntu via uv, see https://github.com/dtamayo/reboundx/issues/141
+        os: [ubuntu-latest] # switched from macos-latest (RAM-starved arm64 runners, 7GB vs 16GB); reboundx's librebound RUNPATH bug (dtamayo/reboundx#141) is fixed as of reboundx 4.6.0
         python-version: ["3.10", "3.11", "3.12", "3.13"]
       fail-fast: false
     steps:
@@ -47,7 +47,7 @@ jobs:
         run: uv run pytest tests -m "not slow" --cov --cov-config=pyproject.toml --cov-report=xml
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
-        if: ${{ matrix.python-version == '3.13' && matrix.os == 'macos-latest' }}
+        if: ${{ matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest' }}
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
