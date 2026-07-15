@@ -44,7 +44,15 @@ jobs:
       - name: Run tests
         # `-m "not slow"` deselects long-running tests that need local-only resources
         # (e.g. test_long_integrate_vs_assist, which needs the ASSIST ephemeris files).
-        run: uv run pytest tests -m "not slow" --cov --cov-config=pyproject.toml --cov-report=xml
+        # TEMP: memory logger interleaved into this step's live log so readings survive
+        # even if the job gets killed mid-run (an artifact upload would not).
+        run: |
+          ( while true; do echo "[memmon $(date -u +%H:%M:%S)]"; free -m; sleep 15; done ) &
+          MEMMON_PID=$!
+          uv run pytest tests -m "not slow" --cov --cov-config=pyproject.toml --cov-report=xml
+          EXIT=$?
+          kill "$MEMMON_PID" 2>/dev/null || true
+          exit $EXIT
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
         if: ${{ matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest' }}
