@@ -8,8 +8,8 @@ path (:func:`jorbit.system.ias15_dense._ephem_ias15_bounded`) — a single dense
 direction, no host stitching — so they are jit-able and fast enough for MCMC inner loops.
 
 All observation-dependent (state-independent) work is done once in
-:func:`precompute_system_forward_model_data`; :func:`create_system_forward_model` closes over
-it and returns jitted callables over a ``(P, 6)`` batch of candidate states.
+:func:`precompute_system_forward_model_data`; :func:`create_system_forward_model` binds it
+as a Partial argument to shared jitted callables over a ``(P, 6)`` batch of candidate states.
 """
 
 from __future__ import annotations
@@ -76,6 +76,88 @@ def precompute_system_forward_model_data(
     )
 
 
+_LOG_2PI_2 = 2.0 * jnp.log(2.0 * jnp.pi)
+
+
+def _model(inputs: tuple, states: jnp.ndarray) -> tuple:
+    # (ras, decs) each (P, n_obs); reached (n_obs,) — shared across the batch.
+    (
+        acc_func,
+        t_ref_jd,
+        times_off,
+        fwd_mask,
+        times_fwd,
+        times_bwd,
+        observer_positions,
+        _obs_ra,
+        _obs_dec,
+        _inv_cov_matrices,
+        _cov_log_dets,
+        step_scheduler,
+    ) = inputs
+    return _ephem_ias15_bounded(
+        states,
+        times_off,
+        fwd_mask,
+        times_fwd,
+        times_bwd,
+        observer_positions,
+        t_ref_jd,
+        acc_func,
+        step_scheduler,
+    )
+
+
+def _raw_residuals(
+    obs_ra: jnp.ndarray, obs_dec: jnp.ndarray, ras: jnp.ndarray, decs: jnp.ndarray
+) -> jnp.ndarray:
+    # tangent_plane_projection(obs_ra, obs_dec, model_ra, model_dec) -> (model - obs)
+    # offset in arcsec, matching particle/likelihood.py:_residuals.
+    def per_particle(ra_row: jnp.ndarray, dec_row: jnp.ndarray) -> jnp.ndarray:
+        return jax.vmap(tangent_plane_projection)(obs_ra, obs_dec, ra_row, dec_row)
+
+    return jax.vmap(per_particle)(ras, decs)  # (P, n_obs, 2)
+
+
+@jax.jit
+def _model_radec(inputs: tuple, states: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ras, decs, reached = _model(inputs, states)
+    mask = reached[None, :]
+    return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan)
+
+
+@jax.jit
+def _residuals(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+    obs_ra, obs_dec = inputs[7], inputs[8]
+    ras, decs, reached = _model(inputs, states)
+    r = _raw_residuals(obs_ra, obs_dec, ras, decs)
+    return jnp.where(reached[None, :, None], r, jnp.nan)  # (P, n_obs, 2)
+
+
+@jax.jit
+def _chi2(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+    obs_ra, obs_dec, inv_cov_matrices = inputs[7], inputs[8], inputs[9]
+    ras, decs, reached = _model(inputs, states)
+    r = _raw_residuals(obs_ra, obs_dec, ras, decs)
+    quad = jnp.einsum("pbi,bij,pbj->p", r, inv_cov_matrices, r)  # (P,)
+    return jnp.where(jnp.all(reached), quad, jnp.inf)
+
+
+@jax.jit
+def _loglike(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+    obs_ra, obs_dec, inv_cov_matrices, cov_log_dets = (
+        inputs[7],
+        inputs[8],
+        inputs[9],
+        inputs[10],
+    )
+    ras, decs, reached = _model(inputs, states)
+    r = _raw_residuals(obs_ra, obs_dec, ras, decs)
+    quad = jnp.einsum("pbi,bij,pbj->pb", r, inv_cov_matrices, r)  # (P, n_obs)
+    ll = jnp.sum(-0.5 * (_LOG_2PI_2 + cov_log_dets[None, :] + quad), axis=1)  # (P,)
+    return jnp.where(jnp.all(reached), ll, -jnp.inf)
+
+
 def create_system_forward_model(inputs: tuple) -> dict:
     """Build the jitted, reusable forward-model callables over a ``(P, 6)`` state batch.
 
@@ -87,6 +169,12 @@ def create_system_forward_model(inputs: tuple) -> dict:
     rejects the step rather than crashing or accepting a finite-but-wrong value. Because the
     step schedule is shared across the batch, truncation is batch-wide.
 
+    The callables are ``jax.tree_util.Partial`` bindings of shared module-level jitted
+    functions, with ``inputs`` passed through as a pytree argument. Binding (rather than
+    closure-capturing) keeps the ephemeris/observation arrays out of the compiled
+    executables — closure constants are re-embedded per compilation, ~150 MB each for
+    the default ephemeris — and lets Systems with matching shapes share compilations.
+
     Args:
         inputs (tuple):
             The output of :func:`precompute_system_forward_model_data`.
@@ -95,77 +183,12 @@ def create_system_forward_model(inputs: tuple) -> dict:
         dict:
             ``model_radec``/``residuals``/``chi2``/``loglike`` jitted callables plus ``n_obs``.
     """
-    (
-        acc_func,
-        t_ref_jd,
-        times_off,
-        fwd_mask,
-        times_fwd,
-        times_bwd,
-        observer_positions,
-        obs_ra,
-        obs_dec,
-        inv_cov_matrices,
-        cov_log_dets,
-        step_scheduler,
-    ) = inputs
-
-    n_obs = int(times_off.shape[0])
-    log_2pi_2 = 2.0 * jnp.log(2.0 * jnp.pi)
-
-    def _model(states: jnp.ndarray) -> tuple:
-        # (ras, decs) each (P, n_obs); reached (n_obs,) — shared across the batch.
-        return _ephem_ias15_bounded(
-            states,
-            times_off,
-            fwd_mask,
-            times_fwd,
-            times_bwd,
-            observer_positions,
-            t_ref_jd,
-            acc_func,
-            step_scheduler,
-        )
-
-    def _raw_residuals(ras: jnp.ndarray, decs: jnp.ndarray) -> jnp.ndarray:
-        # tangent_plane_projection(obs_ra, obs_dec, model_ra, model_dec) -> (model - obs)
-        # offset in arcsec, matching particle/likelihood.py:_residuals.
-        def per_particle(ra_row: jnp.ndarray, dec_row: jnp.ndarray) -> jnp.ndarray:
-            return jax.vmap(tangent_plane_projection)(obs_ra, obs_dec, ra_row, dec_row)
-
-        return jax.vmap(per_particle)(ras, decs)  # (P, n_obs, 2)
-
-    @jax.jit
-    def model_radec(states: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        ras, decs, reached = _model(states)
-        mask = reached[None, :]
-        return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan)
-
-    @jax.jit
-    def residuals(states: jnp.ndarray) -> jnp.ndarray:
-        ras, decs, reached = _model(states)
-        r = _raw_residuals(ras, decs)
-        return jnp.where(reached[None, :, None], r, jnp.nan)  # (P, n_obs, 2)
-
-    @jax.jit
-    def chi2(states: jnp.ndarray) -> jnp.ndarray:
-        ras, decs, reached = _model(states)
-        r = _raw_residuals(ras, decs)
-        quad = jnp.einsum("pbi,bij,pbj->p", r, inv_cov_matrices, r)  # (P,)
-        return jnp.where(jnp.all(reached), quad, jnp.inf)
-
-    @jax.jit
-    def loglike(states: jnp.ndarray) -> jnp.ndarray:
-        ras, decs, reached = _model(states)
-        r = _raw_residuals(ras, decs)
-        quad = jnp.einsum("pbi,bij,pbj->pb", r, inv_cov_matrices, r)  # (P, n_obs)
-        ll = jnp.sum(-0.5 * (log_2pi_2 + cov_log_dets[None, :] + quad), axis=1)  # (P,)
-        return jnp.where(jnp.all(reached), ll, -jnp.inf)
+    n_obs = int(inputs[2].shape[0])
 
     return {
-        "model_radec": model_radec,
-        "residuals": residuals,
-        "chi2": chi2,
-        "loglike": loglike,
+        "model_radec": jax.tree_util.Partial(_model_radec, inputs),
+        "residuals": jax.tree_util.Partial(_residuals, inputs),
+        "chi2": jax.tree_util.Partial(_chi2, inputs),
+        "loglike": jax.tree_util.Partial(_loglike, inputs),
         "n_obs": n_obs,
     }

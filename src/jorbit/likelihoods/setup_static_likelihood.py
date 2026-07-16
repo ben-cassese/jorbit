@@ -27,7 +27,9 @@ from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
     ias15_static_evolve,
     initialize_ias15_integrator_state,
+    ltt_seed_floor,
     precompute_interpolation_indices,
+    warn_if_ltt_extrapolating,
 )
 from jorbit.integrators.ias15 import make_ltt_propagator
 from jorbit.utils.states import CartesianState, KeplerianState
@@ -122,6 +124,15 @@ def precompute_likelihood_data(
     dt_seed = float(obs_times[0] - t0) if len(obs_times) > 0 else 10.0
     if abs(dt_seed) < 1e-6:  # < ~0.1 s; treat as zero (floating-point rounding)
         dt_seed = 0.1
+    # Floor the seed at >= 2x the reference orbit's max light travel time so the
+    # dense-LTT polynomial evaluation never extrapolates by more than ~1 step length.
+    # Since these dts are frozen and reused for perturbed states, the 2x margin covers
+    # states out to ~2x the reference topocentric distance; beyond that the
+    # extrapolation grows again (see the warning below, which checks the reference).
+    seed_floor = float(
+        ltt_seed_floor(state.tracer_positions, p.observations.observer_positions)
+    )
+    dt_seed = (1.0 if dt_seed >= 0 else -1.0) * max(abs(dt_seed), seed_floor)
     integrator_init.dt = dt_seed
     dts = get_natural_dynamic_dts(
         initial_system_state=state,
@@ -136,6 +147,14 @@ def precompute_likelihood_data(
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
     step_indices, h_values = precompute_interpolation_indices(
         t_step_starts, dts, obs_times
+    )
+    # Catch residual extrapolation (e.g. the scheduler shrank steps below the seed
+    # floor for accuracy). The reference epoch position stands in for the per-step
+    # positions; plenty accurate for a >1-step-length threshold.
+    warn_if_ltt_extrapolating(
+        jnp.broadcast_to(state.tracer_positions[0], (len(obs_times), 3)),
+        dts[step_indices],
+        p.observations.observer_positions,
     )
 
     # precompute the positions and velocities of all perturbers at each intermediate
@@ -177,25 +196,18 @@ def precompute_likelihood_data(
     )
 
 
-def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial:
-    """Create a function to compute residuals using static integration and precomputed perturber positions.
+@jax.jit
+def _static_residuals(
+    inputs: tuple,
+    static_acc_func: Callable,
+    on_sky_acc_func: Callable,
+    state: CartesianState | KeplerianState,
+) -> jnp.ndarray:
+    """Compute static-integration residuals; all precomputed data enters as arguments.
 
-    The returned function uses the "default" dynamical model, meaning GR effects for the
-    Sun+planets, Newtonian gravity for the asteroids, and no non-gravitational
-    or gravitational harmonic effects. Positions at observation times are obtained by
-    interpolating within IAS15 steps using stored polynomial coefficients, rather than
-    forcing steps to land on observation times.
-
-    Args:
-        inputs (tuple):
-            The outputs of the `precompute_likelihood_data` function, containing all
-            necessary precomputed data for the static integration.
-
-    Returns:
-        jax.tree_util.Partial:
-            A JIT-compiled function that takes a system state as input and returns the
-            residuals between the observed and model right ascensions and declinations
-            projected onto the tangent plane.
+    Module-level and jitted once: the precomputed perturber/dense arrays in ``inputs``
+    flow in as traced arguments rather than closure constants, so they are not
+    re-embedded in every per-Particle compilation.
     """
     (
         cheby_info,
@@ -214,98 +226,125 @@ def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial
         pp_a_gr,
     ) = inputs
 
-    static_acc_func = create_static_default_acceleration_func()
-    on_sky_acc_func = create_static_default_on_sky_acc_func()
+    state = state.to_system()
+    state.fixed_perturber_positions = perturber_pos[0, 0]
+    state.fixed_perturber_velocities = perturber_vel[0, 0]
+    state.fixed_perturber_log_gms = log_gms
+    state.acceleration_func_kwargs = {
+        **state.acceleration_func_kwargs,
+        "pp_a2": pp_a2[0, 0],
+        "pp_a_newt": pp_a_newt[0, 0],
+        "pp_a_gr": pp_a_gr[0, 0],
+    }
+    a0 = static_acc_func(state)
+    integrator_init = initialize_ias15_integrator_state(a0)
+    integrator_init.dt = dts[0]
 
-    def static_residuals_func(state: CartesianState | KeplerianState) -> jnp.ndarray:
-        state = state.to_system()
-        state.fixed_perturber_positions = perturber_pos[0, 0]
-        state.fixed_perturber_velocities = perturber_vel[0, 0]
-        state.fixed_perturber_log_gms = log_gms
-        state.acceleration_func_kwargs = {
-            **state.acceleration_func_kwargs,
-            "pp_a2": pp_a2[0, 0],
-            "pp_a_newt": pp_a_newt[0, 0],
-            "pp_a_gr": pp_a_gr[0, 0],
-        }
-        a0 = static_acc_func(state)
-        integrator_init = initialize_ias15_integrator_state(a0)
-        integrator_init.dt = dts[0]
+    (b_all, a0_all, x0_all, v0_all), _static_state, _static_integrator_state = (
+        ias15_static_evolve(
+            initial_system_state=state,
+            acceleration_func=static_acc_func,
+            dts=dts,
+            initial_integrator_state=integrator_init,
+            perturber_positions=perturber_pos,
+            perturber_velocities=perturber_vel,
+            perturber_log_gms=log_gms,
+            pp_a2=pp_a2,
+            pp_a_newt=pp_a_newt,
+            pp_a_gr=pp_a_gr,
+        )
+    )
 
-        (b_all, a0_all, x0_all, v0_all), _static_state, _static_integrator_state = (
-            ias15_static_evolve(
-                initial_system_state=state,
-                acceleration_func=static_acc_func,
-                dts=dts,
-                initial_integrator_state=integrator_init,
-                perturber_positions=perturber_pos,
-                perturber_velocities=perturber_vel,
-                perturber_log_gms=log_gms,
-                pp_a2=pp_a2,
-                pp_a_newt=pp_a_newt,
-                pp_a_gr=pp_a_gr,
-            )
+    # Gather per-obs dense-output slices for the single tracer (index 0).
+    # Shapes: b_per_obs (n_obs, 7, 3); a0/x0/v0_per_obs (n_obs, 3);
+    # dt_per_obs (n_obs,).
+    b_per_obs = b_all[step_indices][:, :, 0, :]
+    a0_per_obs = a0_all[step_indices][:, 0, :]
+    x0_per_obs = x0_all[step_indices][:, 0, :]
+    v0_per_obs = v0_all[step_indices][:, 0, :]
+    dt_per_obs = dts[step_indices]
+
+    def per_obs_on_sky(
+        b_step: jnp.ndarray,
+        a0_step: jnp.ndarray,
+        x0_step: jnp.ndarray,
+        v0_step: jnp.ndarray,
+        dt_step: jnp.ndarray,
+        h_obs: jnp.ndarray,
+        time: jnp.ndarray,
+        observer_pos: jnp.ndarray,
+        cheby_info_obs: dict[str, jnp.ndarray],
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        # Build a closure that evaluates the IAS15 polynomial at light-travel-
+        # delayed times within this step. on_sky uses it instead of the
+        # constant-acceleration Taylor expansion.
+        propagator = make_ltt_propagator(
+            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
+        )
+        # x_obs (=position at h_obs) is what on_sky uses to seed the LTT
+        # loop and to compute the geometric distance to the observer.
+        # When ltt_position_fn is provided, on_sky doesn't use the
+        # velocity argument, so we pass zeros to keep the signature.
+        x_obs = propagator(jnp.array(0.0))
+        return on_sky(
+            x_obs,
+            jnp.zeros(3),
+            time,
+            observer_pos,
+            on_sky_acc_func,
+            cheby_info_obs,
+            ltt_position_fn=propagator,
         )
 
-        # Gather per-obs dense-output slices for the single tracer (index 0).
-        # Shapes: b_per_obs (n_obs, 7, 3); a0/x0/v0_per_obs (n_obs, 3);
-        # dt_per_obs (n_obs,).
-        b_per_obs = b_all[step_indices][:, :, 0, :]
-        a0_per_obs = a0_all[step_indices][:, 0, :]
-        x0_per_obs = x0_all[step_indices][:, 0, :]
-        v0_per_obs = v0_all[step_indices][:, 0, :]
-        dt_per_obs = dts[step_indices]
+    model_ras, model_decs = jax.vmap(
+        per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0)
+    )(
+        b_per_obs,
+        a0_per_obs,
+        x0_per_obs,
+        v0_per_obs,
+        dt_per_obs,
+        h_values,
+        obs_times,
+        observer_positions,
+        cheby_info,
+    )
 
-        def per_obs_on_sky(
-            b_step: jnp.ndarray,
-            a0_step: jnp.ndarray,
-            x0_step: jnp.ndarray,
-            v0_step: jnp.ndarray,
-            dt_step: jnp.ndarray,
-            h_obs: jnp.ndarray,
-            time: jnp.ndarray,
-            observer_pos: jnp.ndarray,
-            cheby_info_obs: dict[str, jnp.ndarray],
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            # Build a closure that evaluates the IAS15 polynomial at light-travel-
-            # delayed times within this step. on_sky uses it instead of the
-            # constant-acceleration Taylor expansion.
-            propagator = make_ltt_propagator(
-                b_step, a0_step, x0_step, v0_step, dt_step, h_obs
-            )
-            # x_obs (=position at h_obs) is what on_sky uses to seed the LTT
-            # loop and to compute the geometric distance to the observer.
-            # When ltt_position_fn is provided, on_sky doesn't use the
-            # velocity argument, so we pass zeros to keep the signature.
-            x_obs = propagator(jnp.array(0.0))
-            return on_sky(
-                x_obs,
-                jnp.zeros(3),
-                time,
-                observer_pos,
-                on_sky_acc_func,
-                cheby_info_obs,
-                ltt_position_fn=propagator,
-            )
+    xis_etas = jax.vmap(tangent_plane_projection)(
+        obs_ras, obs_decs, model_ras, model_decs
+    )
 
-        model_ras, model_decs = jax.vmap(
-            per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0)
-        )(
-            b_per_obs,
-            a0_per_obs,
-            x0_per_obs,
-            v0_per_obs,
-            dt_per_obs,
-            h_values,
-            obs_times,
-            observer_positions,
-            cheby_info,
-        )
+    return xis_etas
 
-        xis_etas = jax.vmap(tangent_plane_projection)(
-            obs_ras, obs_decs, model_ras, model_decs
-        )
 
-        return xis_etas
+def create_default_static_residuals_func(inputs: tuple) -> jax.tree_util.Partial:
+    """Create a function to compute residuals using static integration and precomputed perturber positions.
 
-    return jax.jit(jax.tree_util.Partial(static_residuals_func))
+    The returned function uses the "default" dynamical model, meaning GR effects for the
+    Sun+planets, Newtonian gravity for the asteroids, and no non-gravitational
+    or gravitational harmonic effects. Positions at observation times are obtained by
+    interpolating within IAS15 steps using stored polynomial coefficients, rather than
+    forcing steps to land on observation times.
+
+    The precomputed data is bound to the shared, module-level jitted
+    :func:`_static_residuals` as Partial arguments, so it flows into the compiled
+    function as ordinary traced inputs instead of being embedded per-instance as
+    compile-time constants.
+
+    Args:
+        inputs (tuple):
+            The outputs of the `precompute_likelihood_data` function, containing all
+            necessary precomputed data for the static integration.
+
+    Returns:
+        jax.tree_util.Partial:
+            A JIT-compiled function that takes a system state as input and returns the
+            residuals between the observed and model right ascensions and declinations
+            projected onto the tangent plane.
+    """
+    return jax.tree_util.Partial(
+        _static_residuals,
+        inputs,
+        create_static_default_acceleration_func(),
+        create_static_default_on_sky_acc_func(),
+    )

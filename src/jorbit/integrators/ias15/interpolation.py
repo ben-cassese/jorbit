@@ -4,12 +4,15 @@ Evaluate the converged 7th-order IAS15 polynomial at arbitrary times within comp
 steps, without re-integrating.
 """
 
+import warnings
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
+from jorbit.data.constants import INV_SPEED_OF_LIGHT
 from jorbit.integrators.ias15.helpers import _estimate_x_v_from_b
 
 
@@ -58,6 +61,117 @@ def precompute_interpolation_indices(
     return step_indices, h_values
 
 
+def ltt_seed_floor(
+    positions: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> jnp.ndarray:
+    """Minimum initial IAS15 step proposal for dense-output light-travel-time work.
+
+    :func:`make_ltt_propagator` evaluates the polynomial of the step containing an
+    observation at ``h = h_obs - LTT/dt_step``, i.e. it extrapolates outside ``[0, 1]``
+    by the light travel time measured in step lengths. If the steps are much shorter
+    than the LTT (e.g. a short observation arc of a distant object, where the
+    integration ends before the adaptive steps ramp up from their small initial seed),
+    that extrapolation amplifies converged-tolerance noise in the high-order b
+    coefficients by ~``h^7``, producing arcsec-level, jagged RA/Dec errors.
+
+    Seeding the integrator's first *proposed* step at twice the largest topocentric
+    light travel time bounds the excursion to at most ~1 step length (O(1)
+    amplification, i.e. errors at the per-step tolerance level) whenever the proposal
+    is accepted. Because it is only a proposal, IAS15's accuracy control can still
+    reject and shrink it, so integration accuracy is never compromised; steps only end
+    up shorter than this floor when the dynamics demand it (close encounters), a regime
+    where the topocentric distance — and hence the LTT — is small anyway.
+
+    Args:
+        positions (jnp.ndarray): Particle position(s) at the integration epoch,
+            shape (3,) or (P, 3).
+        observer_positions (jnp.ndarray): Observer position at each observation time,
+            shape (n_obs, 3).
+
+    Returns:
+        jnp.ndarray:
+            Scalar: 2x the largest particle-observer distance divided by the speed
+            of light, in days.
+    """
+    pos = jnp.atleast_2d(positions)  # (P, 3)
+    dists = jnp.linalg.norm(
+        pos[:, None, :] - observer_positions[None, :, :], axis=-1
+    )  # (P, n_obs)
+    return 2.0 * jnp.max(dists) * INV_SPEED_OF_LIGHT
+
+
+def apply_ltt_seed_floor(
+    integrator_state: "IAS15IntegratorState",  # noqa: F821
+    positions: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> "IAS15IntegratorState":  # noqa: F821
+    """Return a copy of ``integrator_state`` with ``dt`` floored via :func:`ltt_seed_floor`.
+
+    Preserves the sign of the existing ``dt`` (a reused integrator state may carry a
+    signed proposal) and never mutates the input, so cached integrator states are safe
+    to pass in.
+
+    Args:
+        integrator_state (IAS15IntegratorState): State whose ``dt`` to floor.
+        positions (jnp.ndarray): Particle position(s) at the integration epoch,
+            shape (3,) or (P, 3).
+        observer_positions (jnp.ndarray): Observer position at each observation time,
+            shape (n_obs, 3).
+
+    Returns:
+        IAS15IntegratorState:
+            A copy with ``dt = sign(dt) * max(|dt|, ltt_seed_floor(...))``.
+    """
+    floor = ltt_seed_floor(positions, observer_positions)
+    dt = integrator_state.dt
+    sign = jnp.where(dt == 0.0, 1.0, jnp.sign(dt))
+    return integrator_state.replace(dt=sign * jnp.maximum(jnp.abs(dt), floor))
+
+
+def warn_if_ltt_extrapolating(
+    x0_per_obs: jnp.ndarray,
+    dt_per_obs: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> None:
+    """Warn if any observation's light travel time exceeds its containing step length.
+
+    Host-side check (concrete arrays only, not jittable) for the dense-LTT paths: with
+    the :func:`ltt_seed_floor` seeding this should never trigger, unless the adaptive
+    controller shrank the steps below the floor for accuracy (e.g. a close encounter)
+    while an observation still has a long light travel time. In that case
+    :func:`make_ltt_propagator` extrapolates its step polynomial by more than ~1 step
+    length and the on-sky positions degrade.
+
+    Args:
+        x0_per_obs (jnp.ndarray): Start-of-step positions of the steps containing each
+            observation, shape (n_obs, n_particles, 3) or (n_obs, 3).
+        dt_per_obs (jnp.ndarray): Lengths of the steps containing each observation,
+            shape (n_obs,).
+        observer_positions (jnp.ndarray): Observer position at each observation time,
+            shape (n_obs, 3).
+    """
+    if x0_per_obs.ndim == 2:
+        x0_per_obs = x0_per_obs[:, None, :]
+    dists = jnp.linalg.norm(
+        x0_per_obs - observer_positions[:, None, :], axis=-1
+    )  # (n_obs, n_particles)
+    ltts = jnp.max(dists, axis=-1) * INV_SPEED_OF_LIGHT
+    excursions = ltts / jnp.abs(dt_per_obs)
+    worst = float(jnp.max(excursions))
+    if worst > 1.0:
+        warnings.warn(
+            "The light travel time of at least one observation exceeds the length of "
+            f"the IAS15 step containing it (worst ratio: {worst:.1f}). The dense-output "
+            "light-travel-time correction extrapolates that step's polynomial beyond "
+            "its reliable range, degrading the predicted on-sky positions. This can "
+            "happen when the adaptive integrator is forced to take steps shorter than "
+            "the light travel time (e.g. a close encounter while the target is "
+            "distant).",
+            stacklevel=2,
+        )
+
+
 def make_ltt_propagator(
     b_step: jnp.ndarray,
     a0_step: jnp.ndarray,
@@ -75,10 +189,14 @@ def make_ltt_propagator(
     The returned closure maps a (negative) time offset ``dt`` to the particle's
     position at fractional position ``h_obs + dt / dt_step`` within the step. It
     accepts ``h`` slightly outside ``[0, 1]`` (i.e. it will extrapolate within the
-    same step's polynomial) — typically only by a small amount, since the LTT is
-    much shorter than ``dt_step`` for normal solar-system geometries. For close
-    flybys with very small steps where LTT may exceed dt_step, this still gives a
-    much higher-order correction than the constant-acceleration Taylor.
+    same step's polynomial). The excursion is only safe when it is at most ~1 step
+    length: beyond that, converged-tolerance noise in the high-order b coefficients
+    is amplified by ~``h^7`` (arcsec-level, jagged errors for a distant object
+    observed over a short arc). Callers must therefore seed the integration so the
+    step containing each observation is at least as long as its light travel time —
+    see :func:`ltt_seed_floor`. For close flybys where accuracy forces steps below
+    that floor, the LTT is small too, and this still gives a much higher-order
+    correction than the constant-acceleration Taylor.
 
     Args:
         b_step (jnp.ndarray): Converged b coefficients for this step (single

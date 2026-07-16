@@ -40,9 +40,12 @@ from jorbit.integrators.ias15.helpers import (
     initialize_ias15_integrator_state,
 )
 from jorbit.integrators.ias15.interpolation import (
+    apply_ltt_seed_floor,
     interpolate_from_dense_output,
+    ltt_seed_floor,
     make_ltt_propagator,
     precompute_interpolation_indices,
+    warn_if_ltt_extrapolating,
 )
 from jorbit.integrators.ias15.step import (
     _predict_next_step,
@@ -63,14 +66,17 @@ __all__ = [
     "_refine_sub_g",
     "_update_bs",
     "add_cs",
+    "apply_ltt_seed_floor",
     "ias15_evolve",
     "ias15_evolve_forced_landing",
     "ias15_evolve_with_dense_output",
     "ias15_step",
     "initialize_ias15_integrator_state",
     "interpolate_from_dense_output",
+    "ltt_seed_floor",
     "make_ltt_propagator",
     "next_proposed_dt_PRS23",
     "next_proposed_dt_global",
     "precompute_interpolation_indices",
+    "warn_if_ltt_extrapolating",
 ]

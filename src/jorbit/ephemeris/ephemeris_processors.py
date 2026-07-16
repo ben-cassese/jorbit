@@ -203,10 +203,10 @@ class EphemerisPostProcessor:
 
         Returns:
             tuple: A tuple of (children, auxiliary_data) where children contains
-                the ephemeris processors and post-processing function, and
-                auxiliary_data is None.
+                the ephemeris processors, post-processing function, and combined
+                log_gms, and auxiliary_data is None.
         """
-        children = (self.ephs, self.postprocessing_func)
+        children = (self.ephs, self.postprocessing_func, self.log_gms)
         aux_data = None
         return children, aux_data
 
@@ -216,15 +216,21 @@ class EphemerisPostProcessor:
     ) -> "EphemerisPostProcessor":
         """Reconstructs a class instance from flattened data.
 
+        Purely structural: does not call __init__, because JAX is allowed to
+        unflatten with placeholder leaves (e.g. under vmap with in_axes=None),
+        and __init__ computes on its children.
+
         Args:
             aux_data: Auxiliary data (unused).
-            children (tuple): Tuple containing ephemeris processors and
-                post-processing function.
+            children (tuple): Tuple containing ephemeris processors,
+                post-processing function, and combined log_gms.
 
         Returns:
             EphemerisPostProcessor: A new instance of the class.
         """
-        return cls(*children)
+        obj = object.__new__(cls)
+        obj.ephs, obj.postprocessing_func, obj.log_gms = children
+        return obj
 
     @jax.jit
     def state(self, tdb: float) -> tuple:

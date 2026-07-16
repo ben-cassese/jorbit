@@ -10,10 +10,12 @@ import jax.numpy as jnp
 from jorbit.astrometry.sky_projection import on_sky
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
+    apply_ltt_seed_floor,
     ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
     make_ltt_propagator,
     stitched_per_query_gather,
+    warn_if_ltt_extrapolating,
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
@@ -108,8 +110,18 @@ def _ephem_ias15_stitched(
     (see :func:`jorbit.integrators.stitched_per_query_gather`) before the per-obs,
     per-particle dense-LTT ``on_sky`` evaluation in :func:`dense_ltt_radec_multi`.
     """
+    # Seed the first proposed step at >= 2x the max light travel time so the dense-LTT
+    # polynomial evaluation never extrapolates by more than ~1 step length.
+    integrator_state = apply_ltt_seed_floor(
+        integrator_state,
+        jnp.concatenate((state.massive_positions, state.tracer_positions)),
+        observer_positions,
+    )
     b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
         state, acc_func, times, integrator_state, step_scheduler
+    )
+    warn_if_ltt_extrapolating(
+        x0_q[relevant_inds], dt_q[relevant_inds], observer_positions
     )
     # Restrict to observation times (drops any intermediate landing times). For IAS15
     # relevant_inds is the identity, but keep the indexing uniform with other paths.
@@ -189,6 +201,14 @@ def _ephem_ias15_bounded(
     )
     a0 = acc_func(state)
     integrator_state = initialize_ias15_integrator_state(a0)
+    # Seed the first proposed step at >= 2x the max light travel time over all walkers
+    # so the dense-LTT polynomial never extrapolates by more than ~1 step length.
+    # Recomputed from the traced states each call, so the floor self-adapts as a
+    # sampler explores large topocentric distances. (This fully-jitted hot loop gets
+    # no host-side extrapolation warning; the floor is the protection.)
+    integrator_state = apply_ltt_seed_floor(
+        integrator_state, states[:, :3], observer_positions
+    )
 
     def gather(times_dir: jnp.ndarray) -> tuple:
         out = ias15_evolve_with_dense_output(
