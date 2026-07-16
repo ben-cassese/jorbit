@@ -612,9 +612,12 @@ class Particle:
                 self._observations.cov_log_dets,
             )
 
-            # Keplerian propagation is fully JIT-able, reverse mode works natively
-            residuals = jax.jit(residuals)
-            loglike = jax.jit(ll)
+            # Keplerian propagation is fully JIT-able, reverse mode works natively.
+            # _keplerian_residuals/_keplerian_loglike are module-level jitted
+            # functions, so the Partial-bound data above flows in as jit arguments;
+            # re-wrapping in jax.jit here would bake it into the executables as
+            # per-instance constants instead.
+            loglike = ll
 
         else:
             if self._integrator_method == "ias15":
@@ -677,8 +680,12 @@ class Particle:
 
             loglike.defvjp(loglike_fwd, loglike_bwd)
 
-            residuals = jax.jit(residuals)
-            loglike = jax.jit(loglike)
+            # Deliberately NOT wrapped in jax.jit: _residuals/_loglike are already
+            # module-level jitted functions, so the Partial-bound data (ephemeris,
+            # observations, integrator state) flows into shared compilations as
+            # traced arguments. Re-wrapping per instance would re-embed all of it
+            # in fresh executables as compile-time constants (~150 MB per compile,
+            # never freed while the Particle lives) — the cause of a CI OOM.
 
         def scipy_objective(x: jnp.ndarray) -> float:
             c = CartesianState(
