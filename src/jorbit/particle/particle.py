@@ -104,6 +104,14 @@ class Particle:
         earliest_time: The earliest time for which ephemeris data is available.
         latest_time: The latest time for which ephemeris data is available.
         fit_seed: A seed for fitting the orbit of the particle.
+        static_residuals: Fast residuals via the pre-computed "static" pipeline, or
+            None when unavailable (no observations, or gravity="keplerian"). **This
+            path always uses the DE440 "default solar system" dynamical model,
+            regardless of the `gravity` and `de_ephemeris_version` passed to
+            __init__.** The static integrator currently has exactly one acceleration
+            model implemented, so unlike `integrate`/`residuals`/`loglike` it cannot
+            follow the requested one. Use `residuals` if you need the model you asked
+            for.
     """
 
     def __init__(
@@ -152,11 +160,14 @@ class Particle:
                 acceleration functions in jorbit.accelerations. Other string options are
                 "newtonian planets", "newtonian solar system", "gr planets", "gr
                 solar system", and "keplerian" (pure 2-body Keplerian propagation with
-                no ephemeris or integrator setup).
+                no ephemeris or integrator setup). Note this does *not* affect the
+                `static_residuals` attribute, which always uses the "default solar
+                system" model.
             de_ephemeris_version (str | None):
                 Which version of the JPL DE ephemeris to use for perturber positions
                 when using one of the built-in gravity models. Accepts either "440" or
-                "430", default is "440". Ignored when gravity is "keplerian".
+                "430", default is "440". Ignored when gravity is "keplerian", and does
+                *not* affect the `static_residuals` attribute, which always uses DE440.
             integrator (str):
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
@@ -1375,6 +1386,7 @@ class Particle:
         eph = Ephemeris(
             earliest_time=self._earliest_time,
             latest_time=self._latest_time,
+            de_ephemeris_version=self._de_ephemeris_version,
         )
         sun_pos = jax.vmap(eph.processor.state)(times)[0][:, 0, :]
 

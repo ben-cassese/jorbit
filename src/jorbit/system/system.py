@@ -97,7 +97,7 @@ class System:
             de_ephemeris_version (str | None):
                 Which version of the JPL DE ephemeris to use for perturber positions
                 when using one of the built-in gravity models. Accepts either "440" or
-                "430", default is "440".
+                "430", default is "440". Ignored when gravity is "keplerian".
             integrator (str):
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
@@ -248,11 +248,17 @@ class System:
             # state carrying time_reference == self._t_ref_jd, so no shim is needed.
             return gravity
 
+        assert self._de_ephemeris_version in ["440", "430"], (
+            "de_ephemeris_version must be either '440' or '430' if not using a custom "
+            "gravity function"
+        )
+
         if gravity == "newtonian planets":
             eph = Ephemeris(
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default planets",
+                de_ephemeris_version=self._de_ephemeris_version,
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
         elif gravity == "newtonian solar system":
@@ -260,6 +266,7 @@ class System:
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
+                de_ephemeris_version=self._de_ephemeris_version,
             )
             acc_func = create_newtonian_ephemeris_acceleration_func(eph.processor)
         elif gravity == "gr planets":
@@ -267,6 +274,7 @@ class System:
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default planets",
+                de_ephemeris_version=self._de_ephemeris_version,
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
         elif gravity == "gr solar system":
@@ -274,6 +282,7 @@ class System:
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
+                de_ephemeris_version=self._de_ephemeris_version,
             )
             acc_func = create_gr_ephemeris_acceleration_func(eph.processor)
         elif gravity == "default solar system":
@@ -281,6 +290,7 @@ class System:
                 earliest_time=self._earliest_time,
                 latest_time=self._latest_time,
                 ssos="default solar system",
+                de_ephemeris_version=self._de_ephemeris_version,
             )
             acc_func = create_default_ephemeris_acceleration_func(eph.processor)
 

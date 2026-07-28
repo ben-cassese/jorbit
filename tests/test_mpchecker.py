@@ -97,8 +97,38 @@ def test_nearest_asteroid_precompute() -> None:
 def test_packed_epoch_translator() -> None:
     """Test that the conversion from packed epoch to astropy Time matches online docs."""
     # examples from https://minorplanetcenter.net/iau/info/PackedDates.html
-    assert unpack_epoch("J9611") == Time("1996-01-01", format="iso", scale="utc")
-    assert unpack_epoch("J961A") == Time("1996-01-10", format="iso", scale="utc")
-    assert unpack_epoch("J969U") == Time("1996-09-30", format="iso", scale="utc")
-    assert unpack_epoch("J96A1") == Time("1996-10-01", format="iso", scale="utc")
-    assert unpack_epoch("K01AM") == Time("2001-10-22", format="iso", scale="utc")
+    assert unpack_epoch("J9611") == Time("1996-01-01", format="iso", scale="tt")
+    assert unpack_epoch("J961A") == Time("1996-01-10", format="iso", scale="tt")
+    assert unpack_epoch("J969U") == Time("1996-09-30", format="iso", scale="tt")
+    assert unpack_epoch("J96A1") == Time("1996-10-01", format="iso", scale="tt")
+    assert unpack_epoch("K01AM") == Time("2001-10-22", format="iso", scale="tt")
+
+
+def test_packed_epoch_is_tt() -> None:
+    """MPCORB epochs are defined in TT, not UTC.
+
+    The MPC "Export Format for Minor-Planet Orbits" specifies columns 21-25 as
+    "Epoch (in packed form, .0 TT)". Tagging the result UTC (as jorbit did through
+    1.5.0) mis-places every decoded epoch by TT-UTC, which is ~69 s in the 2020s --
+    a pure systematic worth ~1300 km along-track for a main belt object.
+    """
+    epoch = unpack_epoch("K259M")
+    assert epoch.scale == "tt"
+
+    # A calendar reading interpreted in TT is an *earlier* absolute instant than the
+    # same reading interpreted in UTC, by TT-UTC. Before the fix this difference was
+    # exactly zero. Bound it loosely rather than pinning 69.184 s, so the test does
+    # not rot at the next leap second.
+    offset = (Time("2025-09-22", format="iso", scale="utc") - epoch).to(u.s).value
+    assert 60.0 < offset < 80.0
+
+
+def test_packed_epoch_trailing_suffix_is_tt() -> None:
+    """A packed epoch with a trailing day suffix also comes back in TT.
+
+    Only the scale is asserted here. unpack_epoch adds ``float(epoch_str[5:])`` days
+    to the base date, so "K259M5" resolves to 2025-09-27 rather than 2025-09-22.5 --
+    the suffix is treated as whole days despite the ``day_frac`` name. That is a
+    separate question from the time scale and is deliberately not pinned down here.
+    """
+    assert unpack_epoch("K259M5").scale == "tt"

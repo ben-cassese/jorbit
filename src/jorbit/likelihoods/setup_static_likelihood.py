@@ -40,6 +40,18 @@ def precompute_likelihood_data(
 ) -> tuple:
     """Given a nearly correct orbit, precompute needed data for further fast likelihood evaluations.
 
+    Note:
+        This deliberately hardcodes the dynamical model: DE440, ``ssos="default solar
+        system"``, and the ``create_static_default_*`` acceleration functions. It does
+        *not* read ``p.gravity`` or ``p._de_ephemeris_version``. That is because
+        ``create_static_default_acceleration_func`` is currently the only static
+        acceleration function in ``jorbit.accelerations`` -- it hardwires 11 GR
+        perturbers plus 16 Newtonian asteroids, and there is no static counterpart to
+        "newtonian planets", "gr planets", etc. Supporting those would mean writing
+        the missing static acceleration functions along with their perturber-precompute
+        shapes. Until then, a Particle built with a non-default gravity model or DE
+        version still gets a DE440 "default solar system" ``static_residuals``.
+
     Args:
         p (Particle):
             A Particle object with an associated Observations object. The particle's

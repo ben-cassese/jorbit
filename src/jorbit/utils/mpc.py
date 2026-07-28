@@ -56,6 +56,9 @@ def read_mpc_file(
     data = pd.read_fwf(mpc_file, colspecs=cols, names=names)
 
     def parse_time(mpc_time: str) -> Time:
+        # UTC is correct here: dates in the 80-column observation format are UTC.
+        # Do not "fix" this to TT -- that applies to MPCORB element epochs, which are
+        # a different format handled by unpack_epoch.
         t = mpc_time.replace(" ", "-").split(".")
         return Time(t[0], format="iso", scale="utc") + float(f"0.{t[1]}") * u.day
 
@@ -206,7 +209,24 @@ def packed_to_unpacked_designation(code: str) -> str:
 
 
 def unpack_epoch(epoch_str: str) -> Time:
-    """Convert a packed epoch string from the MPCORB format to an astropy Time object."""
+    """Convert a packed epoch string from the MPCORB format to an astropy Time object.
+
+    MPCORB epochs are defined in TT, not UTC: the MPC's "Export Format for Minor-Planet
+    Orbits" specifies columns 21-25 as "Epoch (in packed form, .0 TT)". The returned
+    Time is therefore tagged ``scale="tt"``. Note this differs from the dates in the
+    80-column *observation* format, which are UTC (see ``parse_time`` in
+    :func:`read_mpc_file`).
+
+    Args:
+        epoch_str (str):
+            The packed epoch, e.g. "K01AM" for 2001 Oct 22: a century letter, two year
+            digits, then a month and a day character. Anything past the fifth character
+            is parsed with ``float`` and added to the date as a number of days.
+
+    Returns:
+        Time:
+            The decoded epoch, in the TT scale.
+    """
     century = epoch_str[0]
     if century == "I":
         year_prefix = "18"
@@ -232,7 +252,7 @@ def unpack_epoch(epoch_str: str) -> Time:
     date = Time(
         f"{year_prefix}{decade}-{month.zfill(2)}-{day.zfill(2)}",
         format="iso",
-        scale="utc",
+        scale="tt",
     )
 
     if len(epoch_str) == 5:
