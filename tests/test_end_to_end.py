@@ -13,6 +13,7 @@ jax.config.update("jax_enable_x64", True)
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
@@ -140,6 +141,79 @@ def test_system_from_particles_integrates_consistently() -> None:
 
     diff_m = float(jnp.linalg.norm(pos_p[0] - pos_s[0, 0])) * u.au.to(u.m)
     assert diff_m < 1000.0, f"Position disagreement after 1 day: {diff_m:.0f} m"
+
+
+# ===========================================================================
+# 1c-2.  System honors de_ephemeris_version in its force model
+# ===========================================================================
+
+
+def _de_version_system(gravity: str, de_ephemeris_version: str) -> System:
+    """A minimal System over a narrow time window, for DE-version comparisons."""
+    state = CartesianState(
+        x=_X0[None, :],
+        v=_V0[None, :],
+        time_reference=_T0.tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+    )
+    return System(
+        state=state.to_system(),
+        gravity=gravity,
+        de_ephemeris_version=de_ephemeris_version,
+        # Narrow window keeps the in-memory ephemeris subset small; Ephemeris pads
+        # this by +/-100 days internally.
+        earliest_time=_T0,
+        latest_time=_T0 + 30 * u.day,
+    )
+
+
+@pytest.mark.parametrize("gravity", ["gr planets", "default solar system"])
+def test_system_honors_de_ephemeris_version(gravity: str) -> None:
+    """System must build its force model from the requested DE version.
+
+    Through 1.5.0, System._setup_acceleration_func constructed every Ephemeris
+    without passing de_ephemeris_version, so Ephemeris fell back to its "440"
+    default and every System integrated under DE440 no matter what was asked for.
+    System.ephemeris *did* honor the flag for observer positions, making the output
+    a DE430-observer / DE440-dynamics mixture.
+
+    Compares accelerations rather than integrating: it isolates exactly the wiring
+    that was broken and costs one acceleration evaluation per System. All five
+    gravity-string branches share identical wiring, so two representatives (the
+    planets-only ssos path and the full solar-system path) suffice.
+    """
+    sys430 = _de_version_system(gravity, "430")
+    sys440 = _de_version_system(gravity, "440")
+
+    acc430 = sys430.gravity(sys430._state)
+    acc440 = sys440.gravity(sys440._state)
+
+    frac_diff = float(jnp.linalg.norm(acc430 - acc440) / jnp.linalg.norm(acc440))
+    # DE430/DE440 perturber positions differ by ~1e4 km, so the accelerations must
+    # differ well above float noise -- but only slightly, since it is the same solar
+    # system. Before the fix this was exactly 0.0.
+    assert 1e-12 < frac_diff < 1e-3, (
+        f"DE430 and DE440 accelerations differ fractionally by {frac_diff:.3e} for "
+        f"gravity={gravity!r}; expected a small but nonzero difference"
+    )
+
+
+def test_system_rejects_unsupported_de_ephemeris_version() -> None:
+    """An unsupported DE version must fail loudly, not fall through to DE440."""
+    state = CartesianState(
+        x=_X0[None, :],
+        v=_V0[None, :],
+        time_reference=_T0.tdb.jd,
+        acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
+    )
+    with pytest.raises((AssertionError, ValueError)):
+        System(
+            state=state.to_system(),
+            gravity="gr planets",
+            de_ephemeris_version="441",
+            earliest_time=_T0,
+            latest_time=_T0 + 30 * u.day,
+        )
 
 
 # ===========================================================================
@@ -330,3 +404,26 @@ def test_static_and_dynamic_residuals_agree() -> None:
     assert (
         max_diff_mas < 0.1
     ), f"static vs dynamic residuals disagree by {max_diff_mas:.3f} mas (limit 0.1 mas)"
+
+
+# ===========================================================================
+# 6.  Packaging: the two version literals must not drift apart
+# ===========================================================================
+
+
+def test_version_literals_agree() -> None:
+    """jorbit.__version__ must match the version installed from pyproject.toml.
+
+    These are two independently maintained literals -- there is no
+    ``dynamic = ["version"]`` hook tying them together -- and they had silently
+    drifted (``__init__.py`` said 1.4.2 while pyproject said 1.5.0) by the time
+    1.5.0 shipped.
+    """
+    from importlib.metadata import version
+
+    import jorbit
+
+    assert jorbit.__version__ == version("jorbit"), (
+        f"jorbit.__version__ ({jorbit.__version__}) disagrees with the installed "
+        f"package version ({version('jorbit')}); update both."
+    )
