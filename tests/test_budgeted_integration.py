@@ -157,7 +157,9 @@ def test_system_integrate_matches_single_chunk(two_body_system: System) -> None:
     sys = two_body_system
     times = T0 + np.linspace(0, 90, 7) * u.day
     toff = sys._times_to_offsets(times)
-    scheduler = sys._resolve_step_scheduler("prs23")
+    # the System's own default scheduler, so the direct backend call below matches
+    # whatever sys.integrate() uses
+    scheduler = sys._step_scheduler
 
     pos, _, steps = sys.integrate(times, return_steps=True)
     pos_d, _, _, _, it = ias15_evolve(
