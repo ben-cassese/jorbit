@@ -438,6 +438,15 @@ def ias15_evolve(
     is prone to.
 
     Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
+    Also, because the step sequence is chosen adaptively from the state, an
+    infinitesimal change in the initial state can change the realized number and
+    placement of steps: the outputs (and any scalar built from them, e.g. a
+    likelihood) are only piecewise-smooth in the initial state, with
+    discontinuities at roughly the integrator tolerance. Use forward-mode AD for
+    derivatives — it differentiates the realized step sequence and is exact for
+    the function actually evaluated. Finite differences straddle the
+    discontinuities and silently return garbage whenever the true derivative is
+    small (weakly-constrained directions).
 
     Args:
         initial_system_state (SystemState):

@@ -71,6 +71,7 @@ class System:
         latest_time: Time = Time("2050-01-01"),
         max_step_size: u.Quantity | None = None,
         observations: Observations | None = None,
+        step_scheduler: str = "global",
         ias15_max_steps: int | None = None,
     ) -> None:
         """Initialize a System.
@@ -120,6 +121,15 @@ class System:
                 smaller to ensure that the particle lands exactly on the requested
                 output times, and that the step size may change if the spacing between
                 output times is not constant. Defaults to None.
+            step_scheduler (str):
+                The scheduler used by IAS15 for picking the next proposed step size.
+                Choices are "global" (the controller from the original IAS15 paper,
+                default) or "prs23" (Pham+ 2023 controller). "global" is the
+                default since "prs23" has been observed to lose accuracy over many
+                revolutions of short-period (sub-year) orbits. Used by the
+                observation-based ``loglike``/``residuals``/``chi2``/``model_radec``
+                callables, and as the default for ``integrate`` and ``ephemeris``.
+                Ignored when gravity is "keplerian" or for leapfrog integrators.
             ias15_max_steps (int | None):
                 Depth of the IAS15 dense-output buffer: the maximum number of
                 accepted adaptive steps a single integration chunk can capture.
@@ -138,6 +148,7 @@ class System:
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
         self._observations = observations
+        self._step_scheduler = self._resolve_step_scheduler(step_scheduler)
         self._ias15_max_steps = ias15_max_steps
 
         # Mirrors the Particle rebase: the JAX-visible state always carries
@@ -277,6 +288,12 @@ class System:
             f"Unknown step_scheduler '{name}'. Choices are 'prs23' or 'global'."
         )
 
+    def _scheduler_or_default(self, name: str | None) -> Callable:
+        """Resolve a per-call scheduler override, or fall back to the instance default."""
+        if name is None:
+            return self._step_scheduler
+        return self._resolve_step_scheduler(name)
+
     def _setup_acceleration_func(self, gravity: str | Callable) -> Callable:
 
         if isinstance(gravity, jax.tree_util.Partial):
@@ -392,8 +409,9 @@ class System:
             or self._integrator_method != "ias15"
         ):
             return None
-        scheduler = self._resolve_step_scheduler("prs23")
-        data = precompute_system_forward_model_data(self, self._observations, scheduler)
+        data = precompute_system_forward_model_data(
+            self, self._observations, self._step_scheduler
+        )
         return create_system_forward_model(data, max_steps=self._ias15_max_steps)
 
     ################
@@ -403,7 +421,7 @@ class System:
     def integrate(
         self,
         times: Time,
-        step_scheduler: str = "prs23",
+        step_scheduler: str | None = None,
         return_steps: bool = False,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Integrate the System to a given time.
@@ -416,11 +434,13 @@ class System:
             times (Time | jnp.ndarray):
                 The times to integrate to. Can be a single time or an array of times.
                 If provided as a jnp.array, the entries are assumed to be in TDB JD.
-            step_scheduler (str):
-                The scheduler to use for determining step sizes. Choices are "prs23",
-                which uses the PRS23 controller from Pham+ 2023, or "global", which
-                uses the controller from the original IAS15 paper. Default is "prs23".
-                Ignored for leapfrog integrators and keplerian systems.
+            step_scheduler (str | None):
+                Per-call override of the scheduler used for determining step sizes.
+                Choices are "global", which uses the controller from the original
+                IAS15 paper, or "prs23", which uses the PRS23 controller from
+                Pham+ 2023. None (default) uses the scheduler the System was
+                constructed with. Ignored for leapfrog integrators and keplerian
+                systems.
             return_steps (bool):
                 If True, also return the total number of integration steps taken (summed
                 across any stitched interpolation chunks), appended as the final element
@@ -452,7 +472,7 @@ class System:
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
-            scheduler = self._resolve_step_scheduler(step_scheduler)
+            scheduler = self._scheduler_or_default(step_scheduler)
             positions, velocities, _fss, _fis = _integrate(
                 times,
                 self._state,
@@ -466,7 +486,7 @@ class System:
         else:
             # IAS15: stitch dense-output chunks so the 15k buffer can't silently
             # truncate. See jorbit.integrators.budgeted.
-            scheduler = self._resolve_step_scheduler(step_scheduler)
+            scheduler = self._scheduler_or_default(step_scheduler)
             positions, velocities, steps = stitched_interpolate(
                 self._state,
                 self.gravity,
@@ -484,10 +504,18 @@ class System:
         self,
         times: Time | jnp.ndarray,
         observer: str | jnp.ndarray,
-        step_scheduler: str = "prs23",
+        step_scheduler: str | None = None,
         return_steps: bool = False,
     ) -> SkyCoord:
         """Compute an ephemeris for the system.
+
+        Note: on the adaptive IAS15 path, the returned coordinates are only
+        piecewise-smooth functions of the particle states. The step sequence is
+        chosen adaptively, so an infinitesimal change in the state can change the
+        realized number and placement of steps, leaving discontinuities at roughly
+        the integrator tolerance (~1e-6 in a typical astrometric likelihood). Use
+        forward-mode AD for derivatives of anything built from this output; finite
+        differences are silently unreliable in weakly-constrained directions.
 
         Args:
             times (Time | jnp.ndarray):
@@ -498,11 +526,13 @@ class System:
                 The observer to compute the ephemeris for. Can be a string representing
                 an observatory name, or a 3D position vector in AU. For more info on
                 acceptable strings, see the get_observer_positions function.
-            step_scheduler (str):
-                The scheduler to use for determining step sizes. Choices are "prs23",
-                which uses the PRS23 controller from Pham+ 2023, or "global", which
-                uses the controller from the original IAS15 paper. Default is "prs23".
-                Ignored for leapfrog integrators and keplerian systems.
+            step_scheduler (str | None):
+                Per-call override of the scheduler used for determining step sizes.
+                Choices are "global", which uses the controller from the original
+                IAS15 paper, or "prs23", which uses the PRS23 controller from
+                Pham+ 2023. None (default) uses the scheduler the System was
+                constructed with. Ignored for leapfrog integrators and keplerian
+                systems.
             return_steps (bool):
                 If True, return a tuple of the SkyCoord and the total number of
                 integration steps taken (summed across any stitched interpolation
@@ -548,7 +578,7 @@ class System:
                 times=times,
                 biggest_allowed_dt=self._integrator_state.dt,
             )
-            scheduler = self._resolve_step_scheduler(step_scheduler)
+            scheduler = self._scheduler_or_default(step_scheduler)
             ras, decs = _ephem(
                 times,
                 self._state,
@@ -564,7 +594,7 @@ class System:
             # IAS15: stitch dense-output chunks (truncation-proof) and use the
             # b-coefficients for each particle's light-travel-time correction.
             inds = jnp.arange(times.shape[0])
-            scheduler = self._resolve_step_scheduler(step_scheduler)
+            scheduler = self._scheduler_or_default(step_scheduler)
             ras, decs, steps = _ephem_ias15_stitched(
                 times,
                 self._state,

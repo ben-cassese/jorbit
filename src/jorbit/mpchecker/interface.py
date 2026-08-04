@@ -191,10 +191,10 @@ def nearest_asteroid(
             Optionally pass the relevant chunk coefficients to avoid I/O operations if
             running this repeatedly.
         radius (u.Quantity):
-            The radius to search within when computing total magntiude/flagging
+            The radius to search within when computing total magnitude/flagging
             individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
         compute_contamination (bool):
-            Whether to compute the total magntiude of all asteroids within the search
+            Whether to compute the total magnitude of all asteroids within the search
             radius at each time. Uses the same formula as Horizons for converting H and
             G to Vmags, and each asteroids' individual H and G values from the
             MPCORB.DAT table that the cached ephemeris was built from.
@@ -358,7 +358,7 @@ def animate_region(
             The table of minor planets that fell within the search radius at any time.
             Computed via nearest_asteroid.
         radius (u.Quantity):
-            The radius to search within when computing total magntiude/flagging
+            The radius to search within when computing total magnitude/flagging
             individual asteroids. Must be a unit of angle (e.g. u.arcsec, u.deg, etc.).
         frame_interval (int):
             The interval between frames in milliseconds.

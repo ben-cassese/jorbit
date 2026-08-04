@@ -36,7 +36,7 @@ def main(paths: list[str]) -> int:
         # codespell reads stdin via "-"; line numbers are relative to the
         # extracted markdown, not the notebook.
         result = subprocess.run(
-            ["codespell", "-"], input=text, text=True, capture_output=True
+            ["codespell", "-"], input=text, text=True, capture_output=True, check=False
         )
         if result.returncode != 0:
             rc = result.returncode

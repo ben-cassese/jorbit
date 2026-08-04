@@ -50,7 +50,7 @@ _SKY_ATOL_MAS = 0.1  # 0.1 milliarcsecond
 
 
 def _make_particle(**kwargs) -> Particle:  # noqa: ANN003
-    defaults = dict(x=_X0, v=_V0, time=_T0, gravity="newtonian planets")
+    defaults = {"x": _X0, "v": _V0, "time": _T0, "gravity": "newtonian planets"}
     defaults.update(kwargs)
     return Particle(**defaults)
 
@@ -72,7 +72,7 @@ def _make_system(**kwargs) -> System:  # noqa: ANN003
         fixed_perturber_log_gms=jnp.empty((0,)),
         acceleration_func_kwargs={"c2": SPEED_OF_LIGHT**2},
     )
-    defaults = dict(state=st, gravity="newtonian planets")
+    defaults = {"state": st, "gravity": "newtonian planets"}
     defaults.update(kwargs)
     return System(**defaults)
 
