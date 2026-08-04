@@ -130,7 +130,7 @@ class Particle:
         latest_time: Time = Time("2050-01-01"),
         fit_seed: KeplerianState | CartesianState | None = None,
         max_step_size: u.Quantity | None = None,
-        step_scheduler: str = "prs23",
+        step_scheduler: str = "global",
         ias15_max_steps: int | None = None,
     ) -> None:
         """Initialize a Particle object.
@@ -196,8 +196,10 @@ class Particle:
                 output times is not constant. Defaults to None.
             step_scheduler (str):
                 The scheduler used by IAS15 for picking the next proposed step size.
-                Choices are "prs23" (Pham+ 2023 controller, default) or "global"
-                (the controller from the original IAS15 paper). Used consistently
+                Choices are "global" (the controller from the original IAS15 paper,
+                default) or "prs23" (Pham+ 2023 controller). "global" is the
+                default since "prs23" has been observed to lose accuracy over many
+                revolutions of short-period (sub-year) orbits. Used consistently
                 by ``integrate``, ``integrate_or_interpolate``, ``ephemeris``, and
                 the residuals/loglike closures. Ignored when gravity is "keplerian"
                 or for leapfrog integrators.
