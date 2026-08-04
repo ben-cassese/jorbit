@@ -509,6 +509,14 @@ class System:
     ) -> SkyCoord:
         """Compute an ephemeris for the system.
 
+        Note: on the adaptive IAS15 path, the returned coordinates are only
+        piecewise-smooth functions of the particle states. The step sequence is
+        chosen adaptively, so an infinitesimal change in the state can change the
+        realized number and placement of steps, leaving discontinuities at roughly
+        the integrator tolerance (~1e-6 in a typical astrometric likelihood). Use
+        forward-mode AD for derivatives of anything built from this output; finite
+        differences are silently unreliable in weakly-constrained directions.
+
         Args:
             times (Time | jnp.ndarray):
                 The times to compute the ephemeris for. Can be a single time or an array
