@@ -35,6 +35,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from jorbit.ephemeris.ephemeris_processors import (
+    EphemerisPostProcessor,
+    EphemerisProcessor,
+)
 from jorbit.integrators.ias15 import (
     ias15_evolve,
     ias15_evolve_forced_landing,
@@ -55,6 +59,102 @@ FORCED_LANDING_STEP_BUDGET = 8000
 # Sentinel value used by the backend to fill unused dense-output slots (see ias15.py).
 _DTS_SENTINEL = 1e29
 
+# J2000 epoch in JD (TDB); EphemerisProcessor.init values are seconds past this.
+_J2000_JD = 2451545.0
+
+
+def _loaded_ephemeris_bounds_jd(
+    acceleration_func: Callable,
+) -> tuple[float, float] | None:
+    """Best-effort ``(start_jd, end_jd)`` of the ephemeris data bound to an acceleration function.
+
+    Walks the ``jax.tree_util.Partial``-bound arguments of ``acceleration_func``
+    looking for :class:`EphemerisProcessor` / :class:`EphemerisPostProcessor`
+    instances and intersects the time spans their Chebyshev data actually cover
+    (the requested ``earliest_time``/``latest_time``, padded by 100 days and snapped
+    to interval boundaries by :func:`jorbit.ephemeris.process_bsp.merge_data`).
+    Returns None when no ephemeris data is found (e.g. an ephemeris-free custom
+    gravity function). Used only to enrich error messages.
+    """
+    starts: list[float] = []
+    ends: list[float] = []
+
+    def visit(obj: object) -> None:
+        if isinstance(obj, EphemerisPostProcessor):
+            for eph in obj.ephs:
+                visit(eph)
+        elif isinstance(obj, EphemerisProcessor):
+            # Per body the coefficients cover init .. init + n_intervals * intlen
+            # (seconds past J2000). merge_data tiles bodies with longer intervals up
+            # to a shared interval count, so the intersection across bodies (max of
+            # starts, min of ends) recovers the true loaded span.
+            starts.append(_J2000_JD + float(jnp.max(obj.init)) / 86400.0)
+            ends.append(
+                _J2000_JD
+                + float(jnp.min(obj.init + obj.coeffs.shape[-1] * obj.intlen)) / 86400.0
+            )
+        elif isinstance(obj, jax.tree_util.Partial):
+            for a in obj.args:
+                visit(a)
+            for a in obj.keywords.values():
+                visit(a)
+        elif isinstance(obj, (list, tuple)):
+            for a in obj:
+                visit(a)
+
+    visit(acceleration_func)
+    if not starts:
+        return None
+    return max(starts), min(ends)
+
+
+def _no_progress_error(
+    t_reached: float,
+    target: float,
+    direction: float,
+    time_reference: float,
+    acceleration_func: Callable,
+) -> RuntimeError:
+    """Build the error for a stitching chunk that made no forward progress.
+
+    A stall at (or a target beyond) the edge of the loaded ephemeris span produces
+    the same no-progress signature as a dynamical failure, but the fix is to widen
+    the ephemeris window, not to hunt for a NaN. When ephemeris data is reachable
+    from ``acceleration_func``, check the bound in the direction of integration
+    before blaming the dynamics.
+    """
+    base = (
+        "IAS15 interpolation stitching made no forward progress at "
+        f"relative_time={t_reached} (target={target})."
+    )
+    bounds = _loaded_ephemeris_bounds_jd(acceleration_func)
+    if bounds is not None:
+        start_jd, end_jd = bounds
+        stall_jd = t_reached + time_reference
+        target_jd = target + time_reference
+        if direction < 0:
+            bound_jd, bound_name, widen_arg = start_jd, "earliest", "earliest_time"
+            # 1-day cushion: the last accepted step can end slightly inside the
+            # bound before the garbage accelerations stall the stepper.
+            off_window = min(stall_jd, target_jd) < bound_jd + 1.0
+        else:
+            bound_jd, bound_name, widen_arg = end_jd, "latest", "latest_time"
+            off_window = max(stall_jd, target_jd) > bound_jd - 1.0
+        if off_window:
+            return RuntimeError(
+                f"{base} The integration stalled at JD {stall_jd:.2f} (TDB) while "
+                f"targeting JD {target_jd:.2f}, at or beyond the {bound_name} time "
+                f"loaded into the ephemeris (JD {bound_jd:.2f}; loaded span "
+                f"JD {start_jd:.2f} to JD {end_jd:.2f}). This looks like the edge of "
+                "the loaded ephemeris window, not a dynamical failure: rebuild the "
+                f"Particle/System/Ephemeris with `{widen_arg}` covering the "
+                "requested times to widen the window."
+            )
+    return RuntimeError(
+        f"{base} The integration may be stuck (e.g. a NaN acceleration or a "
+        "degenerate step). This is a genuine failure, not a buffer truncation."
+    )
+
 
 def _iterate_evolve_chunks(
     initial_system_state: SystemState,
@@ -62,6 +162,7 @@ def _iterate_evolve_chunks(
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> Iterator[tuple]:
     """Yield successive dense-output chunks until the integration reaches ``max(times)``.
 
@@ -99,6 +200,7 @@ def _iterate_evolve_chunks(
             current_times,
             integrator_state,
             step_scheduler,
+            max_steps,
         )
         final_system_state = out[2]
         t_reached = float(final_system_state.relative_time)
@@ -114,11 +216,12 @@ def _iterate_evolve_chunks(
 
         # No forward progress despite not having reached the target -> genuinely stuck.
         if direction * (t_reached - chunk_start) <= _TIME_TOL:
-            raise RuntimeError(
-                "IAS15 interpolation stitching made no forward progress at "
-                f"relative_time={t_reached} (target={target}). The integration may be "
-                "stuck (e.g. a NaN acceleration or a degenerate step). This is a "
-                "genuine failure, not a buffer truncation."
+            raise _no_progress_error(
+                t_reached,
+                target,
+                direction,
+                float(final_system_state.time_reference),
+                acceleration_func,
             )
 
         state = out[2]
@@ -132,6 +235,7 @@ def stitched_per_query_gather(
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple:
     """Gather per-query dense-output slices across as many chunks as needed (no cap).
 
@@ -144,6 +248,10 @@ def stitched_per_query_gather(
 
     Feed the gather to :func:`interpolate_from_dense_output` for positions/velocities, or
     to :func:`jorbit.integrators.make_ltt_propagator` for dense-output ephemerides.
+
+    ``max_steps`` sets the per-chunk dense-output buffer depth (None uses
+    ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more stitched chunks,
+    never truncation.
 
     Returns:
         ``(b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps)``. With ``n = len(times)`` and
@@ -170,6 +278,7 @@ def stitched_per_query_gather(
             chunk_times,
             initial_integrator_state,
             step_scheduler,
+            max_steps,
         ):
             (
                 _positions,
@@ -227,11 +336,14 @@ def stitched_interpolate(
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     """Interpolated positions/velocities at ``times``, stitched to avoid the 15k buffer.
 
     Drop-in replacement for the interpolation-path :func:`ias15_evolve` call used by the
-    public ``integrate_or_interpolate`` / ``System.integrate`` methods.
+    public ``integrate_or_interpolate`` / ``System.integrate`` methods. ``max_steps``
+    sets the per-chunk dense-output buffer depth (see
+    :func:`stitched_per_query_gather`).
 
     Returns:
         ``(positions, velocities, total_steps)`` with positions/velocities of shape
@@ -243,6 +355,7 @@ def stitched_interpolate(
         times,
         initial_integrator_state,
         step_scheduler,
+        max_steps,
     )
     # interpolate_from_dense_output indexes its buffers by step_indices; the gather is
     # already per-query, so identity indices recover one polynomial evaluation per time.
@@ -422,14 +535,16 @@ def ias15_span_probe(
     times: jnp.ndarray,
     initial_integrator_state: IAS15IntegratorState,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[bool, int]:
     """Probe a single nominal :func:`ias15_evolve` chunk over ``times``.
 
     Returns ``(would_truncate, total_steps)`` where ``would_truncate`` is True if one
-    dense-output buffer fails to reach ``max(times)``. A cheap forward integration (no
-    autodiff) used by the detect-and-raise guards on the covariance-ephemeris and
-    likelihood paths, where the host-side stitching loop cannot be threaded through
-    ``jax.jacfwd``.
+    dense-output buffer (of depth ``max_steps``; None uses
+    ``IAS15_MAX_DYNAMIC_STEPS``) fails to reach ``max(times)``. A cheap forward
+    integration (no autodiff) used by the detect-and-raise guards on the
+    covariance-ephemeris and likelihood paths, where the host-side stitching loop
+    cannot be threaded through ``jax.jacfwd``.
     """
     t0 = float(initial_system_state.relative_time)
     would_truncate = False
@@ -450,6 +565,7 @@ def ias15_span_probe(
             chunk_times,
             initial_integrator_state,
             step_scheduler,
+            max_steps,
         )
         final_system_state = out[2]
         total_steps += int(out[4])

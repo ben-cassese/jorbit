@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -103,6 +104,7 @@ def _ephem_ias15_stitched(
     observer_positions: jnp.ndarray,
     relevant_inds: jnp.ndarray,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     """Truncation-proof IAS15 dense-output ephemeris for the whole system.
 
@@ -118,7 +120,7 @@ def _ephem_ias15_stitched(
         observer_positions,
     )
     b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
-        state, acc_func, times, integrator_state, step_scheduler
+        state, acc_func, times, integrator_state, step_scheduler, max_steps
     )
     warn_if_ltt_extrapolating(
         x0_q[relevant_inds], dt_q[relevant_inds], observer_positions
@@ -139,7 +141,7 @@ def _ephem_ias15_stitched(
     return ras, decs, steps
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["max_steps"])
 def _ephem_ias15_bounded(
     states: jnp.ndarray,
     times_off: jnp.ndarray,
@@ -150,6 +152,7 @@ def _ephem_ias15_bounded(
     t_ref_jd: jnp.ndarray,
     acc_func: Callable,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Fully-jitted, bounded-arc dense-output ephemeris for a ``(P, 6)`` state batch.
 
@@ -159,7 +162,8 @@ def _ephem_ias15_bounded(
     pass (offsets ``>= 0``, ``times_fwd``) and a backward pass (offsets ``< 0``,
     ``times_bwd``, with the other pass's times clamped to 0). Each pass is a single
     :func:`ias15_evolve_with_dense_output` call, so the whole arc must fit in one dense
-    buffer (``IAS15_MAX_DYNAMIC_STEPS``); ``fwd_mask``/``times_fwd``/``times_bwd`` are
+    buffer (``max_steps`` accepted steps; None uses ``IAS15_MAX_DYNAMIC_STEPS``);
+    ``fwd_mask``/``times_fwd``/``times_bwd`` are
     precomputed once at bind time. Returns ``(ras, decs, reached_mask)`` where ``ras`` and
     ``decs`` are ``(P, n_obs)`` and ``reached_mask`` is ``(n_obs,)`` — ``False`` for any
     observation the (shared-schedule) integration failed to reach before the buffer filled.
@@ -184,6 +188,10 @@ def _ephem_ias15_bounded(
             The system's acceleration function.
         step_scheduler (Callable):
             The adaptive step-size controller.
+        max_steps (int | None):
+            Dense-output buffer depth per directional pass (static; None uses
+            ``IAS15_MAX_DYNAMIC_STEPS``). Arcs needing more accepted steps than this
+            truncate batch-wide and are reported through ``reached_mask``.
     """
     empty3 = jnp.empty((0, 3))
     state = SystemState(
@@ -212,7 +220,7 @@ def _ephem_ias15_bounded(
 
     def gather(times_dir: jnp.ndarray) -> tuple:
         out = ias15_evolve_with_dense_output(
-            state, acc_func, times_dir, integrator_state, step_scheduler
+            state, acc_func, times_dir, integrator_state, step_scheduler, max_steps
         )
         (
             _p,

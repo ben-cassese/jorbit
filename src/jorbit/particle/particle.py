@@ -53,6 +53,7 @@ from jorbit.integrators import (
     next_proposed_dt_PRS23,
     stitched_interpolate,
 )
+from jorbit.integrators.budgeted import _loaded_ephemeris_bounds_jd
 from jorbit.likelihoods.setup_static_likelihood import (
     create_default_static_residuals_func,
     precompute_likelihood_data,
@@ -130,6 +131,7 @@ class Particle:
         fit_seed: KeplerianState | CartesianState | None = None,
         max_step_size: u.Quantity | None = None,
         step_scheduler: str = "prs23",
+        ias15_max_steps: int | None = None,
     ) -> None:
         """Initialize a Particle object.
 
@@ -199,6 +201,19 @@ class Particle:
                 by ``integrate``, ``integrate_or_interpolate``, ``ephemeris``, and
                 the residuals/loglike closures. Ignored when gravity is "keplerian"
                 or for leapfrog integrators.
+            ias15_max_steps (int | None):
+                Depth of the IAS15 dense-output buffer used by ``integrate``,
+                ``integrate_or_interpolate``, and ``ephemeris``: the maximum number
+                of accepted adaptive steps a single integration chunk can capture.
+                None (default) uses ``IAS15_MAX_DYNAMIC_STEPS`` (15000). Short arcs
+                need only a few steps, so sizing this to the arc avoids allocating
+                and zeroing the full-size buffers on every call. The nominal methods
+                stitch extra chunks as needed, so a small value never truncates
+                them; ``ephemeris(uncertainty=True)`` cannot stitch and instead
+                raises if the span exceeds one buffer. Does not affect the
+                residuals/loglike closures or ``max_likelihood``. Ignored when
+                gravity is "keplerian" or for leapfrog integrators. Defaults to
+                None.
         """
         self._observations = observations
         self._earliest_time = earliest_time
@@ -206,6 +221,7 @@ class Particle:
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
         self._step_scheduler = self._resolve_step_scheduler(step_scheduler)
+        self._ias15_max_steps = ias15_max_steps
 
         self.gravity = gravity
         # Preserve the original gravity spec (string or user-supplied Partial) so
@@ -317,10 +333,34 @@ class Particle:
         are assumed to be absolute JD (TDB) and are subtracted in float64 — this
         is Sterbenz-exact when the magnitudes match, but the offset precision is
         capped at ulp(JD) ≈ 40 μs (≈1 m for typical solar system velocities).
+
+        Also validates that the requested times — together with the reference
+        epoch the integration marches from — stay inside the loaded ephemeris
+        window. Outside it the Chebyshev interval lookup wraps to wrong-era
+        coefficients and returns smooth garbage rather than failing, so every
+        public method funnels its times through here to fail loudly instead.
         """
         if isinstance(times, Time):
-            return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
-        return jnp.asarray(times) - self._t_ref_jd
+            offsets = jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
+        else:
+            offsets = jnp.asarray(times) - self._t_ref_jd
+        bounds = _loaded_ephemeris_bounds_jd(self.gravity)
+        if bounds is not None:
+            t_ref = float(self._t_ref_jd)
+            lo = min(t_ref + float(jnp.min(offsets)), t_ref)
+            hi = max(t_ref + float(jnp.max(offsets)), t_ref)
+            if lo < bounds[0] or hi > bounds[1]:
+                raise ValueError(
+                    f"Requested times span JD {lo:.2f} to JD {hi:.2f} (TDB, "
+                    "including the reference epoch), which extends outside the "
+                    f"loaded ephemeris window (JD {bounds[0]:.2f} to "
+                    f"JD {bounds[1]:.2f}). Beyond that window the perturber "
+                    "positions silently come from wrong-era Chebyshev intervals, "
+                    "so integrations there return garbage. Rebuild the Particle "
+                    "with `earliest_time`/`latest_time` covering the requested "
+                    "times."
+                )
+        return offsets
 
     def _validate_state_epoch(self, state: CartesianState | KeplerianState) -> None:
         """Guard against a ``state=`` whose epoch disagrees with this particle's.
@@ -350,14 +390,14 @@ class Particle:
         when available (sub-ns precision preserved). Falls back to subtracting
         :attr:`t_ref_jd` from the float-JD array, which is Sterbenz-exact but
         inherits the ulp(JD) ≈ 40 μs quantization of the stored float-JD.
+        Delegates to :meth:`_times_to_offsets` (identical arithmetic per branch)
+        so observation times get the same ephemeris-window validation.
         """
         obs = self._observations
         times_astropy = getattr(obs, "_times_astropy", None)
         if times_astropy is not None:
-            return jnp.asarray(
-                (times_astropy.tdb - self._t_ref_astropy).to_value(u.day)
-            )
-        return jnp.asarray(obs.times) - self._t_ref_jd
+            return self._times_to_offsets(times_astropy)
+        return self._times_to_offsets(jnp.asarray(obs.times))
 
     def _setup_state(
         self,
@@ -890,7 +930,12 @@ class Particle:
             )
         else:
             positions, velocities, steps = stitched_interpolate(
-                sys_state, self.gravity, times, integrator_state, self._step_scheduler
+                sys_state,
+                self.gravity,
+                times,
+                integrator_state,
+                self._step_scheduler,
+                self._ias15_max_steps,
             )
         return positions[:, 0, :], velocities[:, 0, :], steps
 
@@ -1121,6 +1166,7 @@ class Particle:
                     times,
                     integrator_state,
                     self._step_scheduler,
+                    self._ias15_max_steps,
                 )
                 if would_truncate:
                     raise RuntimeError(
@@ -1139,6 +1185,7 @@ class Particle:
                     inds,
                     self._step_scheduler,
                     cov,
+                    self._ias15_max_steps,
                 )
             else:
                 ras, decs, cov_radec = _ephem_with_cov(
@@ -1166,6 +1213,7 @@ class Particle:
                 observer_positions,
                 inds,
                 self._step_scheduler,
+                self._ias15_max_steps,
             )
         elif not is_leapfrog:
             # IAS15 forced-landing (interpolate=False): Taylor-LTT on budgeted landings.
