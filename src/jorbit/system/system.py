@@ -36,6 +36,7 @@ from jorbit.integrators import (
     next_proposed_dt_PRS23,
     stitched_interpolate,
 )
+from jorbit.integrators.budgeted import _loaded_ephemeris_bounds_jd
 from jorbit.observation import Observations
 from jorbit.system.ephem import _ephem, _integrate
 from jorbit.system.ias15_dense import _ephem_ias15_stitched
@@ -70,6 +71,7 @@ class System:
         latest_time: Time = Time("2050-01-01"),
         max_step_size: u.Quantity | None = None,
         observations: Observations | None = None,
+        ias15_max_steps: int | None = None,
     ) -> None:
         """Initialize a System.
 
@@ -118,12 +120,25 @@ class System:
                 smaller to ensure that the particle lands exactly on the requested
                 output times, and that the step size may change if the spacing between
                 output times is not constant. Defaults to None.
+            ias15_max_steps (int | None):
+                Depth of the IAS15 dense-output buffer: the maximum number of
+                accepted adaptive steps a single integration chunk can capture.
+                None (default) uses ``IAS15_MAX_DYNAMIC_STEPS`` (15000). The buffers
+                scale as ``ias15_max_steps * n_particles``, so short arcs over large
+                batches can be sped up substantially by sizing this to the arc (a few
+                steps may suffice for sub-day arcs). The ``integrate``/``ephemeris``
+                methods stitch extra chunks as needed, so a small value never
+                truncates them; the observation-based ``loglike``/``residuals``/
+                ``chi2``/``model_radec`` callables instead fail loudly (``-inf``/
+                ``NaN``) when the arc exceeds one buffer. Ignored for leapfrog
+                integrators and Keplerian systems. Defaults to None.
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
         self._de_ephemeris_version = de_ephemeris_version
         self._is_keplerian = gravity == "keplerian"
         self._observations = observations
+        self._ias15_max_steps = ias15_max_steps
 
         # Mirrors the Particle rebase: the JAX-visible state always carries
         # relative_time=0.0, the absolute epoch lives on self._t_ref_astropy /
@@ -222,10 +237,34 @@ class System:
         are assumed to be absolute JD (TDB) and are subtracted in float64 — this
         is Sterbenz-exact when the magnitudes match, but the offset precision is
         capped at ulp(JD) ≈ 40 μs (≈1 m for typical solar system velocities).
+
+        Also validates that the requested times — together with the reference
+        epoch the integration marches from — stay inside the loaded ephemeris
+        window. Outside it the Chebyshev interval lookup wraps to wrong-era
+        coefficients and returns smooth garbage rather than failing, so every
+        public method funnels its times through here to fail loudly instead.
         """
         if isinstance(times, Time):
-            return jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
-        return jnp.asarray(times) - self._t_ref_jd
+            offsets = jnp.asarray((times.tdb - self._t_ref_astropy).to_value(u.day))
+        else:
+            offsets = jnp.asarray(times) - self._t_ref_jd
+        bounds = _loaded_ephemeris_bounds_jd(self.gravity)
+        if bounds is not None:
+            t_ref = float(self._t_ref_jd)
+            lo = min(t_ref + float(jnp.min(offsets)), t_ref)
+            hi = max(t_ref + float(jnp.max(offsets)), t_ref)
+            if lo < bounds[0] or hi > bounds[1]:
+                raise ValueError(
+                    f"Requested times span JD {lo:.2f} to JD {hi:.2f} (TDB, "
+                    "including the reference epoch), which extends outside the "
+                    f"loaded ephemeris window (JD {bounds[0]:.2f} to "
+                    f"JD {bounds[1]:.2f}). Beyond that window the perturber "
+                    "positions silently come from wrong-era Chebyshev intervals, "
+                    "so integrations there return garbage. Rebuild the System "
+                    "with `earliest_time`/`latest_time` covering the requested "
+                    "times."
+                )
+        return offsets
 
     @staticmethod
     def _resolve_step_scheduler(name: str) -> Callable:
@@ -355,7 +394,7 @@ class System:
             return None
         scheduler = self._resolve_step_scheduler("prs23")
         data = precompute_system_forward_model_data(self, self._observations, scheduler)
-        return create_system_forward_model(data)
+        return create_system_forward_model(data, max_steps=self._ias15_max_steps)
 
     ################
     # PUBLIC METHODS
@@ -434,6 +473,7 @@ class System:
                 times,
                 self._integrator_state,
                 scheduler,
+                self._ias15_max_steps,
             )
 
         if return_steps:
@@ -533,6 +573,7 @@ class System:
                 observer_positions,
                 inds,
                 scheduler,
+                self._ias15_max_steps,
             )
 
         coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")

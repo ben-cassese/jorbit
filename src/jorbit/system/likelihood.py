@@ -15,6 +15,7 @@ as a Partial argument to shared jitted callables over a ``(P, 6)`` batch of cand
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -79,7 +80,7 @@ def precompute_system_forward_model_data(
 _LOG_2PI_2 = 2.0 * jnp.log(2.0 * jnp.pi)
 
 
-def _model(inputs: tuple, states: jnp.ndarray) -> tuple:
+def _model(inputs: tuple, states: jnp.ndarray, max_steps: int | None = None) -> tuple:
     # (ras, decs) each (P, n_obs); reached (n_obs,) — shared across the batch.
     (
         acc_func,
@@ -105,6 +106,7 @@ def _model(inputs: tuple, states: jnp.ndarray) -> tuple:
         t_ref_jd,
         acc_func,
         step_scheduler,
+        max_steps,
     )
 
 
@@ -119,46 +121,54 @@ def _raw_residuals(
     return jax.vmap(per_particle)(ras, decs)  # (P, n_obs, 2)
 
 
-@jax.jit
-def _model_radec(inputs: tuple, states: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-    ras, decs, reached = _model(inputs, states)
+@partial(jax.jit, static_argnames=["max_steps"])
+def _model_radec(
+    inputs: tuple, states: jnp.ndarray, max_steps: int | None = None
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    ras, decs, reached = _model(inputs, states, max_steps)
     mask = reached[None, :]
     return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan)
 
 
-@jax.jit
-def _residuals(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+@partial(jax.jit, static_argnames=["max_steps"])
+def _residuals(
+    inputs: tuple, states: jnp.ndarray, max_steps: int | None = None
+) -> jnp.ndarray:
     obs_ra, obs_dec = inputs[7], inputs[8]
-    ras, decs, reached = _model(inputs, states)
+    ras, decs, reached = _model(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
     return jnp.where(reached[None, :, None], r, jnp.nan)  # (P, n_obs, 2)
 
 
-@jax.jit
-def _chi2(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+@partial(jax.jit, static_argnames=["max_steps"])
+def _chi2(
+    inputs: tuple, states: jnp.ndarray, max_steps: int | None = None
+) -> jnp.ndarray:
     obs_ra, obs_dec, inv_cov_matrices = inputs[7], inputs[8], inputs[9]
-    ras, decs, reached = _model(inputs, states)
+    ras, decs, reached = _model(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
     quad = jnp.einsum("pbi,bij,pbj->p", r, inv_cov_matrices, r)  # (P,)
     return jnp.where(jnp.all(reached), quad, jnp.inf)
 
 
-@jax.jit
-def _loglike(inputs: tuple, states: jnp.ndarray) -> jnp.ndarray:
+@partial(jax.jit, static_argnames=["max_steps"])
+def _loglike(
+    inputs: tuple, states: jnp.ndarray, max_steps: int | None = None
+) -> jnp.ndarray:
     obs_ra, obs_dec, inv_cov_matrices, cov_log_dets = (
         inputs[7],
         inputs[8],
         inputs[9],
         inputs[10],
     )
-    ras, decs, reached = _model(inputs, states)
+    ras, decs, reached = _model(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
     quad = jnp.einsum("pbi,bij,pbj->pb", r, inv_cov_matrices, r)  # (P, n_obs)
     ll = jnp.sum(-0.5 * (_LOG_2PI_2 + cov_log_dets[None, :] + quad), axis=1)  # (P,)
     return jnp.where(jnp.all(reached), ll, -jnp.inf)
 
 
-def create_system_forward_model(inputs: tuple) -> dict:
+def create_system_forward_model(inputs: tuple, max_steps: int | None = None) -> dict:
     """Build the jitted, reusable forward-model callables over a ``(P, 6)`` state batch.
 
     Each callable takes a ``(P, 6)`` array of barycentric equatorial Cartesian states
@@ -167,7 +177,10 @@ def create_system_forward_model(inputs: tuple) -> dict:
     device: unreachable observations are poisoned to ``NaN`` in ``model_radec``/``residuals``
     (the diagnostic), and ``loglike``/``chi2`` collapse to ``-inf``/``+inf`` so a sampler
     rejects the step rather than crashing or accepting a finite-but-wrong value. Because the
-    step schedule is shared across the batch, truncation is batch-wide.
+    step schedule is shared across the batch, truncation is batch-wide: one particle whose
+    orbit needs more steps than the buffer holds truncates every particle in the batch, so
+    there is no single ``max_steps`` that suits a dynamically heterogeneous batch — group
+    (or sort) batches by dynamical timescale before sizing the buffer down.
 
     The callables are ``jax.tree_util.Partial`` bindings of shared module-level jitted
     functions, with ``inputs`` passed through as a pytree argument. Binding (rather than
@@ -178,6 +191,14 @@ def create_system_forward_model(inputs: tuple) -> dict:
     Args:
         inputs (tuple):
             The output of :func:`precompute_system_forward_model_data`.
+        max_steps (int | None):
+            Dense-output buffer depth (max accepted IAS15 steps per directional pass)
+            used by every callable. None (default) keeps the backend's
+            ``IAS15_MAX_DYNAMIC_STEPS`` (15000). Short arcs need only a handful of
+            steps, and the full-size buffers are pure allocation overhead (gigabytes
+            at large ``P``), so sizing this to the arc can speed the forward model up
+            by 1-2 orders of magnitude; an undersized buffer fails loudly through the
+            truncation contract above rather than returning finite-but-wrong values.
 
     Returns:
         dict:
@@ -185,10 +206,18 @@ def create_system_forward_model(inputs: tuple) -> dict:
     """
     n_obs = int(inputs[2].shape[0])
 
+    def bind(func: Callable) -> jax.tree_util.Partial:
+        if max_steps is None:
+            return jax.tree_util.Partial(func, inputs)
+        # functools.partial (not tree_util.Partial) keeps max_steps a plain Python
+        # int in the callable's aux data, so it stays hashable/static even when a
+        # user wraps the returned callable in their own jax.jit.
+        return jax.tree_util.Partial(partial(func, max_steps=max_steps), inputs)
+
     return {
-        "model_radec": jax.tree_util.Partial(_model_radec, inputs),
-        "residuals": jax.tree_util.Partial(_residuals, inputs),
-        "chi2": jax.tree_util.Partial(_chi2, inputs),
-        "loglike": jax.tree_util.Partial(_loglike, inputs),
+        "model_radec": bind(_model_radec),
+        "residuals": bind(_residuals),
+        "chi2": bind(_chi2),
+        "loglike": bind(_loglike),
         "n_obs": n_obs,
     }

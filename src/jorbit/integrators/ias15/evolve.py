@@ -5,6 +5,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from collections.abc import Callable
+from functools import partial
 
 import jax.numpy as jnp
 
@@ -146,7 +147,7 @@ def ias15_evolve_forced_landing(
     return positions, velocities, final_system_state, final_integrator_state, tot_steps
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["max_steps"])
 def ias15_evolve_with_dense_output(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
@@ -155,6 +156,7 @@ def ias15_evolve_with_dense_output(
     step_scheduler: Callable[
         [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
     ],
+    max_steps: int | None = None,
 ) -> tuple:
     """Evolve a system, returning interpolated states plus the underlying dense-output buffers.
 
@@ -164,50 +166,6 @@ def ias15_evolve_with_dense_output(
     polynomial evaluation (e.g. richer light-travel-time correction in :func:`on_sky` via
     :func:`make_ltt_propagator`) should use this function instead of
     :func:`ias15_evolve`.
-
-    Returns:
-        tuple:
-            ``(positions, velocities, final_system_state, final_integrator_state,
-            iter_num, b_buf, a0_buf, x0_buf, v0_buf, dts_buf, t_step_starts,
-            step_indices, h_values)``.
-            ``b_buf`` has shape ``(IAS15_MAX_DYNAMIC_STEPS, 7, n_particles, 3)``;
-            ``a0_buf, x0_buf, v0_buf`` have shape
-            ``(IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)``; ``dts_buf`` and
-            ``t_step_starts`` have shape ``(IAS15_MAX_DYNAMIC_STEPS,)``;
-            ``step_indices`` and ``h_values`` have shape ``(len(times),)``.
-    """
-    # Body shared with ias15_evolve.
-    return _ias15_evolve_core(
-        initial_system_state,
-        acceleration_func,
-        times,
-        initial_integrator_state,
-        step_scheduler,
-    )
-
-
-def _ias15_evolve_core(
-    initial_system_state: SystemState,
-    acceleration_func: Callable[[SystemState], jnp.ndarray],
-    times: jnp.ndarray,
-    initial_integrator_state: IAS15IntegratorState,
-    step_scheduler: Callable[
-        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
-    ],
-) -> tuple:
-    """Internal: full ias15_evolve implementation, returning interpolated states *and* dense output.
-
-    Drives the adaptive IAS15 loop, populates the per-step dense-output buffers, and
-    interpolates positions/velocities at ``times``. Public callers should use
-    :func:`ias15_evolve` (compact return) or :func:`ias15_evolve_with_dense_output`
-    (full return).
-
-    .. warning::
-       The dense-output buffer is sized by ``IAS15_MAX_DYNAMIC_STEPS`` (15000 by
-       default). Integrations requiring more accepted steps will silently truncate,
-       with all query times beyond the truncation returning the last captured step's
-       polynomial value. For safety the loop also caps total iterations (including
-       rejected steps) at ``4 * IAS15_MAX_DYNAMIC_STEPS``.
 
     Args:
         initial_system_state (SystemState):
@@ -222,6 +180,79 @@ def _ias15_evolve_core(
         step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
             The step scheduler function to use for determining the next proposed
             step size.
+        max_steps (int | None):
+            Depth of the dense-output buffer, i.e. the maximum number of accepted
+            adaptive steps this call can capture (a static argument; changing it
+            triggers recompilation). ``None`` (default) uses
+            ``IAS15_MAX_DYNAMIC_STEPS`` (15000). Arcs needing only a few steps can
+            pass a much smaller value to avoid allocating and zeroing the full-size
+            buffers. Integrations needing more accepted steps than ``max_steps``
+            truncate; the final system state reports how far the integration
+            actually reached.
+
+    Returns:
+        tuple:
+            ``(positions, velocities, final_system_state, final_integrator_state,
+            iter_num, b_buf, a0_buf, x0_buf, v0_buf, dts_buf, t_step_starts,
+            step_indices, h_values)``.
+            ``b_buf`` has shape ``(max_steps, 7, n_particles, 3)``;
+            ``a0_buf, x0_buf, v0_buf`` have shape
+            ``(max_steps, n_particles, 3)``; ``dts_buf`` and
+            ``t_step_starts`` have shape ``(max_steps,)``;
+            ``step_indices`` and ``h_values`` have shape ``(len(times),)``.
+    """
+    # Body shared with ias15_evolve.
+    return _ias15_evolve_core(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+
+
+def _ias15_evolve_core(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
+    max_steps: int | None = None,
+) -> tuple:
+    """Internal: full ias15_evolve implementation, returning interpolated states *and* dense output.
+
+    Drives the adaptive IAS15 loop, populates the per-step dense-output buffers, and
+    interpolates positions/velocities at ``times``. Public callers should use
+    :func:`ias15_evolve` (compact return) or :func:`ias15_evolve_with_dense_output`
+    (full return).
+
+    .. warning::
+       The dense-output buffer is sized by ``max_steps`` (``IAS15_MAX_DYNAMIC_STEPS``,
+       15000, when None). Integrations requiring more accepted steps will silently
+       truncate, with all query times beyond the truncation returning the last
+       captured step's polynomial value. For safety the loop also caps total
+       iterations (including rejected steps) at ``4 * max_steps``.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        times (jnp.ndarray):
+            Times at which to return interpolated positions and velocities. Must be
+            within [initial_system_state.relative_time, t_end_of_last_natural_step].
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+        step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
+            The step scheduler function to use for determining the next proposed
+            step size.
+        max_steps (int | None):
+            Dense-output buffer depth (see :func:`ias15_evolve_with_dense_output`).
+            Resolved to the module-level ``IAS15_MAX_DYNAMIC_STEPS`` at trace time
+            when None.
 
     Returns:
         tuple:
@@ -229,6 +260,8 @@ def _ias15_evolve_core(
             iter_num, b_buf, a0_buf, x0_buf, v0_buf, dts_buf, t_step_starts,
             step_indices, h_values)``.
     """
+    if max_steps is None:
+        max_steps = IAS15_MAX_DYNAMIC_STEPS
     n_particles = initial_integrator_state.a0.shape[0]
 
     # Seed buffer index 0 with the initial state so that a zero-length integration
@@ -247,18 +280,16 @@ def _ias15_evolve_core(
         )
     )
 
-    b_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, 7, n_particles, 3))
+    b_buf = jnp.zeros((max_steps, 7, n_particles, 3))
     a0_buf = (
-        jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3))
-        .at[0]
-        .set(initial_integrator_state.a0)
+        jnp.zeros((max_steps, n_particles, 3)).at[0].set(initial_integrator_state.a0)
     )
-    x0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)).at[0].set(x0_initial)
-    v0_buf = jnp.zeros((IAS15_MAX_DYNAMIC_STEPS, n_particles, 3)).at[0].set(v0_initial)
+    x0_buf = jnp.zeros((max_steps, n_particles, 3)).at[0].set(x0_initial)
+    v0_buf = jnp.zeros((max_steps, n_particles, 3)).at[0].set(v0_initial)
     # Trailing (unfilled) dts are a huge sentinel so cumulative t_step_starts past
     # the valid prefix exceed any query time; searchsorted then safely routes all
     # valid queries into the accepted-step prefix.
-    dts_buf = jnp.full((IAS15_MAX_DYNAMIC_STEPS,), 1e30)
+    dts_buf = jnp.full((max_steps,), 1e30)
 
     t0 = initial_system_state.relative_time
     max_t = jnp.max(times)
@@ -277,11 +308,7 @@ def _ias15_evolve_core(
         past_final = ((direction >= 0) & (t >= final_time)) | (
             (direction <= 0) & (t <= final_time)
         )
-        return (
-            (~past_final)
-            & (n_accepted < IAS15_MAX_DYNAMIC_STEPS)
-            & (iter_num < 4 * IAS15_MAX_DYNAMIC_STEPS)
-        )
+        return (~past_final) & (n_accepted < max_steps) & (iter_num < 4 * max_steps)
 
     def body_fn(carry: tuple) -> tuple:
         (
@@ -390,7 +417,7 @@ def _ias15_evolve_core(
     )
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["max_steps"])
 def ias15_evolve(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
@@ -399,6 +426,7 @@ def ias15_evolve(
     step_scheduler: Callable[
         [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
     ],
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
     """Evolve a system and recover positions/velocities at ``times`` via interpolation.
 
@@ -424,6 +452,11 @@ def ias15_evolve(
         step_scheduler (Callable):
             The step scheduler function to use for determining the next proposed
             step size.
+        max_steps (int | None):
+            Dense-output buffer depth, i.e. the maximum number of accepted adaptive
+            steps (a static argument; changing it triggers recompilation). ``None``
+            (default) uses ``IAS15_MAX_DYNAMIC_STEPS`` (15000). See
+            :func:`ias15_evolve_with_dense_output`.
 
     Returns:
         Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
@@ -443,5 +476,6 @@ def ias15_evolve(
         times,
         initial_integrator_state,
         step_scheduler,
+        max_steps,
     )
     return positions, velocities, final_system_state, final_integrator_state, iter_num

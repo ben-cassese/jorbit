@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -81,7 +82,7 @@ def _dense_ltt_radec(
     )
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["max_steps"])
 def _ephem_ias15(
     times: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
@@ -90,6 +91,7 @@ def _ephem_ias15(
     observer_positions: jnp.ndarray,
     relevant_inds: jnp.ndarray,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Single-chunk IAS15 dense-output ephemeris (used inside the autodiff cov path).
 
@@ -116,6 +118,7 @@ def _ephem_ias15(
         times_fwd,
         integrator_state,
         step_scheduler,
+        max_steps,
     )
     (
         b_buf_fwd,
@@ -134,6 +137,7 @@ def _ephem_ias15(
         times_bwd,
         integrator_state,
         step_scheduler,
+        max_steps,
     )
     (
         b_buf_bwd,
@@ -186,6 +190,7 @@ def _ephem_ias15_stitched(
     observer_positions: jnp.ndarray,
     relevant_inds: jnp.ndarray,
     step_scheduler: Callable,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     """Truncation-proof IAS15 dense-output ephemeris (nominal ``interpolate=True``).
 
@@ -200,7 +205,7 @@ def _ephem_ias15_stitched(
         integrator_state, state.tracer_positions, observer_positions
     )
     b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
-        state, acc_func, times, integrator_state, step_scheduler
+        state, acc_func, times, integrator_state, step_scheduler, max_steps
     )
     warn_if_ltt_extrapolating(
         x0_q[relevant_inds], dt_q[relevant_inds], observer_positions
@@ -220,7 +225,7 @@ def _ephem_ias15_stitched(
     return ras, decs, steps
 
 
-@jax.jit
+@partial(jax.jit, static_argnames=["max_steps"])
 def _ephem_ias15_with_cov(
     times: jnp.ndarray,
     particle_state: CartesianState | KeplerianState,
@@ -229,6 +234,7 @@ def _ephem_ias15_with_cov(
     relevant_inds: jnp.ndarray,
     step_scheduler: Callable,
     cov: jnp.ndarray,
+    max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """IAS15 dense-output ephemeris with sky-plane covariance via forward-mode AD."""
     is_keplerian_param = isinstance(particle_state, KeplerianState)
@@ -252,6 +258,7 @@ def _ephem_ias15_with_cov(
             observer_positions,
             relevant_inds,
             step_scheduler,
+            max_steps,
         )
         return jnp.stack([ras, decs], axis=1).flatten()
 

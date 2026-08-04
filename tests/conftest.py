@@ -2,6 +2,14 @@
 
 import jax
 import pytest
+from astropy.utils.data import conf as astropy_data_conf
+
+# astropy's 10 s default is a per-read socket timeout, not a per-download budget, so a
+# few seconds of stall aborts an otherwise healthy transfer -- and the suite pulls
+# ~1.4 GB of ephemerides on a cold cache. 60 s is still short enough that a genuinely
+# dead server fails promptly. Set at import so it applies to the downloads that
+# `import jorbit` triggers while test modules are being collected.
+astropy_data_conf.remote_timeout = 60
 
 
 @pytest.fixture(autouse=True, scope="module")

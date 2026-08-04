@@ -88,6 +88,39 @@ def test_system_forward_model_batches_over_states() -> None:
     assert np.all(np.isfinite(res))
 
 
+def test_system_forward_model_ias15_max_steps() -> None:
+    """An arc-sized buffer is bit-identical; an undersized one fails loudly."""
+    p, obs, _, _ = _build_particle_and_obs()
+    system = System(particles=[p], observations=obs, gravity="default solar system")
+    system_small = System(
+        particles=[p],
+        observations=obs,
+        gravity="default solar system",
+        ias15_max_steps=64,
+    )
+    system_tiny = System(
+        particles=[p],
+        observations=obs,
+        gravity="default solar system",
+        ias15_max_steps=2,
+    )
+
+    true_state = jnp.concatenate([jnp.asarray(p._x), jnp.asarray(p._v)])[None, :]
+
+    # 64 steps comfortably cover the 60-day arc: outputs are bit-identical.
+    ll_ref = np.asarray(system.loglike(true_state))
+    assert np.array_equal(np.asarray(system_small.loglike(true_state)), ll_ref)
+    ras_ref, decs_ref = system.model_radec(true_state)
+    ras_small, decs_small = system_small.model_radec(true_state)
+    assert np.array_equal(np.asarray(ras_small), np.asarray(ras_ref))
+    assert np.array_equal(np.asarray(decs_small), np.asarray(decs_ref))
+
+    # 2 steps cannot: truncation is loud (-inf loglike, NaN-poisoned radec).
+    assert np.all(np.asarray(system_tiny.loglike(true_state)) == -np.inf)
+    ras_tiny, _ = system_tiny.model_radec(true_state)
+    assert np.any(np.isnan(np.asarray(ras_tiny)))
+
+
 def test_system_forward_model_none_when_unavailable() -> None:
     """The fast attributes are None without observations or on the keplerian path."""
     p, obs, _, _ = _build_particle_and_obs()
