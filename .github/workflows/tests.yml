@@ -75,15 +75,29 @@ jobs:
           key: astropy-download-${{ runner.os }}-v1-${{ hashFiles('src/jorbit/data/constants.py') }}
 
       # astroquery pickles Horizons responses under the same cache root, so caching
-      # them lets most of the suite survive a JPL outage. Keyed on uv.lock so the
-      # pickles are never restored across an astroquery version change, and left to
-      # astroquery's own one-week expiry so the reference values cannot go stale.
+      # them lets most of the suite survive a JPL outage. Keyed on the locked
+      # astroquery version so the pickles are never restored across an astroquery
+      # change (hashing all of uv.lock rotated the key on every unrelated
+      # dependency or jorbit version bump, going cold on exactly the release PRs
+      # that most need a warm cache), plus an ISO year-week stamp so the saved
+      # cache refreshes in step with astroquery's own one-week pickle expiry
+      # rather than pinning an all-expired snapshot forever. restore-keys falls
+      # back to a previous week within the same astroquery version; a fallback
+      # restore is not an exact hit, so the save step below re-uploads under the
+      # current week's key.
+      - name: Compute Horizons cache key parts
+        id: horizons-key
+        run: |
+          echo "aq=$(uv run python -c 'import astroquery; print(astroquery.__version__)')" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
       - name: Restore cached Horizons queries
         id: horizons-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ steps.astropy-cache-dir.outputs.path }}/astroquery
-          key: astroquery-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          key: astroquery-${{ runner.os }}-aq${{ steps.horizons-key.outputs.aq }}-${{ steps.horizons-key.outputs.week }}
+          restore-keys: astroquery-${{ runner.os }}-aq${{ steps.horizons-key.outputs.aq }}-
 
       # Collection imports jorbit, which triggers any downloads still missing from the
       # cache, and does it under the raised remote_timeout that tests/conftest.py sets.
