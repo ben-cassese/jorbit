@@ -43,4 +43,4 @@ def test_doubledouble() -> None:
     assert a_j >= b_j
     assert b_j < a_j
     assert b_j <= a_j
-    assert a_j == a_j
+    assert a_j == a_j  # noqa: PLR0124

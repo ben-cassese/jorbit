@@ -59,7 +59,7 @@ def create_gauss_radau_spacings(internal_points: int) -> list[mpmath.mpf]:
                 sols.append(s)
 
             del s
-        except Exception:
+        except Exception:  # noqa: S110, BLE001
             pass
 
     assert len(sols) == n - 1

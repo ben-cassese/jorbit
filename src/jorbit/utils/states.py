@@ -327,7 +327,7 @@ def barycentric_to_heliocentric(
             "nu_helio": nu_helio,
         }
     else:
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004
             "state must be either a barycentric CartesianState or KeplerianState"
         )
 
