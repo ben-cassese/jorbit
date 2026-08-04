@@ -2,12 +2,25 @@
 name: Tests
 
 on:
-  - push
-  - pull_request
+  push:
+    # only main: PR branches are already covered by the pull_request trigger, and
+    # running both doubles every push. tags stay listed so the (currently commented
+    # out) publish job still has an event to fire on.
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+# a force-push supersedes whatever is already running for that ref, so cancel it
+# rather than pay for two matrices. never cancel main, whose runs are the record.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   tests:
     runs-on: ${{ matrix.os }}
+    # a network call that hangs despite the timeouts shouldn't burn six hours of runner
+    timeout-minutes: 60
     strategy:
       matrix:
         os: [ubuntu-latest] # switched from macos-latest (RAM-starved arm64 runners, 7GB vs 16GB); reboundx's librebound RUNPATH bug (dtamayo/reboundx#141) is fixed as of reboundx 4.6.0
@@ -41,10 +54,70 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-groups
 
+      # astropy puts its cache in $XDG_CACHE_HOME/astropy when that variable is set and
+      # otherwise in ~/.astropy/cache, so ask astropy rather than assume: caching the
+      # wrong path is a silent no-op.
+      - name: Locate the astropy cache
+        id: astropy-cache-dir
+        run: |
+          echo "path=$(uv run python -c 'from astropy.config.paths import get_cache_dir; print(get_cache_dir())')" >> "$GITHUB_OUTPUT"
+
+      # ~1.4 GB of ephemerides (DE440, sb441-n16, and the mpchecker tables) are
+      # downloaded the first time jorbit is imported, plus ~250 MB Chebyshev chunks
+      # during the mpchecker tests. That download is the slowest and by far the
+      # flakiest part of a run. Keyed on constants.py since that is where the URLs
+      # live; bump the -v1 salt to force a rebuild.
+      - name: Restore downloaded ephemerides
+        id: ephem-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.astropy-cache-dir.outputs.path }}/download
+          key: astropy-download-${{ runner.os }}-v1-${{ hashFiles('src/jorbit/data/constants.py') }}
+
+      # astroquery pickles Horizons responses under the same cache root, so caching
+      # them lets most of the suite survive a JPL outage. Keyed on uv.lock so the
+      # pickles are never restored across an astroquery version change, and left to
+      # astroquery's own one-week expiry so the reference values cannot go stale.
+      - name: Restore cached Horizons queries
+        id: horizons-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.astropy-cache-dir.outputs.path }}/astroquery
+          key: astroquery-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      # Collection imports jorbit, which triggers any downloads still missing from the
+      # cache, and does it under the raised remote_timeout that tests/conftest.py sets.
+      # Retrying here means one dropped connection costs 30 s rather than the job.
+      - name: Warm the ephemeris cache
+        run: |
+          for attempt in 1 2 3; do
+            if uv run pytest tests -m "not slow" --collect-only -q; then exit 0; fi
+            echo "::warning::ephemeris warm-up attempt ${attempt} failed, retrying"
+            sleep 30
+          done
+          exit 1
+
       - name: Run tests
         # `-m "not slow"` deselects long-running tests that need local-only resources
         # (e.g. test_long_integrate_vs_assist, which needs the ASSIST ephemeris files).
         run: uv run pytest tests -m "not slow" --cov --cov-config=pyproject.toml --cov-report=xml
+
+      # Saved after the tests so the mpchecker chunks are included, and on !cancelled()
+      # rather than success() so a flaky test never costs us the download twice. One
+      # matrix job saves; the four would otherwise race to upload the same ~1.7 GB.
+      - name: Save downloaded ephemerides
+        if: ${{ !cancelled() && matrix.python-version == '3.13' && steps.ephem-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.astropy-cache-dir.outputs.path }}/download
+          key: ${{ steps.ephem-cache.outputs.cache-primary-key }}
+
+      - name: Save cached Horizons queries
+        if: ${{ !cancelled() && matrix.python-version == '3.13' && steps.horizons-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.astropy-cache-dir.outputs.path }}/astroquery
+          key: ${{ steps.horizons-cache.outputs.cache-primary-key }}
 
       - name: Upload coverage reports to Codecov with GitHub Action on Python 3.13 for macos
         if: ${{ matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest' }}

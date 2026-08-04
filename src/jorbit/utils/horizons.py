@@ -5,6 +5,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 import io
+import time
+import warnings
 from contextlib import contextmanager
 from typing import NamedTuple
 
@@ -24,6 +26,14 @@ class HorizonsQueryConfig(NamedTuple):
     """Configuration for Horizons API queries."""
 
     HORIZONS_API_URL = "https://ssd.jpl.nasa.gov/api/horizons_file.api"
+    # (connect, read) seconds. the read budget is generous since a full-size query can
+    # take Horizons a while to generate, but without it a stalled connection hangs
+    # forever
+    REQUEST_TIMEOUT = (10, 300)
+    # transient 5xx responses and dropped connections from Horizons are common enough
+    # to be worth retrying rather than failing the whole query
+    MAX_ATTEMPTS = 3
+    RETRY_DELAY = 5
     # hard limit from the Horizons api
     MAX_TIMESTEPS = 10_000
     # kinda arbitrary, have gotten it to work with ~50 but seems like it can be finicky
@@ -202,6 +212,10 @@ def parse_horizons_response(
 def make_horizons_request(query_content: io.StringIO) -> str:
     """Makes the HTTP request to Horizons API.
 
+    Transient failures (dropped connections, timeouts, and 5xx responses) are retried
+    up to HorizonsQueryConfig.MAX_ATTEMPTS times. Errors that will not fix themselves,
+    like a 400 from a malformed query, are raised on the first attempt.
+
     Args:
         query_content (io.StringIO):
             The query content to send in the request.
@@ -214,16 +228,31 @@ def make_horizons_request(query_content: io.StringIO) -> str:
         ValueError:
             If the request fails.
     """
-    try:
-        response = requests.post(
-            HorizonsQueryConfig.HORIZONS_API_URL,
-            data={"format": "text"},
-            files={"input": query_content},
-        )
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as e:
-        raise ValueError(f"Failed to query Horizons API: {e!s}") from e
+    for attempt in range(HorizonsQueryConfig.MAX_ATTEMPTS):
+        # requests reads the stream to the end, so rewind before every attempt
+        query_content.seek(0)
+        try:
+            response = requests.post(
+                HorizonsQueryConfig.HORIZONS_API_URL,
+                data={"format": "text"},
+                files={"input": query_content},
+                timeout=HorizonsQueryConfig.REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as e:
+            # no response at all means we never heard back (connection error, timeout),
+            # which is worth another try, as is anything the server blames on itself
+            failed = getattr(e, "response", None)
+            transient = (failed is None) or (failed.status_code >= 500)
+            if not transient or attempt == HorizonsQueryConfig.MAX_ATTEMPTS - 1:
+                raise ValueError(f"Failed to query Horizons API: {e!s}") from e
+            warnings.warn(
+                f"Horizons query failed ({e!s}), retrying in "
+                f"{HorizonsQueryConfig.RETRY_DELAY} seconds",
+                stacklevel=2,
+            )
+            time.sleep(HorizonsQueryConfig.RETRY_DELAY)
 
 
 def horizons_bulk_vector_query(
