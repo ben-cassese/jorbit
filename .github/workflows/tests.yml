@@ -69,7 +69,7 @@ jobs:
       # live; bump the -v1 salt to force a rebuild.
       - name: Restore downloaded ephemerides
         id: ephem-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ steps.astropy-cache-dir.outputs.path }}/download
           key: astropy-download-${{ runner.os }}-v1-${{ hashFiles('src/jorbit/data/constants.py') }}
@@ -93,7 +93,7 @@ jobs:
 
       - name: Restore cached Horizons queries
         id: horizons-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ steps.astropy-cache-dir.outputs.path }}/astroquery
           key: astroquery-${{ runner.os }}-aq${{ steps.horizons-key.outputs.aq }}-${{ steps.horizons-key.outputs.week }}
@@ -121,14 +121,14 @@ jobs:
       # matrix job saves; the four would otherwise race to upload the same ~1.7 GB.
       - name: Save downloaded ephemerides
         if: ${{ !cancelled() && matrix.python-version == '3.13' && steps.ephem-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ steps.astropy-cache-dir.outputs.path }}/download
           key: ${{ steps.ephem-cache.outputs.cache-primary-key }}
 
       - name: Save cached Horizons queries
         if: ${{ !cancelled() && matrix.python-version == '3.13' && steps.horizons-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ steps.astropy-cache-dir.outputs.path }}/astroquery
           key: ${{ steps.horizons-cache.outputs.cache-primary-key }}
