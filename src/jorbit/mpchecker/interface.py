@@ -102,6 +102,8 @@ def mpchecker(
             file_name = JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
         file_name = download_file_wrapper(file_name)
         coefficients = jnp.load(file_name)
+    else:
+        coefficients = chunk_coefficients
 
     # get the ra and dec of every minor planet (!)
     ras, decs = multiple_states(coefficients, offset, t0, chunk_size)
