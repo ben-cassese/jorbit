@@ -174,7 +174,13 @@ class Particle:
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
                 are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
-                step sizes. Defaults to "ias15". Ignored when gravity is "keplerian".
+                step sizes. The leapfrog integrators require ``max_step_size``, have no
+                dense output (so ``interpolate`` is ignored), and are typically slower
+                than adaptive IAS15 at matched accuracy because the step must be sized
+                for the tightest part of the orbit everywhere. In exchange they are a
+                plain ``jax.lax.scan``, so ``jax.grad`` differentiates them in reverse
+                mode, which the IAS15 ``while_loop`` cannot support.
+                Defaults to "ias15". Ignored when gravity is "keplerian".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -585,6 +591,11 @@ class Particle:
                 max_step_size is not None
             ), "Must provide max_step_size for leapfrog integrators."
             dt = max_step_size.to(u.day).value
+            assert dt > 0, (
+                "max_step_size must be positive for leapfrog integrators, got "
+                f"{max_step_size}. The step direction is taken from the requested "
+                "times, not from the sign of max_step_size."
+            )
             if integrator == "Y4":
                 c = Y4_C
                 d = Y4_D
@@ -712,26 +723,33 @@ class Particle:
                 step_scheduler=self._step_scheduler,
             )
 
-            # since we've gone with the while loop version of the ias15 integrator,
-            # can no longer use reverse mode. But, actually specifying forward mode
-            # everywhere is annoying, so we're going to re-define a custom vjp for
-            # "reverse" mode that's actually just forward mode
+            if self._integrator_method in ["Y4", "Y6", "Y8"]:
+                # Leapfrog is a plain jax.lax.scan over a pre-expanded, fixed step
+                # schedule, so reverse mode differentiates it natively. Use it
+                # directly: a gradient costs ~1 backward pass instead of the 6
+                # forward passes jacfwd needs over a 6-element state.
+                loglike = ll
+            else:
+                # since we've gone with the while loop version of the ias15 integrator,
+                # can no longer use reverse mode. But, actually specifying forward mode
+                # everywhere is annoying, so we're going to re-define a custom vjp for
+                # "reverse" mode that's actually just forward mode
 
-            @jax.custom_vjp
-            def loglike(params: CartesianState | KeplerianState) -> float:
-                return ll(params)
+                @jax.custom_vjp
+                def loglike(params: CartesianState | KeplerianState) -> float:
+                    return ll(params)
 
-            def loglike_fwd(params: CartesianState | KeplerianState) -> tuple:
-                output = ll(params)
-                jac = jax.jacfwd(ll)(params)
-                return output, (jac,)
+                def loglike_fwd(params: CartesianState | KeplerianState) -> tuple:
+                    output = ll(params)
+                    jac = jax.jacfwd(ll)(params)
+                    return output, (jac,)
 
-            def loglike_bwd(res: tuple, g: float) -> float:
-                jac = res
-                val = jax.tree.map(lambda x: x * g, jac)
-                return val
+                def loglike_bwd(res: tuple, g: float) -> float:
+                    jac = res
+                    val = jax.tree.map(lambda x: x * g, jac)
+                    return val
 
-            loglike.defvjp(loglike_fwd, loglike_bwd)
+                loglike.defvjp(loglike_fwd, loglike_bwd)
 
             # Deliberately NOT wrapped in jax.jit: _residuals/_loglike are already
             # module-level jitted functions, so the Partial-bound data (ephemeris,
@@ -813,7 +831,13 @@ class Particle:
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
                 are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
-                step sizes. Defaults to "ias15".
+                step sizes. The leapfrog integrators require ``max_step_size``, have no
+                dense output (so ``interpolate`` is ignored), and are typically slower
+                than adaptive IAS15 at matched accuracy because the step must be sized
+                for the tightest part of the orbit everywhere. In exchange they are a
+                plain ``jax.lax.scan``, so ``jax.grad`` differentiates them in reverse
+                mode, which the IAS15 ``while_loop`` cannot support.
+                Defaults to "ias15".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -1039,7 +1063,9 @@ class Particle:
                 state will be used. Usually not necessary to provide this.
             interpolate (bool):
                 Whether to use `integrate` or `integrate_or_interpolate` for the
-                underlying integrations.
+                underlying integrations. Ignored on the leapfrog paths, which have no
+                dense output: they always land exactly on the requested times, so both
+                settings return identical results.
             uncertainty (bool):
                 If True, also propagate the 6x6 covariance matrix stored on the state's
                 ``cov`` field onto the sky plane via forward-mode autodiff (linear error
@@ -1054,8 +1080,9 @@ class Particle:
                 landings). Appended as the final element of the returned tuple. For the
                 IAS15 integrator this is the figure to watch: the nominal ephemeris is
                 truncation-proof, but the count reveals an unusually heavy integration.
-                ``None`` for the analytic Keplerian and fixed-step leapfrog paths, which
-                cannot truncate. Defaults to False.
+                On the leapfrog paths this is the length of the expanded fixed-step
+                schedule, which cannot truncate. ``None`` for the analytic Keplerian
+                path. Defaults to False.
 
         Returns:
             coords (SkyCoord | tuple):
