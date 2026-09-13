@@ -132,3 +132,65 @@ def test_packed_epoch_trailing_suffix_is_tt() -> None:
     separate question from the time scale and is deliberately not pinned down here.
     """
     assert unpack_epoch("K259M5").scale == "tt"
+
+
+def test_mpchecker_empty_field() -> None:
+    """An empty search result should return an empty table, not raise.
+
+    With no objects in range, the list of packed designations handed to polars is
+    empty, which used to give the join key a Null dtype and raise a SchemaError.
+    """
+    for extra_precision in [False, True]:
+        t = mpchecker(
+            coordinate=SkyCoord(ra=0 * u.deg, dec=0 * u.deg),
+            time=Time("2025-01-01"),
+            radius=0.1 * u.arcsec,
+            extra_precision=extra_precision,
+        )
+        assert len(t) == 0
+        assert "Unpacked Name" in t.colnames
+
+
+def test_mpchecker_missing_h_and_g() -> None:
+    """Objects with blank H/G in MPCORB should give NaN magnitudes, not raise.
+
+    A few hundred of the objects in the jorbit ephemeris have no H/G in MPCORB;
+    those came back from polars as None and hit float(None) in extra_precision_calcs.
+    Also exercises the chunk_coefficients shortcut, which was never wired up.
+    """
+    import jax.numpy as jnp
+    import polars as pl
+
+    from jorbit.data.constants import JORBIT_EPHEM_URL_BASE
+    from jorbit.mpchecker.parse_jorbit_ephem import (
+        get_chunk_index,
+        multiple_states,
+        setup_checks,
+    )
+    from jorbit.utils.cache import download_file_wrapper
+
+    time = Time("2025-01-01")
+    coordinate = SkyCoord(ra=0 * u.deg, dec=0 * u.deg)
+    _, _, t0, tf, chunk_size, names = setup_checks(coordinate, time, 1 * u.arcsec)
+
+    no_h = set(load_mpcorb().filter(pl.col("H").is_null())["Packed designation"])
+    assert len(no_h) > 0, "no blank-H objects left in MPCORB, test is moot"
+    i = next(k for k, n in enumerate(names.tolist()) if n in no_h)
+
+    index, offset = get_chunk_index(time.tdb.jd, t0, tf, chunk_size)
+    coefficients = jnp.load(
+        download_file_wrapper(
+            JORBIT_EPHEM_URL_BASE + f"chebyshev_coeffs_fwd_{index:03d}.npy"
+        )
+    )
+    ras, decs = multiple_states(coefficients, offset, t0, chunk_size)
+
+    t = mpchecker(
+        coordinate=SkyCoord(ras[i] * u.rad, decs[i] * u.rad),
+        time=time,
+        radius=5 * u.arcsec,
+        extra_precision=True,
+        chunk_coefficients=coefficients,
+    )
+    assert len(t) > 0
+    assert np.all(np.isnan(np.asarray(t["est. Vmag"], dtype=float)))
