@@ -243,6 +243,21 @@ def _model_radec(
 
 
 @partial(jax.jit, static_argnames=["max_steps"])
+def _model_radec_status(
+    model_fn: Callable,
+    inputs: tuple,
+    states: jnp.ndarray,
+    max_steps: int | None = None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    # Diagnostic twin of _model_radec: the same NaN-poisoned (ras, decs), plus the
+    # reach mask _model_radec discards. A separate jitted function rather than a flag
+    # on _model_radec, so callers that never ask for the status never compile for it.
+    ras, decs, reached = model_fn(inputs, states, max_steps)
+    mask = reached[None, :]
+    return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan), reached
+
+
+@partial(jax.jit, static_argnames=["max_steps"])
 def _residuals(
     model_fn: Callable,
     inputs: tuple,
@@ -330,7 +345,12 @@ def create_system_forward_model(
 
     Returns:
         dict:
-            ``model_radec``/``residuals``/``chi2``/``loglike`` jitted callables plus ``n_obs``.
+            ``model_radec``/``residuals``/``chi2``/``loglike`` jitted callables plus
+            ``model_radec_with_status`` and ``n_obs``. ``model_radec_with_status``
+            returns the same ``(ras, decs)`` as ``model_radec`` plus the ``(n_obs,)``
+            boolean reach mask behind the ``NaN`` poisoning, so a caller can tell
+            buffer truncation (``reached`` False) from a genuine dynamical failure
+            such as a ``NaN`` acceleration (``reached`` True but the values ``NaN``).
     """
     n_obs = int(inputs[2].shape[0])
 
@@ -348,6 +368,7 @@ def create_system_forward_model(
 
     return {
         "model_radec": bind(_model_radec),
+        "model_radec_with_status": bind(_model_radec_status),
         "residuals": bind(_residuals),
         "chi2": bind(_chi2),
         "loglike": bind(_loglike),

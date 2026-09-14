@@ -542,9 +542,16 @@ def ias15_span_probe(
     Returns ``(would_truncate, total_steps)`` where ``would_truncate`` is True if one
     dense-output buffer (of depth ``max_steps``; None uses
     ``IAS15_MAX_DYNAMIC_STEPS``) fails to reach ``max(times)``. A cheap forward
-    integration (no autodiff) used by the detect-and-raise guards on the
-    covariance-ephemeris and likelihood paths, where the host-side stitching loop
-    cannot be threaded through ``jax.jacfwd``.
+    integration with no autodiff, for the paths that run inside ``jax.jacfwd`` and so
+    cannot be threaded through the host-side stitching loop.
+
+    Called automatically by the detect-and-raise guards in
+    ``Particle.ephemeris(uncertainty=True)`` and ``Particle.max_likelihood``. The
+    ``System(observations=...)`` forward model is deliberately *not* guarded this way:
+    its callables are compiled once and scored on candidate states supplied as
+    arguments, so an automatic probe would force a device sync and a full extra
+    integration on every likelihood evaluation. ``System.probe_span`` exposes this
+    function for those callers to invoke at their own discretion.
     """
     t0 = float(initial_system_state.relative_time)
     would_truncate = False
