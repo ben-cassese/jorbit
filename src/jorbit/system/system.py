@@ -30,6 +30,7 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
+    ias15_span_probe,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
     next_proposed_dt_global,
@@ -88,9 +89,12 @@ class System:
                 dynamically independent (they could represent different asteroids), but
                 when observations are provided **every particle is scored against this
                 same data**. Enables the fast, reusable ``loglike``/``residuals``/
-                ``chi2``/``model_radec`` attributes (see below). Supported for the IAS15
-                and leapfrog integrators; for a Keplerian system those attributes are
-                ``None``. Defaults to None.
+                ``chi2``/``model_radec`` attributes (see below), plus
+                ``model_radec_with_status``, which returns the same coordinates as
+                ``model_radec`` along with the per-observation boolean mask of whether
+                the integration actually reached that time before its dense-output
+                buffer filled. Supported for the IAS15 and leapfrog integrators; for a
+                Keplerian system those attributes are ``None``. Defaults to None.
             gravity (str | Callable):
                 The gravitational acceleration function to use when integrating the
                 particle's orbit. Defaults to "default solar system", which corresponds
@@ -150,8 +154,11 @@ class System:
                 methods stitch extra chunks as needed, so a small value never
                 truncates them; the observation-based ``loglike``/``residuals``/
                 ``chi2``/``model_radec`` callables instead fail loudly (``-inf``/
-                ``NaN``) when the arc exceeds one buffer. Ignored for leapfrog
-                integrators and Keplerian systems. Defaults to None.
+                ``NaN``) when the arc exceeds one buffer. Use ``probe_span`` to check
+                a span against the buffer before paying for a likelihood, or
+                ``model_radec_with_status`` to identify truncation after the fact.
+                Ignored for leapfrog integrators and Keplerian systems.
+                Defaults to None.
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
@@ -224,11 +231,13 @@ class System:
             self.residuals = None
             self.chi2 = None
             self.model_radec = None
+            self.model_radec_with_status = None
         else:
             self.loglike = forward_model["loglike"]
             self.residuals = forward_model["residuals"]
             self.chi2 = forward_model["chi2"]
             self.model_radec = forward_model["model_radec"]
+            self.model_radec_with_status = forward_model["model_radec_with_status"]
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
@@ -631,3 +640,61 @@ class System:
         if return_steps:
             return coords, steps
         return coords
+
+    def probe_span(self, times: Time | jnp.ndarray | None = None) -> tuple[bool, int]:
+        """Check whether integrating to ``times`` would overflow the dense-output buffer.
+
+        Runs one cheap forward IAS15 integration (no autodiff, no stitching) from the
+        System's own state and reports whether a single dense-output buffer of depth
+        ``ias15_max_steps`` reaches the farthest requested time in each direction.
+
+        The ``loglike``/``residuals``/``chi2``/``model_radec`` callables cannot guard
+        themselves: they are compile-once callables whose candidate states arrive as
+        *arguments*, so a probe inside them would force a device sync and a full extra
+        integration on every evaluation. Call this instead, once, before committing to
+        a fit or a Jacobian. Note the answer is specific to the System's current state:
+        a sampler that wanders onto a more demanding orbit can still truncate.
+
+        The ``integrate``/``ephemeris`` methods stitch extra chunks as needed and so
+        never truncate; there is no reason to probe before calling them.
+
+        Args:
+            times (Time | jnp.ndarray | None):
+                The times to probe. If a jnp.array, the entries are assumed to be in
+                TDB JD. None (default) uses the times of the attached ``Observations``.
+
+        Returns:
+            tuple[bool, int]:
+                ``(would_truncate, steps)``. ``steps`` is the total iteration count
+                (accepted plus rejected, summed over the forward and backward passes),
+                so it is a conservative upper bound when used to size
+                ``ias15_max_steps``. Always ``(False, 0)`` for Keplerian systems and
+                leapfrog integrators, which land on every requested time by
+                construction and have no dense-output buffer to overflow.
+        """
+        if self._is_keplerian or self._integrator_method in ["Y4", "Y6", "Y8"]:
+            return False, 0
+
+        if times is None:
+            if self._observations is None:
+                raise ValueError(
+                    "probe_span() needs a `times` argument: this System has no "
+                    "attached Observations to fall back on."
+                )
+            times = self._observations.times_astropy
+            if times is None:
+                times = Time(self._observations.times, format="jd", scale="tdb")
+
+        times = self._times_to_offsets(times)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        would_truncate, steps = ias15_span_probe(
+            self._state,
+            self.gravity,
+            times,
+            self._integrator_state,
+            self._step_scheduler,
+            self._ias15_max_steps,
+        )
+        return bool(would_truncate), int(steps)
