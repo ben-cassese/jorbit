@@ -18,7 +18,8 @@ methods are truncation-proof:
 - :func:`stitched_per_query_gather` stitches successive interpolation chunks together,
   carrying the integrator state forward so the result is bit-identical to a single run
   with a larger buffer.
-- :func:`budgeted_forced_landing` detects a truncating forced-landing run and inserts
+- :func:`budgeted_forced_landing` detects a truncating forced-landing run -- per
+  landing, since a truncated interval leaves the ones after it correct -- and inserts
   "dummy" landing times (dropped from the output afterward) so no single interval
   exceeds the backend's per-interval cap. This mirrors the existing
   :func:`jorbit.integrators.create_leapfrog_times` "expand then select" pattern.
@@ -42,10 +43,13 @@ from jorbit.ephemeris.ephemeris_processors import (
 from jorbit.integrators.ias15 import (
     DenseOutput,
     ias15_evolve,
-    ias15_evolve_forced_landing,
     ias15_evolve_with_dense_output,
     interpolate_from_dense_output,
     precompute_interpolation_indices,
+)
+from jorbit.integrators.ias15.evolve import (
+    IAS15_MAX_FORCED_LANDING_ITERS,
+    _forced_landing_with_times,
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
@@ -54,9 +58,10 @@ from jorbit.utils.states import IAS15IntegratorState, SystemState
 _TIME_TOL = 1e-9
 
 # Natural-step budget per forced-landing interval. The backend caps a single interval at
-# 10000 *iterations* (accepted + rejected); we budget on accepted natural steps and keep
-# generous headroom for the occasional rejected step plus the clamp step each dummy adds.
-FORCED_LANDING_STEP_BUDGET = 8000
+# IAS15_MAX_FORCED_LANDING_ITERS *iterations* (accepted + rejected); we budget on accepted
+# natural steps and keep generous headroom for the occasional rejected step plus the clamp
+# step each dummy adds.
+FORCED_LANDING_STEP_BUDGET = int(0.8 * IAS15_MAX_FORCED_LANDING_ITERS)
 
 # Sentinel value used by the backend to fill unused dense-output slots (see ias15.py).
 _DTS_SENTINEL = 1e29
@@ -492,9 +497,11 @@ def insert_budget_dummy_times(
     """Insert dummy landing times so no requested interval holds more than ``budget`` steps.
 
     Mirrors the contract of :func:`jorbit.integrators.create_leapfrog_times`: returns an
-    expanded, ascending time array plus the indices of the original ``requested_times``
-    within it. Dummy times are placed at natural step boundaries inside any interval that
-    would otherwise exceed ``budget`` natural steps.
+    expanded time array plus the indices of the original ``requested_times`` within it.
+    The expansion is in *marching* order, which follows ``requested_times`` and so is not
+    ascending when those cross the epoch or are unsorted. Dummy times are placed at
+    natural step boundaries inside any interval that would otherwise exceed ``budget``
+    natural steps.
 
     Args:
         natural_step_times: Cumulative natural step end-times from
@@ -539,10 +546,21 @@ def budgeted_forced_landing(
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     """Forced-landing integration that never silently truncates between requested times.
 
-    Runs :func:`ias15_evolve_forced_landing` on ``times``; if any interval truncated (the
-    integrator failed to reach the last requested time), discovers the natural step
-    structure, inserts dummy landing times so each sub-interval stays under the backend's
-    per-interval cap, and re-runs. The dummy times are dropped from the returned arrays.
+    Runs the forced-landing backend on ``times``; if any interval truncated, discovers
+    the natural step structure, inserts dummy landing times so each sub-interval stays
+    under the backend's per-interval cap, and re-runs. The dummy times are dropped from
+    the returned arrays.
+
+    Truncation is detected per landing, against the reached times the backend emits, not
+    from the final state: a truncated interval stops at a state that is correct for the
+    time it stopped at, so every interval after it starts on the true trajectory and
+    lands normally. Checking only the last requested time therefore misses a truncation
+    anywhere else -- which is exactly what happened to an ascending array straddling the
+    epoch, where the whole pre-epoch arc is traversed as the single interval from the
+    epoch back to ``times[0]``: that one interval overran the cap, the (post-epoch) last
+    time was reached anyway, and the earliest landing came back silently wrong. A single
+    requested time was unaffected only because there the last-time check *is* the whole
+    check.
 
     Inserting a dummy landing splits one step into two clamped steps, a perturbation of
     the same kind forced-landing already incurs at every requested time and far below the
@@ -551,8 +569,8 @@ def budgeted_forced_landing(
     Returns:
         ``(positions, velocities, total_steps)`` at the originally requested ``times``.
     """
-    positions, velocities, final_system_state, _final_integrator_state, tot_steps = (
-        ias15_evolve_forced_landing(
+    positions, velocities, landing_times, _fss, _fis, tot_steps = (
+        _forced_landing_with_times(
             initial_system_state,
             acceleration_func,
             times,
@@ -561,17 +579,13 @@ def budgeted_forced_landing(
         )
     )
 
-    last_time = float(times[-1])
-    t0 = float(initial_system_state.relative_time)
-    direction = 1.0 if last_time >= t0 else -1.0
-    reached = (
-        direction * (float(final_system_state.relative_time) - last_time) >= -_TIME_TOL
-    )
-    if reached:
+    # Forced landing clamps its step to land exactly on each requested time, so an
+    # untruncated landing matches bit-for-bit; _TIME_TOL only absorbs round-trip noise.
+    if float(jnp.max(jnp.abs(landing_times - times))) <= _TIME_TOL:
         return positions, velocities, int(tot_steps)
 
-    # A run truncated somewhere; targets only advance, so a short final time is a
-    # reliable signal. Discover the natural step density and subdivide.
+    # Some interval truncated. Discover the natural step density and subdivide.
+    t0 = float(initial_system_state.relative_time)
     natural_step_times = discover_natural_step_times(
         initial_system_state,
         acceleration_func,
@@ -582,8 +596,8 @@ def budgeted_forced_landing(
     augmented_times, relevant_inds = insert_budget_dummy_times(
         natural_step_times, times, t0, FORCED_LANDING_STEP_BUDGET
     )
-    positions, velocities, final_system_state, _final_integrator_state, tot_steps = (
-        ias15_evolve_forced_landing(
+    positions, velocities, landing_times, _fss, _fis, tot_steps = (
+        _forced_landing_with_times(
             initial_system_state,
             acceleration_func,
             augmented_times,
@@ -592,10 +606,10 @@ def budgeted_forced_landing(
         )
     )
 
-    last_aug = float(augmented_times[-1])
-    if direction * (float(final_system_state.relative_time) - last_aug) < -_TIME_TOL:
-        # Essentially unreachable (would require a single ~8000-natural-step sub-interval
-        # to still overflow the 10000-iteration cap). Raise rather than silently truncate.
+    if float(jnp.max(jnp.abs(landing_times - augmented_times))) > _TIME_TOL:
+        # Essentially unreachable (would require a single FORCED_LANDING_STEP_BUDGET-step
+        # sub-interval to still overflow the iteration cap), or an interval that stalled
+        # for some reason other than the cap. Raise rather than silently truncate.
         raise RuntimeError(
             "Forced-landing integration still truncated after inserting dummy landing "
             "times. Try integrate_or_interpolate (interpolation path) instead, or "
