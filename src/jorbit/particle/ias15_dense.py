@@ -95,7 +95,8 @@ def _ephem_ias15(
     pad = ltt_seed_floor(state.tracer_positions, observer_positions)
 
     times_fwd = jnp.where(times >= t0, times, t0)
-    times_bwd = jnp.minimum(jnp.where(times < t0, times, t0), t0 - pad)
+    times_bwd = jnp.where(times < t0, times, t0)
+    times_bwd = jnp.minimum(times_bwd, jnp.min(times_bwd) - pad)
 
     out_fwd = ias15_evolve_with_dense_output(
         state,
