@@ -11,12 +11,14 @@ import jax.numpy as jnp
 from jorbit.astrometry.sky_projection import on_sky
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
+    DenseOutput,
     apply_ltt_seed_floor,
+    assert_ltt_span_covered,
     ias15_evolve_with_dense_output,
     initialize_ias15_integrator_state,
+    ltt_seed_floor,
     make_ltt_propagator,
-    stitched_per_query_gather,
-    warn_if_ltt_extrapolating,
+    stitched_dense_buffers,
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
@@ -27,12 +29,9 @@ _TIME_TOL = 1e-9
 
 @jax.jit
 def dense_ltt_radec_multi(
-    b_per_obs_all: jnp.ndarray,
-    a0_per_obs_all: jnp.ndarray,
-    x0_per_obs_all: jnp.ndarray,
-    v0_per_obs_all: jnp.ndarray,
-    dt_per_obs: jnp.ndarray,
-    h_per_obs: jnp.ndarray,
+    fwd: DenseOutput,
+    bwd: DenseOutput,
+    t0: jnp.ndarray,
     obs_times: jnp.ndarray,
     observer_positions: jnp.ndarray,
     acc_func: Callable,
@@ -40,26 +39,20 @@ def dense_ltt_radec_multi(
     """Per-observation, per-particle dense-output light-travel-time ``on_sky``.
 
     Vmaps the dense-output polynomial-LTT closure over both the observation axis and the
-    particle axis; each particle gets its own light-travel-time correction. Inputs are
-    already gathered per observation: ``b_per_obs_all`` is ``(n_obs, 7, P, 3)``;
-    ``a0/x0/v0_per_obs_all`` are ``(n_obs, P, 3)``; ``dt/h_per_obs/obs_times`` are
-    ``(n_obs,)``; ``observer_positions`` is ``(n_obs, 3)``. Returns ``(ras, decs)`` each
-    shaped ``(P, n_obs)``.
+    particle axis; each particle gets its own light-travel-time correction. The dense
+    buffers are shared across both axes (``in_axes=None``), since the retarded time of
+    an observation generally falls in an earlier step than the observation itself and
+    :func:`make_ltt_propagator` has to look it up. ``obs_times`` is ``(n_obs,)`` and
+    ``observer_positions`` is ``(n_obs, 3)``; returns ``(ras, decs)`` each shaped
+    ``(P, n_obs)``.
     """
 
     def per_particle_per_obs(
-        b_step: jnp.ndarray,
-        a0_step: jnp.ndarray,
-        x0_step: jnp.ndarray,
-        v0_step: jnp.ndarray,
-        dt_step: jnp.ndarray,
-        h_obs: jnp.ndarray,
+        particle_index: jnp.ndarray,
         time: jnp.ndarray,
         observer_pos: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        propagator = make_ltt_propagator(
-            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
-        )
+        propagator = make_ltt_propagator(fwd, bwd, t0, time, particle_index)
         x_obs = propagator(jnp.array(0.0))
         return on_sky(
             x_obs,
@@ -71,29 +64,13 @@ def dense_ltt_radec_multi(
         )
 
     def for_single_particle(
-        b_obs_p: jnp.ndarray,
-        a0_obs_p: jnp.ndarray,
-        x0_obs_p: jnp.ndarray,
-        v0_obs_p: jnp.ndarray,
+        particle_index: jnp.ndarray,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        # b_obs_p: (n_obs, 7, 3); a0/v0/x0_obs_p: (n_obs, 3)
-        return jax.vmap(per_particle_per_obs, in_axes=(0, 0, 0, 0, 0, 0, 0, 0))(
-            b_obs_p,
-            a0_obs_p,
-            x0_obs_p,
-            v0_obs_p,
-            dt_per_obs,
-            h_per_obs,
-            obs_times,
-            observer_positions,
+        return jax.vmap(per_particle_per_obs, in_axes=(None, 0, 0))(
+            particle_index, obs_times, observer_positions
         )
 
-    # Vmap over particle axis: 2 in b_per_obs_all (axes are obs/coeff/particle/xyz),
-    # 1 in a0/v0/x0_per_obs_all (axes are obs/particle/xyz).
-    ras, decs = jax.vmap(for_single_particle, in_axes=(2, 1, 1, 1))(
-        b_per_obs_all, a0_per_obs_all, x0_per_obs_all, v0_per_obs_all
-    )
-    return ras, decs
+    return jax.vmap(for_single_particle)(jnp.arange(fwd.x0.shape[1]))
 
 
 def _ephem_ias15_stitched(
@@ -109,34 +86,33 @@ def _ephem_ias15_stitched(
     """Truncation-proof IAS15 dense-output ephemeris for the whole system.
 
     Host-side wrapper that stitches as many dense-output chunks as the span requires
-    (see :func:`jorbit.integrators.stitched_per_query_gather`) before the per-obs,
+    (see :func:`jorbit.integrators.stitched_dense_buffers`) before the per-obs,
     per-particle dense-LTT ``on_sky`` evaluation in :func:`dense_ltt_radec_multi`.
     """
-    # Seed the first proposed step at >= 2x the max light travel time so the dense-LTT
-    # polynomial evaluation never extrapolates by more than ~1 step length.
+    all_positions = jnp.concatenate((state.massive_positions, state.tracer_positions))
     integrator_state = apply_ltt_seed_floor(
+        integrator_state, all_positions, observer_positions
+    )
+    # Run the backward pass past the earliest requested time (and past the epoch, even
+    # when nothing precedes it) by twice the largest light travel time, so that every
+    # retarded time the LTT iteration asks for lands inside an integrated step.
+    pad = ltt_seed_floor(all_positions, observer_positions)
+    fwd, bwd, steps = stitched_dense_buffers(
+        state,
+        acc_func,
+        times,
         integrator_state,
-        jnp.concatenate((state.massive_positions, state.tracer_positions)),
-        observer_positions,
-    )
-    b_q, a0_q, x0_q, v0_q, dt_q, h_q, steps = stitched_per_query_gather(
-        state, acc_func, times, integrator_state, step_scheduler, max_steps
-    )
-    warn_if_ltt_extrapolating(
-        x0_q[relevant_inds], dt_q[relevant_inds], observer_positions
+        step_scheduler,
+        max_steps,
+        backward_pad=float(pad),
     )
     # Restrict to observation times (drops any intermediate landing times). For IAS15
     # relevant_inds is the identity, but keep the indexing uniform with other paths.
+    obs_times = times[relevant_inds]
+    t0 = state.relative_time
+    assert_ltt_span_covered(fwd, bwd, float(t0), obs_times, observer_positions)
     ras, decs = dense_ltt_radec_multi(
-        b_q[relevant_inds],
-        a0_q[relevant_inds],
-        x0_q[relevant_inds],
-        v0_q[relevant_inds],
-        dt_q[relevant_inds],
-        h_q[relevant_inds],
-        times[relevant_inds],
-        observer_positions,
-        acc_func,
+        fwd, bwd, t0, obs_times, observer_positions, acc_func
     )
     return ras, decs, steps
 
@@ -158,9 +134,9 @@ def _ephem_ias15_bounded(
 
     The compile-once / reuse counterpart to :func:`_ephem_ias15_stitched`: it drops the
     host-side stitching loop (which forces device->host syncs every call) in favour of a
-    fixed two-pass ``jnp.where`` gather. The observation times are split into a forward
-    pass (offsets ``>= 0``, ``times_fwd``) and a backward pass (offsets ``< 0``,
-    ``times_bwd``, with the other pass's times clamped to 0). Each pass is a single
+    fixed two-pass gather. The observation times are split into a forward pass (offsets
+    ``>= 0``, ``times_fwd``) and a backward pass (offsets ``< 0``, ``times_bwd``, with
+    the other pass's times clamped to 0). Each pass is a single
     :func:`ias15_evolve_with_dense_output` call, so the whole arc must fit in one dense
     buffer (``max_steps`` accepted steps; None uses ``IAS15_MAX_DYNAMIC_STEPS``);
     ``fwd_mask``/``times_fwd``/``times_bwd`` are
@@ -209,59 +185,30 @@ def _ephem_ias15_bounded(
     )
     a0 = acc_func(state)
     integrator_state = initialize_ias15_integrator_state(a0)
-    # Seed the first proposed step at >= 2x the max light travel time over all walkers
-    # so the dense-LTT polynomial never extrapolates by more than ~1 step length.
-    # Recomputed from the traced states each call, so the floor self-adapts as a
-    # sampler explores large topocentric distances. (This fully-jitted hot loop gets
-    # no host-side extrapolation warning; the floor is the protection.)
     integrator_state = apply_ltt_seed_floor(
         integrator_state, states[:, :3], observer_positions
     )
+    # Extend the backward pass past the earliest observation (and past the epoch, even
+    # when every observation follows it) by twice the largest light travel time, so the
+    # retarded times the LTT iteration asks for land inside an integrated step.
+    # Recomputed from the traced states each call, so the span self-adapts as a sampler
+    # explores large topocentric distances. (This fully-jitted hot loop gets no
+    # host-side coverage check; the pad is the protection.)
+    pad = ltt_seed_floor(states[:, :3], observer_positions)
+    times_bwd = jnp.minimum(times_bwd, -pad)
 
-    def gather(times_dir: jnp.ndarray) -> tuple:
+    def gather(times_dir: jnp.ndarray) -> tuple[DenseOutput, jnp.ndarray]:
         out = ias15_evolve_with_dense_output(
             state, acc_func, times_dir, integrator_state, step_scheduler, max_steps
         )
-        (
-            _p,
-            _v,
-            final_system_state,
-            _fis,
-            _it,
-            b_buf,
-            a0_buf,
-            x0_buf,
-            v0_buf,
-            dts_buf,
-            _tss,
-            step_indices,
-            h_values,
-        ) = out
-        return (
-            b_buf[step_indices],  # (n_obs, 7, P, 3)
-            a0_buf[step_indices],  # (n_obs, P, 3)
-            x0_buf[step_indices],
-            v0_buf[step_indices],
-            dts_buf[step_indices],  # (n_obs,)
-            h_values,  # (n_obs,)
-            final_system_state.relative_time,  # scalar: farthest time reached
-        )
+        # out[2] is the final system state: the farthest time this pass reached.
+        return DenseOutput(*out[5:11]), out[2].relative_time
 
-    bf, af, xf, vf, df, hf, reached_fwd = gather(times_fwd)
-    bb, ab, xb, vb, db, hb, reached_bwd = gather(times_bwd)
-
-    # Select each observation from its own direction's gather.
-    m_coeff = fwd_mask[:, None, None, None]
-    m_vec = fwd_mask[:, None, None]
-    b = jnp.where(m_coeff, bf, bb)
-    a0p = jnp.where(m_vec, af, ab)
-    x0p = jnp.where(m_vec, xf, xb)
-    v0p = jnp.where(m_vec, vf, vb)
-    dtp = jnp.where(fwd_mask, df, db)
-    hp = jnp.where(fwd_mask, hf, hb)
+    fwd, reached_fwd = gather(times_fwd)
+    bwd, reached_bwd = gather(times_bwd)
 
     ras, decs = dense_ltt_radec_multi(
-        b, a0p, x0p, v0p, dtp, hp, times_off, observer_positions, acc_func
+        fwd, bwd, jnp.asarray(0.0), times_off, observer_positions, acc_func
     )
 
     # Per-obs reach flag: did the (shared-schedule) integration actually reach each obs

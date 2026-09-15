@@ -5,6 +5,7 @@ steps, without re-integrating.
 """
 
 import warnings
+from typing import NamedTuple
 
 import jax
 
@@ -14,6 +15,37 @@ import jax.numpy as jnp
 
 from jorbit.data.constants import INV_SPEED_OF_LIGHT
 from jorbit.integrators.ias15.helpers import _estimate_x_v_from_b
+
+
+class DenseOutput(NamedTuple):
+    """The per-step dense output of one IAS15 pass, plus the step start times.
+
+    Bundles what :func:`interpolate_from_dense_output` and :func:`dense_position` need
+    to evaluate the trajectory at an arbitrary time inside the integrated span. A
+    ``NamedTuple`` is already a JAX pytree, so these buffers travel through ``jit``,
+    ``vmap``, and — importantly — ``jax.tree_util.Partial`` as *leaves*: they are
+    multi-MB arrays, and capturing them in a Python closure instead would re-embed them
+    as constants in every compilation.
+
+    Unfilled trailing slots carry a large positive ``dts`` sentinel (``1e30``);
+    :func:`precompute_interpolation_indices` routes queries past them.
+
+    Attributes:
+        b (jnp.ndarray): Converged b coefficients, shape (n_steps, 7, n_particles, 3).
+        a0 (jnp.ndarray): Start-of-step accelerations, shape (n_steps, n_particles, 3).
+        x0 (jnp.ndarray): Start-of-step positions, shape (n_steps, n_particles, 3).
+        v0 (jnp.ndarray): Start-of-step velocities, shape (n_steps, n_particles, 3).
+        dts (jnp.ndarray): Step lengths, shape (n_steps,). Negative for a backward pass.
+        t_step_starts (jnp.ndarray): Start time of each step, shape (n_steps,), in the
+            same offset frame as ``SystemState.relative_time``.
+    """
+
+    b: jnp.ndarray
+    a0: jnp.ndarray
+    x0: jnp.ndarray
+    v0: jnp.ndarray
+    dts: jnp.ndarray
+    t_step_starts: jnp.ndarray
 
 
 def precompute_interpolation_indices(
@@ -61,27 +93,64 @@ def precompute_interpolation_indices(
     return step_indices, h_values
 
 
+def dense_position(
+    dense: DenseOutput,
+    t: jnp.ndarray,
+    particle_index: jnp.ndarray = 0,
+) -> jnp.ndarray:
+    """Position of one particle at an arbitrary time inside a dense-output buffer.
+
+    Looks up the step containing ``t`` and evaluates that step's converged polynomial
+    there. ``h`` is deliberately *not* clipped to ``[0, 1]``: a query outside the
+    integrated span still returns the (inaccurate) extrapolation of the nearest step
+    rather than a silently clamped value, and callers who care detect the condition with
+    :func:`assert_ltt_span_covered`.
+
+    Args:
+        dense (DenseOutput): The dense output of one integration pass.
+        t (jnp.ndarray): Scalar query time, in the same offset frame as
+            ``dense.t_step_starts``.
+        particle_index (jnp.ndarray): Which particle to return. Defaults to 0.
+
+    Returns:
+        jnp.ndarray:
+            Position at ``t``, shape (3,).
+    """
+    step_indices, h_values = precompute_interpolation_indices(
+        dense.t_step_starts, dense.dts, jnp.atleast_1d(t)
+    )
+    i = step_indices[0]
+    x, _ = _estimate_x_v_from_b(
+        dense.a0[i],
+        dense.v0[i],
+        dense.x0[i],
+        h_values[0],
+        dense.dts[i],
+        dense.b[i][::-1],
+    )
+    return x[particle_index]
+
+
 def ltt_seed_floor(
     positions: jnp.ndarray,
     observer_positions: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Minimum initial IAS15 step proposal for dense-output light-travel-time work.
+    """Twice the largest light travel time between a particle and the observers.
 
-    :func:`make_ltt_propagator` evaluates the polynomial of the step containing an
-    observation at ``h = h_obs - LTT/dt_step``, i.e. it extrapolates outside ``[0, 1]``
-    by the light travel time measured in step lengths. If the steps are much shorter
-    than the LTT (e.g. a short observation arc of a distant object, where the
-    integration ends before the adaptive steps ramp up from their small initial seed),
-    that extrapolation amplifies converged-tolerance noise in the high-order b
-    coefficients by ~``h^7``, producing arcsec-level, jagged RA/Dec errors.
+    Serves two purposes in the dense-output light-travel-time (LTT) machinery:
 
-    Seeding the integrator's first *proposed* step at twice the largest topocentric
-    light travel time bounds the excursion to at most ~1 step length (O(1)
-    amplification, i.e. errors at the per-step tolerance level) whenever the proposal
-    is accepted. Because it is only a proposal, IAS15's accuracy control can still
-    reject and shrink it, so integration accuracy is never compromised; steps only end
-    up shorter than this floor when the dynamics demand it (close encounters), a regime
-    where the topocentric distance — and hence the LTT — is small anyway.
+    - it is the amount by which the *backward* pass of every dense path is extended
+      past the earliest requested time, so that the retarded time ``t_obs - LTT`` of
+      every observation lands inside a real integrated step (see
+      :func:`make_ltt_propagator`), and
+    - it floors the integrator's first *proposed* step (:func:`apply_ltt_seed_floor`),
+      which is what protects the paths that cannot extend their span backward (the
+      static-likelihood pipeline, whose step schedule is frozen and forward-only).
+
+    The factor of two is margin: the distance is measured from the particle's position
+    at the integration epoch, so it under-estimates the light travel time of an
+    observation at which the object is farther away. Doubling covers growth up to ~2x
+    the epoch topocentric distance.
 
     Args:
         positions (jnp.ndarray): Particle position(s) at the integration epoch,
@@ -136,12 +205,12 @@ def warn_if_ltt_extrapolating(
 ) -> None:
     """Warn if any observation's light travel time exceeds its containing step length.
 
-    Host-side check (concrete arrays only, not jittable) for the dense-LTT paths: with
-    the :func:`ltt_seed_floor` seeding this should never trigger, unless the adaptive
-    controller shrank the steps below the floor for accuracy (e.g. a close encounter)
-    while an observation still has a long light travel time. In that case
-    :func:`make_ltt_propagator` extrapolates its step polynomial by more than ~1 step
-    length and the on-sky positions degrade.
+    Host-side check (concrete arrays only, not jittable) for the *static-likelihood*
+    path, whose frozen forward-only step schedule cannot be extended backward and so
+    still evaluates its first step's polynomial at ``h < 0`` for observations near the
+    epoch. The dense (``interpolate=True``) paths no longer need this: they look the
+    retarded time up in the buffer and pad their span backward, and report a genuine
+    coverage failure through :func:`assert_ltt_span_covered` instead.
 
     Args:
         x0_per_obs (jnp.ndarray): Start-of-step positions of the steps containing each
@@ -172,60 +241,134 @@ def warn_if_ltt_extrapolating(
         )
 
 
+def _covered_end(dense: DenseOutput) -> float:
+    """Farthest time a dense buffer covers, i.e. the end of its last accepted step."""
+    filled = jnp.abs(dense.dts) < 1e29
+    return float(dense.t_step_starts[0]) + float(
+        jnp.sum(jnp.where(filled, dense.dts, 0.0))
+    )
+
+
+def assert_ltt_span_covered(
+    fwd: DenseOutput,
+    bwd: DenseOutput | None,
+    t0: float,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> None:
+    """Raise if any observation's retarded time falls outside the dense-output span.
+
+    Host-side check (concrete arrays only, not jittable). The backward pass of each
+    dense path is padded by :func:`ltt_seed_floor`, which is sized from the particle's
+    position at the integration epoch; an object whose topocentric distance grows a lot
+    between the epoch and an observation can still need more. That is a real failure —
+    :func:`dense_position` would have to extrapolate — so it is reported rather than
+    silently clamped.
+
+    Args:
+        fwd (DenseOutput): Dense output of the forward pass.
+        bwd (DenseOutput | None): Dense output of the backward pass, if there is one.
+        t0 (float): Integration epoch, in the offset frame of ``obs_times``.
+        obs_times (jnp.ndarray): Observation times, shape (n_obs,).
+        observer_positions (jnp.ndarray): Observer positions, shape (n_obs, 3).
+
+    Raises:
+        RuntimeError: If a retarded time lies outside the integrated span.
+    """
+    n_particles = fwd.x0.shape[1]
+
+    def positions_at(t: jnp.ndarray) -> jnp.ndarray:
+        return jax.vmap(lambda p: _ltt_position(fwd, bwd, t0, t, p, 0.0))(
+            jnp.arange(n_particles)
+        )
+
+    xs = jax.vmap(positions_at)(obs_times)  # (n_obs, P, 3)
+    dists = jnp.linalg.norm(xs - observer_positions[:, None, :], axis=-1)
+    ltts = jnp.max(dists, axis=-1) * INV_SPEED_OF_LIGHT  # (n_obs,)
+    retarded = obs_times - ltts
+
+    ends = [float(t0), _covered_end(fwd)]
+    if bwd is not None:
+        ends.append(_covered_end(bwd))
+    lo, hi = min(ends), max(ends)
+
+    outside = jnp.maximum(lo - retarded, retarded - hi)
+    i = int(jnp.argmax(outside))
+    # ~0.1 ms, matching the time tolerance used elsewhere for "did we reach this time".
+    if float(outside[i]) > 1e-9:
+        raise RuntimeError(
+            f"The light-travel-corrected (retarded) time of observation {i} falls "
+            f"{float(outside[i]):.4f} days outside the integrated span. That "
+            f"observation is at relative_time {float(obs_times[i]):.4f} with a light "
+            f"travel time of {float(ltts[i]):.4f} days; the dense output covers "
+            f"[{lo:.4f}, {hi:.4f}]. Evaluating there would extrapolate the IAS15 "
+            "step polynomial, which is inaccurate. The backward span is padded by "
+            "twice the light travel time measured at the state epoch, so this means "
+            "the object is much farther from the observer at this observation than it "
+            "is at the epoch: re-create the Particle/System with a state epoch closer "
+            "to the observations."
+        )
+
+
+def _ltt_position(
+    fwd: DenseOutput,
+    bwd: DenseOutput | None,
+    t0: jnp.ndarray,
+    t_obs: jnp.ndarray,
+    particle_index: jnp.ndarray,
+    dt: jnp.ndarray,
+) -> jnp.ndarray:
+    """Position at ``t_obs + dt``, taken from whichever pass covers that time."""
+    t = t_obs + dt
+    x_fwd = dense_position(fwd, t, particle_index)
+    if bwd is None:
+        return x_fwd
+    return jnp.where(t >= t0, x_fwd, dense_position(bwd, t, particle_index))
+
+
 def make_ltt_propagator(
-    b_step: jnp.ndarray,
-    a0_step: jnp.ndarray,
-    x0_step: jnp.ndarray,
-    v0_step: jnp.ndarray,
-    dt_step: jnp.ndarray,
-    h_obs: jnp.ndarray,
+    fwd: DenseOutput,
+    bwd: DenseOutput | None,
+    t0: jnp.ndarray,
+    t_obs: jnp.ndarray,
+    particle_index: jnp.ndarray = 0,
 ) -> jax.tree_util.Partial:
     """Build a closure that evaluates the IAS15 polynomial at a light-travel-delayed time.
 
     Used inside ``on_sky`` to propagate a particle backward by the light travel time
-    using the converged 7th-order Hermite polynomial for the step containing the
-    observation time, instead of a constant-acceleration Taylor expansion.
+    using the converged 7th-order polynomial, instead of a constant-acceleration Taylor
+    expansion.
 
-    The returned closure maps a (negative) time offset ``dt`` to the particle's
-    position at fractional position ``h_obs + dt / dt_step`` within the step. It
-    accepts ``h`` slightly outside ``[0, 1]`` (i.e. it will extrapolate within the
-    same step's polynomial). The excursion is only safe when it is at most ~1 step
-    length: beyond that, converged-tolerance noise in the high-order b coefficients
-    is amplified by ~``h^7`` (arcsec-level, jagged errors for a distant object
-    observed over a short arc). Callers must therefore seed the integration so the
-    step containing each observation is at least as long as its light travel time —
-    see :func:`ltt_seed_floor`. For close flybys where accuracy forces steps below
-    that floor, the LTT is small too, and this still gives a much higher-order
-    correction than the constant-acceleration Taylor.
+    The returned closure maps a (negative) time offset ``dt`` to the particle's position
+    at ``t_obs + dt``. It looks up the step that *contains* that time and evaluates that
+    step's polynomial at ``h`` in ``[0, 1]``, rather than extrapolating the step
+    containing ``t_obs``: light travel times routinely exceed a single adaptive step
+    (the integrator shortens steps near perihelion and through close encounters), and
+    extrapolating amplifies converged-tolerance noise in the high-order b coefficients
+    by ``~h**7``.
+
+    The retarded time of an observation near the integration epoch precedes the forward
+    pass, so both passes are needed; callers pad the backward pass by
+    :func:`ltt_seed_floor` to guarantee it reaches far enough. ``bwd=None`` is allowed
+    for a forward-only schedule that cannot be padded (the static-likelihood path),
+    which keeps relying on the first step being at least as long as the light travel
+    time.
+
+    The buffers are bound as ``Partial`` arguments rather than captured in the Python
+    closure so that they cross ``jit`` boundaries as pytree leaves, not constants.
 
     Args:
-        b_step (jnp.ndarray): Converged b coefficients for this step (single
-            particle slice), shape (7, 3).
-        a0_step (jnp.ndarray): Acceleration at the start of this step, shape (3,).
-        x0_step (jnp.ndarray): Position at the start of this step, shape (3,).
-        v0_step (jnp.ndarray): Velocity at the start of this step, shape (3,).
-        dt_step (jnp.ndarray): Length of this step (scalar).
-        h_obs (jnp.ndarray): Fractional position of the observation time within
-            this step, in ``[0, 1]`` (scalar).
+        fwd (DenseOutput): Dense output of the forward pass.
+        bwd (DenseOutput | None): Dense output of the backward pass, if there is one.
+        t0 (jnp.ndarray): Integration epoch, the boundary between the two passes.
+        t_obs (jnp.ndarray): Observation time (scalar), in the same offset frame.
+        particle_index (jnp.ndarray): Which particle to propagate. Defaults to 0.
 
     Returns:
         jax.tree_util.Partial:
             A pytree-friendly callable ``f(dt) -> x_at_delayed_time`` of shape (3,).
     """
-    # _estimate_x_v_from_b assumes a per-particle axis (IAS15_BX_DENOMS broadcasts
-    # against shape (7, n_particles, 3)). Add a singleton particle axis here and
-    # strip it in the output so callers can work with plain (3,) / (7, 3) shapes.
-    bp = b_step[::-1][:, None, :]
-    a0 = a0_step[None, :]
-    v0 = v0_step[None, :]
-    x0 = x0_step[None, :]
-
-    def f(dt: jnp.ndarray) -> jnp.ndarray:
-        h = h_obs + dt / dt_step
-        x_at_delayed_time, _ = _estimate_x_v_from_b(a0, v0, x0, h, dt_step, bp)
-        return x_at_delayed_time[0]
-
-    return jax.tree_util.Partial(f)
+    return jax.tree_util.Partial(_ltt_position, fwd, bwd, t0, t_obs, particle_index)
 
 
 @jax.jit

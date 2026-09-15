@@ -25,6 +25,7 @@ from jorbit.accelerations.static_helpers import (
 from jorbit.astrometry.sky_projection import on_sky, tangent_plane_projection
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.integrators import (
+    DenseOutput,
     ias15_static_evolve,
     initialize_ias15_integrator_state,
     ltt_seed_floor,
@@ -157,7 +158,7 @@ def precompute_likelihood_data(
     # Compute the start time of each step and precompute interpolation indices.
     # In the rebased frame t0 == 0.0, so the cumulative sum is the offset itself.
     t_step_starts = t0 + jnp.concatenate([jnp.array([0.0]), jnp.cumsum(dts[:-1])])
-    step_indices, h_values = precompute_interpolation_indices(
+    step_indices, _h_values = precompute_interpolation_indices(
         t_step_starts, dts, obs_times
     )
     # Catch residual extrapolation (e.g. the scheduler shrank steps below the seed
@@ -193,8 +194,7 @@ def precompute_likelihood_data(
     return (
         cheby_info,
         dts,
-        step_indices,
-        h_values,
+        t_step_starts,
         perturber_pos,
         perturber_vel,
         gms,
@@ -224,8 +224,7 @@ def _static_residuals(
     (
         cheby_info,
         dts,
-        step_indices,
-        h_values,
+        t_step_starts,
         perturber_pos,
         perturber_vel,
         log_gms,
@@ -267,36 +266,27 @@ def _static_residuals(
         )
     )
 
-    # Gather per-obs dense-output slices for the single tracer (index 0).
-    # Shapes: b_per_obs (n_obs, 7, 3); a0/x0/v0_per_obs (n_obs, 3);
-    # dt_per_obs (n_obs,).
-    b_per_obs = b_all[step_indices][:, :, 0, :]
-    a0_per_obs = a0_all[step_indices][:, 0, :]
-    x0_per_obs = x0_all[step_indices][:, 0, :]
-    v0_per_obs = v0_all[step_indices][:, 0, :]
-    dt_per_obs = dts[step_indices]
+    # The step schedule here is frozen and forward-only, so there is no backward pass
+    # to cover the retarded time of an observation near the epoch (``bwd=None``). Those
+    # still extrapolate the first step's polynomial backwards, which is why this path
+    # keeps seeding dts[0] at twice the light travel time; see the warning in
+    # precompute_likelihood_data.
+    dense = DenseOutput(b_all, a0_all, x0_all, v0_all, dts, t_step_starts)
+    t0 = state.relative_time
 
     def per_obs_on_sky(
-        b_step: jnp.ndarray,
-        a0_step: jnp.ndarray,
-        x0_step: jnp.ndarray,
-        v0_step: jnp.ndarray,
-        dt_step: jnp.ndarray,
-        h_obs: jnp.ndarray,
         time: jnp.ndarray,
         observer_pos: jnp.ndarray,
         cheby_info_obs: dict[str, jnp.ndarray],
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        # Build a closure that evaluates the IAS15 polynomial at light-travel-
-        # delayed times within this step. on_sky uses it instead of the
-        # constant-acceleration Taylor expansion.
-        propagator = make_ltt_propagator(
-            b_step, a0_step, x0_step, v0_step, dt_step, h_obs
-        )
-        # x_obs (=position at h_obs) is what on_sky uses to seed the LTT
-        # loop and to compute the geometric distance to the observer.
-        # When ltt_position_fn is provided, on_sky doesn't use the
-        # velocity argument, so we pass zeros to keep the signature.
+        # Build a closure that evaluates the IAS15 polynomial at light-travel-delayed
+        # times, looking up whichever step contains each one. on_sky uses it instead of
+        # the constant-acceleration Taylor expansion.
+        propagator = make_ltt_propagator(dense, None, t0, time)
+        # x_obs (=position at the observation time) is what on_sky uses to seed the LTT
+        # loop and to compute the geometric distance to the observer. When
+        # ltt_position_fn is provided, on_sky doesn't use the velocity argument, so we
+        # pass zeros to keep the signature.
         x_obs = propagator(jnp.array(0.0))
         return on_sky(
             x_obs,
@@ -308,15 +298,7 @@ def _static_residuals(
             ltt_position_fn=propagator,
         )
 
-    model_ras, model_decs = jax.vmap(
-        per_obs_on_sky, in_axes=(0, 0, 0, 0, 0, 0, 0, 0, 0)
-    )(
-        b_per_obs,
-        a0_per_obs,
-        x0_per_obs,
-        v0_per_obs,
-        dt_per_obs,
-        h_values,
+    model_ras, model_decs = jax.vmap(per_obs_on_sky)(
         obs_times,
         observer_positions,
         cheby_info,
