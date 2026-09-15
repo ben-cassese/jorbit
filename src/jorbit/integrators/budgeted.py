@@ -332,7 +332,7 @@ def stitched_dense_buffers(
 
     bwd_times = jnp.minimum(times, t0)
     if backward_pad > 0.0:
-        bwd_times = jnp.minimum(bwd_times, t0 - backward_pad)
+        bwd_times = jnp.minimum(bwd_times, jnp.min(bwd_times) - backward_pad)
 
     fwd, fwd_steps = _direction_buffers(
         initial_system_state,

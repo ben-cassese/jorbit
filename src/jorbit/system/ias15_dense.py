@@ -195,7 +195,7 @@ def _ephem_ias15_bounded(
     # explores large topocentric distances. (This fully-jitted hot loop gets no
     # host-side coverage check; the pad is the protection.)
     pad = ltt_seed_floor(states[:, :3], observer_positions)
-    times_bwd = jnp.minimum(times_bwd, -pad)
+    times_bwd = jnp.minimum(times_bwd, jnp.min(times_bwd) - pad)
 
     def gather(times_dir: jnp.ndarray) -> tuple[DenseOutput, jnp.ndarray]:
         out = ias15_evolve_with_dense_output(
