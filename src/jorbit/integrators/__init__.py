@@ -1,9 +1,12 @@
 """All functions related to integrating a SystemState."""
 
 __all__ = [
+    "DenseOutput",
     "apply_ltt_seed_floor",
+    "assert_ltt_span_covered",
     "budgeted_forced_landing",
     "create_leapfrog_times",
+    "dense_position",
     "ias15_evolve",
     "ias15_evolve_forced_landing",
     "ias15_evolve_with_dense_output",
@@ -20,6 +23,7 @@ __all__ = [
     "next_proposed_dt_PRS23",
     "next_proposed_dt_global",
     "precompute_interpolation_indices",
+    "stitched_dense_buffers",
     "stitched_interpolate",
     "stitched_per_query_gather",
     "warn_if_ltt_extrapolating",
@@ -28,11 +32,15 @@ __all__ = [
 from jorbit.integrators.budgeted import (
     budgeted_forced_landing,
     ias15_span_probe,
+    stitched_dense_buffers,
     stitched_interpolate,
     stitched_per_query_gather,
 )
 from jorbit.integrators.ias15 import (
+    DenseOutput,
     apply_ltt_seed_floor,
+    assert_ltt_span_covered,
+    dense_position,
     ias15_evolve,
     ias15_evolve_forced_landing,
     ias15_evolve_with_dense_output,

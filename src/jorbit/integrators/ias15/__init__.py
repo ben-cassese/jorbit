@@ -40,7 +40,10 @@ from jorbit.integrators.ias15.helpers import (
     initialize_ias15_integrator_state,
 )
 from jorbit.integrators.ias15.interpolation import (
+    DenseOutput,
     apply_ltt_seed_floor,
+    assert_ltt_span_covered,
+    dense_position,
     interpolate_from_dense_output,
     ltt_seed_floor,
     make_ltt_propagator,
@@ -60,6 +63,7 @@ from jorbit.integrators.ias15.step_control import (
 
 __all__ = [
     "IAS15_MAX_DYNAMIC_STEPS",
+    "DenseOutput",
     "_estimate_x_v_from_b",
     "_ias15_evolve_core",
     "_predict_next_step",
@@ -67,6 +71,8 @@ __all__ = [
     "_update_bs",
     "add_cs",
     "apply_ltt_seed_floor",
+    "assert_ltt_span_covered",
+    "dense_position",
     "ias15_evolve",
     "ias15_evolve_forced_landing",
     "ias15_evolve_with_dense_output",

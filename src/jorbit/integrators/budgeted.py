@@ -40,10 +40,12 @@ from jorbit.ephemeris.ephemeris_processors import (
     EphemerisProcessor,
 )
 from jorbit.integrators.ias15 import (
+    DenseOutput,
     ias15_evolve,
     ias15_evolve_forced_landing,
     ias15_evolve_with_dense_output,
     interpolate_from_dense_output,
+    precompute_interpolation_indices,
 )
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
@@ -61,6 +63,10 @@ _DTS_SENTINEL = 1e29
 
 # J2000 epoch in JD (TDB); EphemerisProcessor.init values are seconds past this.
 _J2000_JD = 2451545.0
+
+# Concatenated dense buffers are padded up to a multiple of this, so that the jitted
+# consumers see a handful of distinct shapes rather than one per distinct step count.
+_BUFFER_QUANTUM = 1024
 
 
 def _loaded_ephemeris_bounds_jd(
@@ -229,6 +235,119 @@ def _iterate_evolve_chunks(
         chunk_start = t_reached
 
 
+def _direction_buffers(
+    initial_system_state: SystemState,
+    acceleration_func: Callable,
+    chunk_times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
+    max_steps: int | None,
+) -> tuple[DenseOutput, int]:
+    """Concatenate the accepted steps of every stitched chunk of one directional pass.
+
+    Stitching continues the adaptive sequence bit-identically, so pasting each chunk's
+    filled prefix end to end yields exactly the step sequence a single run with a bigger
+    buffer would have produced: ``t_step_starts`` stays monotone and
+    :func:`precompute_interpolation_indices` can search it directly.
+    """
+    parts: list[list[jnp.ndarray]] = [[] for _ in range(6)]
+    total_steps = 0
+
+    for out, _chunk_start, _t_reached, _direction in _iterate_evolve_chunks(
+        initial_system_state,
+        acceleration_func,
+        chunk_times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    ):
+        iter_num = out[4]
+        total_steps += int(iter_num)
+        dts_buf = out[9]
+        # Accepted steps only. A zero-span pass accepts none; keep slot 0, which the
+        # backend seeds with the initial state and a sentinel dt, so a query there
+        # collapses to the Taylor expansion about the epoch.
+        n = max(int(jnp.sum(jnp.abs(dts_buf) < _DTS_SENTINEL)), 1)
+        for part, buf in zip(parts, out[5:11], strict=True):
+            part.append(buf[:n])
+
+    b, a0, x0, v0, dts, t_step_starts = (jnp.concatenate(part) for part in parts)
+
+    n_pad = -b.shape[0] % _BUFFER_QUANTUM
+    if n_pad:
+        pad_state = jnp.zeros((n_pad, *a0.shape[1:]))
+        b = jnp.concatenate((b, jnp.zeros((n_pad, *b.shape[1:]))))
+        a0 = jnp.concatenate((a0, pad_state))
+        x0 = jnp.concatenate((x0, pad_state))
+        v0 = jnp.concatenate((v0, pad_state))
+        dts = jnp.concatenate((dts, jnp.full((n_pad,), 1e30)))
+        t_step_starts = jnp.concatenate((t_step_starts, jnp.zeros((n_pad,))))
+
+    return DenseOutput(b, a0, x0, v0, dts, t_step_starts), total_steps
+
+
+def stitched_dense_buffers(
+    initial_system_state: SystemState,
+    acceleration_func: Callable,
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
+    max_steps: int | None = None,
+    backward_pad: float = 0.0,
+) -> tuple[DenseOutput, DenseOutput, int]:
+    """Dense output covering ``times``, as one buffer per integration direction (no cap).
+
+    Stitches as many chunks as the span requires and hands back the concatenated
+    per-step polynomial data, rather than per-query slices of it. Consumers that need to
+    evaluate the trajectory at times they cannot know in advance -- the light-travel-time
+    correction, whose retarded times depend on the state -- need the whole buffer.
+
+    Both directions are always integrated, even when every requested time is on one side
+    of the epoch: a query at the epoch itself has a retarded time *before* it, which only
+    the backward pass can cover. ``backward_pad`` (days; use :func:`jorbit.integrators.ltt_seed_floor`)
+    extends the backward pass past the earliest requested time so those retarded times
+    land inside a real step. An unused direction costs one zero-span kernel call.
+
+    Args:
+        initial_system_state (SystemState): State at the integration epoch.
+        acceleration_func (Callable): The system's acceleration function.
+        times (jnp.ndarray): Times the buffers must cover, shape (n_times,).
+        initial_integrator_state (IAS15IntegratorState): Starting integrator state.
+        step_scheduler (Callable): The adaptive step-size controller.
+        max_steps (int | None): Per-chunk dense-output buffer depth (None uses
+            ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more chunks.
+        backward_pad (float): Days by which to extend the backward pass past the
+            earliest requested time (and past the epoch when nothing precedes it).
+
+    Returns:
+        tuple[DenseOutput, DenseOutput, int]:
+            The forward buffers, the backward buffers, and the summed iteration count.
+    """
+    t0 = float(initial_system_state.relative_time)
+
+    bwd_times = jnp.minimum(times, t0)
+    if backward_pad > 0.0:
+        bwd_times = jnp.minimum(bwd_times, t0 - backward_pad)
+
+    fwd, fwd_steps = _direction_buffers(
+        initial_system_state,
+        acceleration_func,
+        jnp.maximum(times, t0),
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+    bwd, bwd_steps = _direction_buffers(
+        initial_system_state,
+        acceleration_func,
+        bwd_times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+    return fwd, bwd, fwd_steps + bwd_steps
+
+
 def stitched_per_query_gather(
     initial_system_state: SystemState,
     acceleration_func: Callable,
@@ -241,17 +360,14 @@ def stitched_per_query_gather(
 
     For each requested time this returns the converged 7th-order ``b`` coefficients plus
     the start-of-step ``a0``/``x0``/``v0``, the step length ``dt``, and the fractional
-    position ``h`` of the query within its step, drawn from whichever stitched chunk
-    actually covers that time. The result is exactly what a single
-    :func:`ias15_evolve_with_dense_output` call would return for those times if its
-    buffer were large enough, but with no silent truncation.
+    position ``h`` of the query within its step, drawn from whichever direction's
+    stitched buffer (see :func:`stitched_dense_buffers`) covers that time. The result is
+    exactly what a single :func:`ias15_evolve_with_dense_output` call would return for
+    those times if its buffer were large enough, but with no silent truncation.
 
-    Feed the gather to :func:`interpolate_from_dense_output` for positions/velocities, or
-    to :func:`jorbit.integrators.make_ltt_propagator` for dense-output ephemerides.
-
-    ``max_steps`` sets the per-chunk dense-output buffer depth (None uses
-    ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more stitched chunks,
-    never truncation.
+    Feed the gather to :func:`interpolate_from_dense_output` for positions/velocities.
+    The light-travel-time paths need :func:`stitched_dense_buffers` directly, since a
+    single step per query cannot cover the retarded times.
 
     Returns:
         ``(b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps)``. With ``n = len(times)`` and
@@ -259,75 +375,34 @@ def stitched_per_query_gather(
         ``(n, P, 3)``; ``dt_q``/``h_q`` are ``(n,)``; ``total_steps`` is the summed
         iteration count across all chunks.
     """
-    n_times = times.shape[0]
-    t0 = float(initial_system_state.relative_time)
-    b_q = a0_q = x0_q = v0_q = dt_q = h_q = None
-    covered = jnp.zeros(n_times, dtype=bool)
-    total_steps = 0
+    fwd, bwd, total_steps = stitched_dense_buffers(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
 
-    for forward_pass in [True, False]:
-        pass_mask = times >= t0 if forward_pass else times < t0
-        if not jnp.any(pass_mask):
-            continue
+    def gathered(dense: DenseOutput) -> tuple:
+        idx, h = precompute_interpolation_indices(dense.t_step_starts, dense.dts, times)
+        return (
+            dense.b[idx],
+            dense.a0[idx],
+            dense.x0[idx],
+            dense.v0[idx],
+            dense.dts[idx],
+            # Safety rail against floating-point drift at a step boundary, matching
+            # _ias15_evolve_core's own clip of the h values it returns.
+            jnp.clip(h, 0.0, 1.0),
+        )
 
-        chunk_times = jnp.where(pass_mask, times, t0)
-
-        for out, _chunk_start, t_reached, direction in _iterate_evolve_chunks(
-            initial_system_state,
-            acceleration_func,
-            chunk_times,
-            initial_integrator_state,
-            step_scheduler,
-            max_steps,
-        ):
-            (
-                _positions,
-                _velocities,
-                _final_system_state,
-                _final_integrator_state,
-                iter_num,
-                b_buf,
-                a0_buf,
-                x0_buf,
-                v0_buf,
-                dts_buf,
-                _t_step_starts,
-                step_indices,
-                h_values,
-            ) = out
-            total_steps += int(iter_num)
-
-            if b_q is None:
-                # Allocate accumulators now that we know the per-step shapes.
-                b_q = jnp.zeros((n_times, *b_buf.shape[1:]))
-                a0_q = jnp.zeros((n_times, *a0_buf.shape[1:]))
-                x0_q = jnp.zeros((n_times, *x0_buf.shape[1:]))
-                v0_q = jnp.zeros((n_times, *v0_buf.shape[1:]))
-                dt_q = jnp.zeros((n_times,))
-                h_q = jnp.zeros((n_times,))
-
-            # Times this chunk newly covers: not yet covered and at/before t_reached in the
-            # integration direction. Already-covered times keep their earlier gather; times
-            # past t_reached are left for a later chunk.
-            reached = direction * (t_reached - times) >= -_TIME_TOL
-            newly = (~covered) & reached & pass_mask
-
-            b_chunk = b_buf[step_indices]
-            a0_chunk = a0_buf[step_indices]
-            x0_chunk = x0_buf[step_indices]
-            v0_chunk = v0_buf[step_indices]
-            dt_chunk = dts_buf[step_indices]
-
-            b_q = jnp.where(newly[:, None, None, None], b_chunk, b_q)
-            a0_q = jnp.where(newly[:, None, None], a0_chunk, a0_q)
-            x0_q = jnp.where(newly[:, None, None], x0_chunk, x0_q)
-            v0_q = jnp.where(newly[:, None, None], v0_chunk, v0_q)
-            dt_q = jnp.where(newly, dt_chunk, dt_q)
-            h_q = jnp.where(newly, h_values, h_q)
-
-            covered = covered | newly
-
-    return b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps
+    is_fwd = times >= float(initial_system_state.relative_time)
+    picked = []
+    for f_i, b_i in zip(gathered(fwd), gathered(bwd), strict=True):
+        mask = is_fwd.reshape((-1,) + (1,) * (f_i.ndim - 1))
+        picked.append(jnp.where(mask, f_i, b_i))
+    return (*picked, total_steps)
 
 
 def stitched_interpolate(
