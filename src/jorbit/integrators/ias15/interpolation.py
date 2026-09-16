@@ -16,6 +16,13 @@ import jax.numpy as jnp
 from jorbit.data.constants import INV_SPEED_OF_LIGHT
 from jorbit.integrators.ias15.helpers import _estimate_x_v_from_b
 
+# Tolerance (days) for "did the integrator reach this time" comparisons: ~0.1 ms, far below
+# any meaningful step size, so it only absorbs floating-point round-trips between two
+# independently-summed time values. Shared by every reach/coverage check in the package
+# (jorbit.integrators.budgeted and the dense light-travel-time paths import it from here)
+# so that they cannot drift apart.
+_TIME_TOL = 1e-9
+
 
 class DenseOutput(NamedTuple):
     """The per-step dense output of one IAS15 pass, plus the step start times.
@@ -249,6 +256,223 @@ def _covered_end(dense: DenseOutput) -> float:
     )
 
 
+def ltt_backward_times(
+    times: jnp.ndarray,
+    t0: float | jnp.ndarray,
+    pad: float | jnp.ndarray,
+) -> jnp.ndarray:
+    """Clamp ``times`` to the backward pass, extended past the earliest one by ``pad``.
+
+    The single definition of the backward-pass target used by every dense
+    light-travel-time path. Clamping to ``t0`` drops the times the forward pass owns; the
+    ``pad`` extension is what makes the retarded time ``t_obs - LTT`` of even the earliest
+    observation land inside a real integrated step rather than an extrapolation of one.
+
+    Anchoring the extension at ``min(times)`` rather than at ``t0`` is the 1.6.5 fix: an
+    epoch-anchored pad only reaches past the earliest requested time when that time happens
+    to fall inside ``[t0 - pad, t0]``.
+
+    Args:
+        times (jnp.ndarray): Requested times, shape (n_times,).
+        t0 (float | jnp.ndarray): Integration epoch, in the same offset frame.
+        pad (float | jnp.ndarray): Days by which to extend past the earliest time. Zero
+            leaves the clamped times unchanged.
+
+    Returns:
+        jnp.ndarray:
+            Backward-pass times, shape (n_times,).
+    """
+    bwd = jnp.minimum(times, t0)
+    return jnp.minimum(bwd, jnp.min(bwd) - pad)
+
+
+# Relative inflation applied to the measured light travel time in ltt_span_excursion. The
+# measurement is a single evaluation at the observation time, while on_sky converges the
+# light travel time with three fixed-point iterations; for an approaching object the
+# converged value is the larger of the two, by up to v_r / c ~ 1.7e-4 (v_r <~ 0.03 AU/day
+# against c = 173.14 AU/day). This is ~6x that worst case. Without it the check reports
+# "covered" while on_sky evaluates up to ~0.1 step lengths outside the span in the
+# near-perihelion regime, where the controller takes steps far shorter than the light
+# travel time.
+_LTT_ITERATION_MARGIN = 1e-3
+
+
+def _retarded_times(
+    x_obs: jnp.ndarray,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Retarded times and light travel times for each observation, worst case over particles."""
+    dists = jnp.linalg.norm(
+        x_obs - observer_positions[None, :, :], axis=-1
+    )  # (P, n_obs)
+    ltts = jnp.max(dists, axis=0) * INV_SPEED_OF_LIGHT * (1.0 + _LTT_ITERATION_MARGIN)
+    return obs_times - ltts, ltts
+
+
+def ltt_span_excursion(
+    x_obs: jnp.ndarray,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    lo: jnp.ndarray,
+    hi: jnp.ndarray,
+) -> jnp.ndarray:
+    """Days by which each observation's retarded time falls outside ``[lo, hi]``.
+
+    The single definition of "is this observation's light-travel-corrected time inside the
+    integrated span". Pure ``jnp``, so the host-side checks
+    (:func:`assert_ltt_span_covered`, :func:`ltt_span_shortfall`) and the traced check
+    (:func:`ltt_coverage_mask`) are wrappers over one formula rather than two
+    implementations that have to be kept in agreement by hand.
+
+    Positive means outside, i.e. a coverage failure; zero or negative means covered. The
+    light travel time is taken as the worst case over the particle axis, since the dense
+    buffers and their step schedule are shared across the batch.
+
+    Args:
+        x_obs (jnp.ndarray): Particle positions at the observation times, shape
+            (P, n_obs, 3).
+        obs_times (jnp.ndarray): Observation times, shape (n_obs,).
+        observer_positions (jnp.ndarray): Observer positions, shape (n_obs, 3).
+        lo (jnp.ndarray): Earliest time the dense buffers cover (scalar).
+        hi (jnp.ndarray): Latest time the dense buffers cover (scalar).
+
+    Returns:
+        jnp.ndarray:
+            Excursion in days, shape (n_obs,).
+    """
+    retarded, _ltts = _retarded_times(x_obs, obs_times, observer_positions)
+    return jnp.maximum(lo - retarded, retarded - hi)
+
+
+def _ltt_span_check(
+    fwd: DenseOutput,
+    bwd: DenseOutput | None,
+    t0: float,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, float]:
+    """Host-side evaluation of :func:`ltt_span_excursion` against a pair of dense buffers.
+
+    Returns ``(excursion, ltts, retarded, lo, hi)``.
+    """
+    n_particles = fwd.x0.shape[1]
+
+    def positions_at(t: jnp.ndarray) -> jnp.ndarray:
+        return jax.vmap(lambda p: _ltt_position(fwd, bwd, t0, t, p, 0.0))(
+            jnp.arange(n_particles)
+        )
+
+    x_obs = jnp.swapaxes(jax.vmap(positions_at)(obs_times), 0, 1)  # (P, n_obs, 3)
+
+    ends = [float(t0), _covered_end(fwd)]
+    if bwd is not None:
+        ends.append(_covered_end(bwd))
+    lo, hi = min(ends), max(ends)
+
+    retarded, ltts = _retarded_times(x_obs, obs_times, observer_positions)
+    excursion = ltt_span_excursion(x_obs, obs_times, observer_positions, lo, hi)
+    return excursion, ltts, retarded, lo, hi
+
+
+def ltt_span_shortfall(
+    fwd: DenseOutput,
+    bwd: DenseOutput | None,
+    t0: float,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+) -> tuple[float, float]:
+    """Measure how far the dense buffers fall short of covering every retarded time.
+
+    Host-side (concrete arrays only, not jittable). The non-raising form of
+    :func:`assert_ltt_span_covered`, used by :func:`jorbit.integrators.stitched_dense_buffers`
+    to decide whether the backward pass needs extending and how far.
+
+    ``retarded_min`` is what an extension must actually reach, and is deliberately an
+    *absolute* time rather than a shortfall relative to the nominal pad: a backward pass
+    stops at the end of the first natural step past its target, so its achieved coverage is
+    the pad plus that overshoot, and an extension sized from the pad alone can land inside
+    the existing buffer and do nothing at all.
+
+    Args:
+        fwd (DenseOutput): Dense output of the forward pass.
+        bwd (DenseOutput | None): Dense output of the backward pass, if there is one.
+        t0 (float): Integration epoch, in the offset frame of ``obs_times``.
+        obs_times (jnp.ndarray): Observation times, shape (n_obs,).
+        observer_positions (jnp.ndarray): Observer positions, shape (n_obs, 3).
+
+    Returns:
+        tuple[float, float]:
+            ``(retarded_min, shortfall)``. ``retarded_min`` is the earliest retarded time
+            any observation needs; ``shortfall`` is the largest excursion outside the
+            covered span in days, or ``0.0`` when every observation is covered.
+    """
+    excursion, _ltts, retarded, _lo, _hi = _ltt_span_check(
+        fwd, bwd, t0, obs_times, observer_positions
+    )
+    worst = float(jnp.max(excursion))
+    return float(jnp.min(retarded)), worst if worst > _TIME_TOL else 0.0
+
+
+def ltt_coverage_mask(
+    x_obs: jnp.ndarray,
+    obs_times: jnp.ndarray,
+    observer_positions: jnp.ndarray,
+    reached_bwd: jnp.ndarray,
+    reached_fwd: jnp.ndarray,
+    t0: float | jnp.ndarray = 0.0,
+    reached_mask: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    """Traced counterpart of :func:`assert_ltt_span_covered`: a per-observation bool.
+
+    The jitted dense paths cannot raise on a data-dependent condition and cannot extend
+    their buffers (their shapes are fixed at trace time), so they report the same condition
+    instead. Identical in definition to the host-side check -- both are wrappers over
+    :func:`ltt_span_excursion`, and the span bounds are formed the same way, from the epoch
+    and the two passes' reached times -- so the two agree by construction rather than by
+    testing.
+
+    ``reached_mask`` matters for correctness, not just tidiness: where the integration never
+    reached an observation, ``x_obs`` there is an extrapolation of the last captured step and
+    the light travel time built from it is meaningless. Passing the reach mask marks those
+    observations covered, so that a caller can still tell buffer truncation (``reached``
+    False) from a genuine coverage failure (``reached`` True, this mask False) instead of
+    seeing both flags drop together.
+
+    Args:
+        x_obs (jnp.ndarray): Particle positions at the observation times, shape
+            (P, n_obs, 3).
+        obs_times (jnp.ndarray): Observation times, shape (n_obs,), in the same frame as
+            ``t0`` and the reached times.
+        observer_positions (jnp.ndarray): Observer positions, shape (n_obs, 3).
+        reached_bwd (jnp.ndarray): Farthest time the backward pass reached (scalar).
+        reached_fwd (jnp.ndarray): Farthest time the forward pass reached (scalar).
+        t0 (float | jnp.ndarray): Integration epoch. Defaults to 0.0, which is the offset
+            frame the batched System forward model works in.
+        reached_mask (jnp.ndarray | None): Per-observation reach mask, shape (n_obs,).
+
+    Returns:
+        jnp.ndarray:
+            (n_obs,) boolean, False where the retarded time falls outside the covered span.
+    """
+    # Mirrors assert_ltt_span_covered's bounds: the epoch always bounds the span from one
+    # side, since either pass may in principle stop short of it.
+    ends = jnp.stack(
+        [
+            jnp.asarray(t0, dtype=float),
+            jnp.asarray(reached_fwd),
+            jnp.asarray(reached_bwd),
+        ]
+    )
+    excursion = ltt_span_excursion(
+        x_obs, obs_times, observer_positions, jnp.min(ends), jnp.max(ends)
+    )
+    covered = excursion <= _TIME_TOL
+    if reached_mask is not None:
+        covered = covered | ~reached_mask
+    return covered
+
+
 def assert_ltt_span_covered(
     fwd: DenseOutput,
     bwd: DenseOutput | None,
@@ -258,12 +482,16 @@ def assert_ltt_span_covered(
 ) -> None:
     """Raise if any observation's retarded time falls outside the dense-output span.
 
-    Host-side check (concrete arrays only, not jittable). The backward pass of each
-    dense path is padded by :func:`ltt_seed_floor`, which is sized from the particle's
-    position at the integration epoch; an object whose topocentric distance grows a lot
-    between the epoch and an observation can still need more. That is a real failure —
+    Host-side check (concrete arrays only, not jittable). The backward pass of each dense
+    path is padded by :func:`ltt_seed_floor`, which is sized from the particle's position at
+    the integration epoch; an object whose topocentric distance grows a lot between the
+    epoch and an observation can still need more. That is a real failure —
     :func:`dense_position` would have to extrapolate — so it is reported rather than
     silently clamped.
+
+    :func:`jorbit.integrators.stitched_dense_buffers` extends its backward pass to cover the
+    measured requirement before calling this, so on those paths this is a backstop against
+    buffer truncation rather than the primary guard.
 
     Args:
         fwd (DenseOutput): Dense output of the forward pass.
@@ -275,30 +503,14 @@ def assert_ltt_span_covered(
     Raises:
         RuntimeError: If a retarded time lies outside the integrated span.
     """
-    n_particles = fwd.x0.shape[1]
-
-    def positions_at(t: jnp.ndarray) -> jnp.ndarray:
-        return jax.vmap(lambda p: _ltt_position(fwd, bwd, t0, t, p, 0.0))(
-            jnp.arange(n_particles)
-        )
-
-    xs = jax.vmap(positions_at)(obs_times)  # (n_obs, P, 3)
-    dists = jnp.linalg.norm(xs - observer_positions[:, None, :], axis=-1)
-    ltts = jnp.max(dists, axis=-1) * INV_SPEED_OF_LIGHT  # (n_obs,)
-    retarded = obs_times - ltts
-
-    ends = [float(t0), _covered_end(fwd)]
-    if bwd is not None:
-        ends.append(_covered_end(bwd))
-    lo, hi = min(ends), max(ends)
-
-    outside = jnp.maximum(lo - retarded, retarded - hi)
-    i = int(jnp.argmax(outside))
-    # ~0.1 ms, matching the time tolerance used elsewhere for "did we reach this time".
-    if float(outside[i]) > 1e-9:
+    excursion, ltts, _retarded, lo, hi = _ltt_span_check(
+        fwd, bwd, t0, obs_times, observer_positions
+    )
+    i = int(jnp.argmax(excursion))
+    if float(excursion[i]) > _TIME_TOL:
         raise RuntimeError(
             f"The light-travel-corrected (retarded) time of observation {i} falls "
-            f"{float(outside[i]):.4f} days outside the integrated span. That "
+            f"{float(excursion[i]):.4f} days outside the integrated span. That "
             f"observation is at relative_time {float(obs_times[i]):.4f} with a light "
             f"travel time of {float(ltts[i]):.4f} days; the dense output covers "
             f"[{lo:.4f}, {hi:.4f}]. Evaluating there would extrapolate the IAS15 "

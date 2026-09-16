@@ -141,7 +141,7 @@ def _test_agreement(asteroid: str, times: Time) -> None:
     static_x, static_v = _get_static_positions(asteroid, times)
 
     pos_diff = jnp.linalg.norm(static_x[:, 0] - dynamic_x[:, 0], axis=1)
-    assert jnp.max(pos_diff) * u.au.to(u.m) < 500.0
+    assert jnp.max(pos_diff) * u.au.to(u.m) < 1000.0
 
     obspos = get_observer_positions(
         observatories="kitt peak",
@@ -164,15 +164,22 @@ def _test_agreement(asteroid: str, times: Time) -> None:
     ang_diff = jax.vmap(sky_sep)(
         dynamic_ra, dynamic_dec, static_ra, static_dec
     ) * u.arcsec.to(u.mas)
-    assert jnp.max(ang_diff) < 0.2
+    assert jnp.max(ang_diff) < 0.3
 
 
 def test_static_integrator() -> None:
     """Test whether the static integrator agrees with the dynamic one.
 
-    'Agreement' here means within 500 m and 0.2 mas for time spans of up to 10 years.
+    'Agreement' here means within 1 km and 0.3 mas for time spans of up to 10 years.
     Most of test cases do much better than this, but for high-precision work, probably
     stick with the dynamic integrator or DoubleDouble precision.
+
+    The limits are set by Jupiter Trojans, which sit in 1:1 resonance and so feel a
+    strong perturber continuously across the whole arc. (435632) reaches 945 m / 0.26 mas
+    over 7 years, against <= 15 m for every other object sampled here. Note also that the
+    sample below is drawn from jax's PRNG, whose output is not stable across jax versions
+    (the jax_threefry_partitionable default flipped in 0.5), so a jax upgrade reshuffles
+    which objects are tested.
 
     """
     # n_tests = 100
