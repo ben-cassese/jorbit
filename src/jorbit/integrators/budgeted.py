@@ -409,24 +409,33 @@ def stitched_dense_buffers(
             new_pad = (
                 float(jnp.min(jnp.minimum(times, t0))) - retarded_min + 10.0 * _TIME_TOL
             )
-            # ponytail: rebuilds the backward pass from the epoch rather than continuing the
-            # existing one from its final state. _iterate_evolve_chunks already continues
-            # the adaptive sequence bit-identically, so a true continuation is possible and
-            # would cost nothing -- it needs _direction_buffers to return its final
-            # state/integrator state and the _BUFFER_QUANTUM padding moved out to here. Not
-            # worth it at the observed ~5e-6 trigger rate; revisit if that rate climbs.
-            bwd, extra_steps = _direction_buffers(
-                initial_system_state,
-                acceleration_func,
-                ltt_backward_times(times, t0, new_pad),
-                initial_integrator_state,
-                step_scheduler,
-                max_steps,
-            )
-            bwd_steps += extra_steps
-            # Backstop on the rebuilt buffers: after the extension this can only fire on a
-            # genuine buffer truncation. Only needed inside this branch -- a zero shortfall
-            # is ltt_span_shortfall reporting that this same predicate already passed, so
+            # Only a backward shortfall is curable here. new_pad <= pad means the pass was
+            # already aimed at least this deep, so the excursion is either on the forward
+            # side or a pass that fell short of its own target -- neither of which a deeper
+            # target fixes. Rebuilding on those would re-run the identical integration
+            # (ltt_backward_times ignores a pad it already covers) and then raise anyway,
+            # so drop straight to the assert, which reports the real cause.
+            if new_pad > pad:
+                # ponytail: rebuilds the backward pass from the epoch rather than continuing
+                # the existing one from its final state. _iterate_evolve_chunks already
+                # continues the adaptive sequence bit-identically, so a true continuation is
+                # possible and would cost nothing -- it needs _direction_buffers to return
+                # its final state/integrator state and the _BUFFER_QUANTUM padding moved out
+                # to here. Not worth it at the observed ~5e-6 trigger rate; revisit if that
+                # rate climbs.
+                bwd, extra_steps = _direction_buffers(
+                    initial_system_state,
+                    acceleration_func,
+                    ltt_backward_times(times, t0, new_pad),
+                    initial_integrator_state,
+                    step_scheduler,
+                    max_steps,
+                )
+                bwd_steps += extra_steps
+            # Backstop. After a successful extension this can only fire on a genuine
+            # buffer truncation; when the extension was skipped above it is what reports
+            # the uncurable cause. Only needed inside this branch -- a zero shortfall is
+            # ltt_span_shortfall reporting that this same predicate already passed, so
             # asserting unconditionally would just re-run the whole check on every call.
             assert_ltt_span_covered(fwd, bwd, t0, obs_times, observer_positions)
 
