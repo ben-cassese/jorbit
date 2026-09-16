@@ -1206,7 +1206,7 @@ class Particle:
                         "(A nominal ephemeris(uncertainty=False) call auto-handles this.)"
                     )
             if use_dense_ltt:
-                ras, decs, cov_radec = _ephem_ias15_with_cov(
+                ras, decs, cov_radec, ltt_covered = _ephem_ias15_with_cov(
                     times,
                     state,
                     self.gravity,
@@ -1216,6 +1216,21 @@ class Particle:
                     cov,
                     self._ias15_max_steps,
                 )
+                # The nominal ephemeris() call extends its backward pass until every
+                # retarded time is covered; this path cannot, since its buffers are built
+                # inside jax.jacfwd. Raise rather than return a silently extrapolated
+                # polynomial, matching the buffer-overflow guard above.
+                if not bool(jnp.all(ltt_covered)):
+                    bad = int(jnp.argmin(ltt_covered))
+                    raise RuntimeError(
+                        f"The light-travel-corrected (retarded) time of observation {bad} "
+                        "falls outside the integrated span, so ephemeris("
+                        "uncertainty=True) would extrapolate the IAS15 step polynomial "
+                        "there. The covariance path uses forward-mode autodiff and cannot "
+                        "extend its backward pass the way a nominal ephemeris("
+                        "uncertainty=False) call does. Re-create the Particle with a state "
+                        "epoch closer to the observations."
+                    )
             else:
                 ras, decs, cov_radec = _ephem_with_cov(
                     times,

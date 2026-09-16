@@ -142,7 +142,8 @@ _LOG_2PI_2 = 2.0 * jnp.log(2.0 * jnp.pi)
 
 
 def _model(inputs: tuple, states: jnp.ndarray, max_steps: int | None = None) -> tuple:
-    # (ras, decs) each (P, n_obs); reached (n_obs,) — shared across the batch.
+    # (ras, decs) each (P, n_obs); reached and ltt_covered (n_obs,) - both shared across
+    # the batch, since the step schedule is.
     (
         acc_func,
         t_ref_jd,
@@ -174,9 +175,12 @@ def _model(inputs: tuple, states: jnp.ndarray, max_steps: int | None = None) -> 
 def _model_leapfrog(
     inputs: tuple, states: jnp.ndarray, max_steps: int | None = None
 ) -> tuple:
-    # (ras, decs) each (P, n_obs); reached (n_obs,) — always True, since a fixed-step
-    # schedule lands on every requested time and so cannot truncate. max_steps is
-    # accepted and ignored to keep the model-function signature uniform.
+    # (ras, decs) each (P, n_obs); both masks (n_obs,) - always True. A fixed-step schedule
+    # lands on every requested time and so cannot truncate, and leapfrog builds no dense
+    # polynomial at all (it calls on_sky without an ltt_position_fn, i.e. with the
+    # constant-acceleration Taylor light-travel-time correction), so there is nothing that
+    # could be extrapolated. max_steps is accepted and ignored to keep the model-function
+    # signature uniform.
     del max_steps
     (
         acc_func,
@@ -216,7 +220,8 @@ def _model_leapfrog(
         inds,
         None,  # leapfrog ignores the step scheduler
     )
-    return ras, decs, jnp.ones(times_off.shape[0], dtype=bool)
+    all_ok = jnp.ones(times_off.shape[0], dtype=bool)
+    return ras, decs, all_ok, all_ok
 
 
 def _raw_residuals(
@@ -237,8 +242,8 @@ def _model_radec(
     states: jnp.ndarray,
     max_steps: int | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    ras, decs, reached = model_fn(inputs, states, max_steps)
-    mask = reached[None, :]
+    ras, decs, reached, ltt_covered = model_fn(inputs, states, max_steps)
+    mask = (reached & ltt_covered)[None, :]
     return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan)
 
 
@@ -248,13 +253,19 @@ def _model_radec_status(
     inputs: tuple,
     states: jnp.ndarray,
     max_steps: int | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    # Diagnostic twin of _model_radec: the same NaN-poisoned (ras, decs), plus the
-    # reach mask _model_radec discards. A separate jitted function rather than a flag
-    # on _model_radec, so callers that never ask for the status never compile for it.
-    ras, decs, reached = model_fn(inputs, states, max_steps)
-    mask = reached[None, :]
-    return jnp.where(mask, ras, jnp.nan), jnp.where(mask, decs, jnp.nan), reached
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    # Diagnostic twin of _model_radec: the same NaN-poisoned (ras, decs), plus the two
+    # masks _model_radec folds together and discards. A separate jitted function rather
+    # than a flag on _model_radec, so callers that never ask for the status never compile
+    # for it.
+    ras, decs, reached, ltt_covered = model_fn(inputs, states, max_steps)
+    mask = (reached & ltt_covered)[None, :]
+    return (
+        jnp.where(mask, ras, jnp.nan),
+        jnp.where(mask, decs, jnp.nan),
+        reached,
+        ltt_covered,
+    )
 
 
 @partial(jax.jit, static_argnames=["max_steps"])
@@ -265,9 +276,10 @@ def _residuals(
     max_steps: int | None = None,
 ) -> jnp.ndarray:
     obs_ra, obs_dec = inputs[7], inputs[8]
-    ras, decs, reached = model_fn(inputs, states, max_steps)
+    ras, decs, reached, ltt_covered = model_fn(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
-    return jnp.where(reached[None, :, None], r, jnp.nan)  # (P, n_obs, 2)
+    ok = reached & ltt_covered
+    return jnp.where(ok[None, :, None], r, jnp.nan)  # (P, n_obs, 2)
 
 
 @partial(jax.jit, static_argnames=["max_steps"])
@@ -278,10 +290,10 @@ def _chi2(
     max_steps: int | None = None,
 ) -> jnp.ndarray:
     obs_ra, obs_dec, inv_cov_matrices = inputs[7], inputs[8], inputs[9]
-    ras, decs, reached = model_fn(inputs, states, max_steps)
+    ras, decs, reached, ltt_covered = model_fn(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
     quad = jnp.einsum("pbi,bij,pbj->p", r, inv_cov_matrices, r)  # (P,)
-    return jnp.where(jnp.all(reached), quad, jnp.inf)
+    return jnp.where(jnp.all(reached & ltt_covered), quad, jnp.inf)
 
 
 @partial(jax.jit, static_argnames=["max_steps"])
@@ -297,11 +309,11 @@ def _loglike(
         inputs[9],
         inputs[10],
     )
-    ras, decs, reached = model_fn(inputs, states, max_steps)
+    ras, decs, reached, ltt_covered = model_fn(inputs, states, max_steps)
     r = _raw_residuals(obs_ra, obs_dec, ras, decs)
     quad = jnp.einsum("pbi,bij,pbj->pb", r, inv_cov_matrices, r)  # (P, n_obs)
     ll = jnp.sum(-0.5 * (_LOG_2PI_2 + cov_log_dets[None, :] + quad), axis=1)  # (P,)
-    return jnp.where(jnp.all(reached), ll, -jnp.inf)
+    return jnp.where(jnp.all(reached & ltt_covered), ll, -jnp.inf)
 
 
 def create_system_forward_model(
@@ -311,10 +323,15 @@ def create_system_forward_model(
 
     Each callable takes a ``(P, 6)`` array of barycentric equatorial Cartesian states
     ``[x, y, z, vx, vy, vz]`` (AU, AU/day) at the reference epoch and returns per-particle
-    outputs. Truncation (the shared-schedule arc exceeding one dense buffer) is handled on
-    device: unreachable observations are poisoned to ``NaN`` in ``model_radec``/``residuals``
-    (the diagnostic), and ``loglike``/``chi2`` collapse to ``-inf``/``+inf`` so a sampler
-    rejects the step rather than crashing or accepting a finite-but-wrong value. Because the
+    outputs. Two failure modes are handled on device, identically. Truncation is the
+    shared-schedule arc exceeding one dense buffer; a light-travel-time shortfall is the
+    retarded time of an observation falling outside the integrated span, so that the dense
+    polynomial would have to be extrapolated with no error bound. Either way the affected
+    observations are poisoned to ``NaN`` in ``model_radec``/``residuals`` (the diagnostic),
+    and ``loglike``/``chi2`` collapse to ``-inf``/``+inf`` so a sampler rejects the step
+    rather than crashing or accepting a finite-but-wrong value. Unlike the stitched
+    ``ephemeris`` path, this one cannot extend its backward pass to cure a shortfall, since
+    its buffer shapes are fixed at trace time. Because the
     step schedule is shared across the batch, truncation is batch-wide: one particle whose
     orbit needs more steps than the buffer holds truncates every particle in the batch, so
     there is no single ``max_steps`` that suits a dynamically heterogeneous batch — group
@@ -330,7 +347,8 @@ def create_system_forward_model(
         inputs (tuple):
             The output of :func:`precompute_system_forward_model_data`.
         model_fn (Callable):
-            The ``(inputs, states, max_steps) -> (ras, decs, reached)`` step. Defaults
+            The ``(inputs, states, max_steps) -> (ras, decs, reached, ltt_covered)`` step.
+            Defaults
             to the bounded-arc IAS15 dense model; pass :func:`_model_leapfrog` (with
             leapfrog ``inputs``) for a fixed-step ``System``, which never truncates and
             so ignores ``max_steps``.
@@ -347,10 +365,13 @@ def create_system_forward_model(
         dict:
             ``model_radec``/``residuals``/``chi2``/``loglike`` jitted callables plus
             ``model_radec_with_status`` and ``n_obs``. ``model_radec_with_status``
-            returns the same ``(ras, decs)`` as ``model_radec`` plus the ``(n_obs,)``
-            boolean reach mask behind the ``NaN`` poisoning, so a caller can tell
-            buffer truncation (``reached`` False) from a genuine dynamical failure
-            such as a ``NaN`` acceleration (``reached`` True but the values ``NaN``).
+            returns the same ``(ras, decs)`` as ``model_radec`` plus the two ``(n_obs,)``
+            boolean masks behind the ``NaN`` poisoning, ``(ras, decs, reached,
+            ltt_covered)``, so a caller can tell the three ways an observation can come
+            back unusable apart: buffer truncation (``reached`` False),
+            light-travel-time extrapolation (``ltt_covered`` False), and a genuine
+            dynamical failure such as a ``NaN`` acceleration (both masks True but the
+            values ``NaN``).
     """
     n_obs = int(inputs[2].shape[0])
 

@@ -91,9 +91,10 @@ class System:
                 same data**. Enables the fast, reusable ``loglike``/``residuals``/
                 ``chi2``/``model_radec`` attributes (see below), plus
                 ``model_radec_with_status``, which returns the same coordinates as
-                ``model_radec`` along with the per-observation boolean mask of whether
-                the integration actually reached that time before its dense-output
-                buffer filled. Supported for the IAS15 and leapfrog integrators; for a
+                ``model_radec`` along with two per-observation boolean masks: whether
+                the integration reached that time before its dense-output buffer filled,
+                and whether the light-travel-corrected time it needed fell inside the
+                integrated span. Supported for the IAS15 and leapfrog integrators; for a
                 Keplerian system those attributes are ``None``. Defaults to None.
             gravity (str | Callable):
                 The gravitational acceleration function to use when integrating the
@@ -156,7 +157,8 @@ class System:
                 ``chi2``/``model_radec`` callables instead fail loudly (``-inf``/
                 ``NaN``) when the arc exceeds one buffer. Use ``probe_span`` to check
                 a span against the buffer before paying for a likelihood, or
-                ``model_radec_with_status`` to identify truncation after the fact.
+                ``model_radec_with_status`` to tell truncation from a light-travel-time
+                extrapolation after the fact.
                 Ignored for leapfrog integrators and Keplerian systems.
                 Defaults to None.
         """

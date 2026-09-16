@@ -155,18 +155,26 @@ def test_model_radec_with_status_identifies_truncation() -> None:
     # A buffer that covers the arc: nothing truncates, and the coordinates are a pure
     # superset of model_radec's rather than a re-derivation.
     ras_ref, decs_ref = system.model_radec(true_state)
-    ras, decs, reached = system.model_radec_with_status(true_state)
+    ras, decs, reached, ltt_covered = system.model_radec_with_status(true_state)
     assert np.all(np.asarray(reached))
+    assert np.all(np.asarray(ltt_covered))
     assert np.array_equal(np.asarray(ras), np.asarray(ras_ref))
     assert np.array_equal(np.asarray(decs), np.asarray(decs_ref))
 
     # A 2-step buffer cannot: the mask is False exactly where the coordinates are NaN,
     # which is what separates truncation from a NaN acceleration downstream.
-    ras_tiny, decs_tiny, reached_tiny = system_tiny.model_radec_with_status(true_state)
+    ras_tiny, decs_tiny, reached_tiny, ltt_tiny = system_tiny.model_radec_with_status(
+        true_state
+    )
     reached_tiny = np.asarray(reached_tiny)
     assert not np.all(reached_tiny)
     assert np.array_equal(np.isnan(np.asarray(ras_tiny)), ~reached_tiny[None, :])
     assert np.array_equal(np.isnan(np.asarray(decs_tiny)), ~reached_tiny[None, :])
+    # The two masks stay independent: an observation the integration never reached has no
+    # meaningful light travel time, so ltt_covered must not also drop there. Otherwise both
+    # bits fall together and the caller loses the ability to tell the causes apart, which
+    # is the whole reason this callable exists.
+    assert np.all(np.asarray(ltt_tiny))
 
 
 def test_probe_span() -> None:

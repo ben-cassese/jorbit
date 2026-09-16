@@ -42,20 +42,22 @@ from jorbit.ephemeris.ephemeris_processors import (
 )
 from jorbit.integrators.ias15 import (
     DenseOutput,
+    apply_ltt_seed_floor,
+    assert_ltt_span_covered,
     ias15_evolve,
     ias15_evolve_with_dense_output,
     interpolate_from_dense_output,
+    ltt_backward_times,
+    ltt_seed_floor,
+    ltt_span_shortfall,
     precompute_interpolation_indices,
 )
 from jorbit.integrators.ias15.evolve import (
     IAS15_MAX_FORCED_LANDING_ITERS,
     _forced_landing_with_times,
 )
+from jorbit.integrators.ias15.interpolation import _TIME_TOL
 from jorbit.utils.states import IAS15IntegratorState, SystemState
-
-# Tolerance (days) for "did the integrator reach this time" comparisons. ~0.1 ms, far
-# below any meaningful step size, so it only absorbs floating-point round-trips.
-_TIME_TOL = 1e-9
 
 # Natural-step budget per forced-landing interval. The backend caps a single interval at
 # IAS15_MAX_FORCED_LANDING_ITERS *iterations* (accepted + rejected); we budget on accepted
@@ -299,19 +301,47 @@ def stitched_dense_buffers(
     step_scheduler: Callable,
     max_steps: int | None = None,
     backward_pad: float = 0.0,
+    obs_times: jnp.ndarray | None = None,
+    observer_positions: jnp.ndarray | None = None,
 ) -> tuple[DenseOutput, DenseOutput, int]:
     """Dense output covering ``times``, as one buffer per integration direction (no cap).
 
-    Stitches as many chunks as the span requires and hands back the concatenated
-    per-step polynomial data, rather than per-query slices of it. Consumers that need to
-    evaluate the trajectory at times they cannot know in advance -- the light-travel-time
-    correction, whose retarded times depend on the state -- need the whole buffer.
+    Stitches as many chunks as the span requires and hands back the concatenated per-step
+    polynomial data, rather than per-query slices of it. Consumers that need to evaluate the
+    trajectory at times they cannot know in advance -- the light-travel-time correction,
+    whose retarded times depend on the state -- need the whole buffer.
 
-    Both directions are always integrated, even when every requested time is on one side
-    of the epoch: a query at the epoch itself has a retarded time *before* it, which only
-    the backward pass can cover. ``backward_pad`` (days; use :func:`jorbit.integrators.ltt_seed_floor`)
-    extends the backward pass past the earliest requested time so those retarded times
-    land inside a real step. An unused direction costs one zero-span kernel call.
+    Both directions are always integrated, even when every requested time is on one side of
+    the epoch: a query at the epoch itself has a retarded time *before* it, which only the
+    backward pass can cover. ``backward_pad`` (days) extends the backward pass past the
+    earliest requested time so those retarded times land inside a real step. An unused
+    direction costs one zero-span kernel call.
+
+    **Light-travel-time coverage.** Passing ``observer_positions`` (and ``obs_times``) opts
+    into the full dense-LTT contract, and is what every ``interpolate=True`` ephemeris path
+    uses. It does three things ``backward_pad`` alone does not:
+
+    1. floors the integrator's first proposed step via :func:`apply_ltt_seed_floor`,
+    2. derives the backward pad from :func:`ltt_seed_floor` (added to any explicit
+       ``backward_pad``), and
+    3. measures the resulting coverage and, if the backward pass still falls short,
+       **extends it until it covers** -- see below -- before asserting.
+
+    Without ``observer_positions`` none of that happens and the behaviour is byte-for-byte
+    what it was: no seed floor (which would change the first proposed step, and so every
+    subsequent one), no derived pad, no coverage check. :func:`stitched_per_query_gather`
+    and hence ``Particle.integrate`` rely on that.
+
+    The extension exists because the pad is a guess and the requirement is not knowable
+    until a pass exists: :func:`ltt_seed_floor` sizes the pad from the particle's distance at
+    the *epoch*, while what has to be covered is the light travel time at each
+    *observation*. The new target is the measured retarded time itself rather than a
+    multiple of the old pad, because a backward pass stops at the end of the first natural
+    step past its target and so already covers the pad *plus* that overshoot; sizing an
+    extension from the pad alone can land inside the existing buffer and accomplish nothing.
+    Since the adaptive steps are natural (the target only ends the loop, it never clamps a
+    step), the extended buffer is a prefix-identical superset of the original and every
+    already-covered observation keeps a bitwise identical position.
 
     Args:
         initial_system_state (SystemState): State at the integration epoch.
@@ -321,18 +351,35 @@ def stitched_dense_buffers(
         step_scheduler (Callable): The adaptive step-size controller.
         max_steps (int | None): Per-chunk dense-output buffer depth (None uses
             ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more chunks.
-        backward_pad (float): Days by which to extend the backward pass past the
-            earliest requested time (and past the epoch when nothing precedes it).
+        backward_pad (float): Days by which to extend the backward pass past the earliest
+            requested time (and past the epoch when nothing precedes it).
+        obs_times (jnp.ndarray | None): The subset of ``times`` that are real observations,
+            shape (n_obs,). Defaults to all of ``times``. Only used with
+            ``observer_positions``.
+        observer_positions (jnp.ndarray | None): Observer position at each observation time,
+            shape (n_obs, 3). Opts into the light-travel-time contract described above.
 
     Returns:
         tuple[DenseOutput, DenseOutput, int]:
-            The forward buffers, the backward buffers, and the summed iteration count.
+            The forward buffers, the backward buffers, and the summed iteration count. The
+            count includes any discarded backward pass, since it is a measure of work done.
     """
     t0 = float(initial_system_state.relative_time)
 
-    bwd_times = jnp.minimum(times, t0)
-    if backward_pad > 0.0:
-        bwd_times = jnp.minimum(bwd_times, jnp.min(bwd_times) - backward_pad)
+    pad = backward_pad
+    if observer_positions is not None:
+        if obs_times is None:
+            obs_times = times
+        positions = jnp.concatenate(
+            (
+                initial_system_state.massive_positions,
+                initial_system_state.tracer_positions,
+            )
+        )
+        initial_integrator_state = apply_ltt_seed_floor(
+            initial_integrator_state, positions, observer_positions
+        )
+        pad = pad + float(ltt_seed_floor(positions, observer_positions))
 
     fwd, fwd_steps = _direction_buffers(
         initial_system_state,
@@ -345,11 +392,41 @@ def stitched_dense_buffers(
     bwd, bwd_steps = _direction_buffers(
         initial_system_state,
         acceleration_func,
-        bwd_times,
+        ltt_backward_times(times, t0, pad),
         initial_integrator_state,
         step_scheduler,
         max_steps,
     )
+
+    if observer_positions is not None:
+        retarded_min, shortfall = ltt_span_shortfall(
+            fwd, bwd, t0, obs_times, observer_positions
+        )
+        if shortfall > 0.0:
+            # Target the measured retarded time absolutely. ltt_span_shortfall already
+            # inflates its light travel time to cover on_sky's converged value, so the only
+            # margin needed here is float slack on the summation.
+            new_pad = (
+                float(jnp.min(jnp.minimum(times, t0))) - retarded_min + 10.0 * _TIME_TOL
+            )
+            # ponytail: rebuilds the backward pass from the epoch rather than continuing the
+            # existing one from its final state. _iterate_evolve_chunks already continues
+            # the adaptive sequence bit-identically, so a true continuation is possible and
+            # would cost nothing -- it needs _direction_buffers to return its final
+            # state/integrator state and the _BUFFER_QUANTUM padding moved out to here. Not
+            # worth it at the observed ~5e-6 trigger rate; revisit if that rate climbs.
+            bwd, extra_steps = _direction_buffers(
+                initial_system_state,
+                acceleration_func,
+                ltt_backward_times(times, t0, new_pad),
+                initial_integrator_state,
+                step_scheduler,
+                max_steps,
+            )
+            bwd_steps += extra_steps
+        # Backstop: after the extension this can only fire on a genuine buffer truncation.
+        assert_ltt_span_covered(fwd, bwd, t0, obs_times, observer_positions)
+
     return fwd, bwd, fwd_steps + bwd_steps
 
 
