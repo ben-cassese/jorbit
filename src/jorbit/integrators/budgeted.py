@@ -424,8 +424,11 @@ def stitched_dense_buffers(
                 max_steps,
             )
             bwd_steps += extra_steps
-        # Backstop: after the extension this can only fire on a genuine buffer truncation.
-        assert_ltt_span_covered(fwd, bwd, t0, obs_times, observer_positions)
+            # Backstop on the rebuilt buffers: after the extension this can only fire on a
+            # genuine buffer truncation. Only needed inside this branch -- a zero shortfall
+            # is ltt_span_shortfall reporting that this same predicate already passed, so
+            # asserting unconditionally would just re-run the whole check on every call.
+            assert_ltt_span_covered(fwd, bwd, t0, obs_times, observer_positions)
 
     return fwd, bwd, fwd_steps + bwd_steps
 
