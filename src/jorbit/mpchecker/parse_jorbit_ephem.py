@@ -390,6 +390,21 @@ def extra_precision_calcs(
     if observer == "geocentric":
         observer = "500@399"
 
+    if np.sum(np.asarray(asteroid_flags)) == 0:
+        # nothing nearby to refine: the integrator chokes on a system with no
+        # particles, so short-circuit with empty results of the right shapes
+        n_times = np.size(times)
+        empty = np.zeros((0, n_times))
+        coords = SkyCoord(ra=empty * u.deg, dec=empty * u.deg)
+        return (
+            coords,
+            jnp.zeros((0, n_times)),
+            Table([[], coords], names=["name", "coord"]),
+            jnp.zeros((0, n_times)),
+            Table([[], jnp.zeros((0, n_times))], names=["name", "mag"]),
+            jnp.full(n_times, jnp.inf),
+        )
+
     all_names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
     names = all_names[asteroid_flags]
     if np.isin(names, PERTURBER_PACKED_DESIGNATIONS).sum() > 0:
@@ -447,8 +462,18 @@ def extra_precision_calcs(
 
     positions, _ = sy.integrate(times=times)
 
-    hs = jnp.array([float(i) for i in list(relevant_mpcorb["H"])])
-    gs = jnp.array([float(i) for i in list(relevant_mpcorb["G"])])
+    # a few hundred objects in MPCORB have blank H/G: these come through as null
+    # (polars) or NaN (astropy), and np.asarray maps both to NaN
+    hs = jnp.array(np.asarray(relevant_mpcorb["H"], dtype=float))
+    gs = jnp.array(np.asarray(relevant_mpcorb["G"], dtype=float))
+    n_missing = int(np.sum(np.isnan(hs) | np.isnan(gs)))
+    if n_missing > 0:
+        warnings.warn(
+            f"{n_missing} of the {len(hs)} nearby objects have no H/G values in "
+            "MPCORB. Their apparent magnitudes will be NaN, and they will not "
+            "contribute to the total magnitude of the field.",
+            stacklevel=2,
+        )
 
     mags = jax.vmap(
         jax.vmap(apparent_mag, in_axes=(None, None, 0, 0)), in_axes=(0, 0, 1, None)
@@ -469,11 +494,11 @@ def extra_precision_calcs(
         c_ra, c_dec, coords_ra, coords_dec
     )  # (n_particles, times)
 
-    m_ref = jnp.min(mags)
+    m_ref = jnp.nanmin(mags)
     fluxes = jnp.power(10, -0.4 * (mags - m_ref))
 
     fluxes = jnp.where(seps < radius, fluxes, 0.0)
-    fluxes = jnp.sum(fluxes, axis=0)
+    fluxes = jnp.nansum(fluxes, axis=0)
 
     total_mags = -2.5 * jnp.log10(fluxes) + m_ref
 
@@ -499,7 +524,10 @@ def get_relevant_mpcorb(asteroid_flags: jnp.ndarray) -> pl.DataFrame:
     names = all_names[asteroid_flags]
     names = [str(n) for n in names]
     relevant_mpcorb = load_mpcorb()
-    names_df = pl.DataFrame({"Packed designation": names})
+    # explicit schema so an empty search result stays a str column, not Null
+    names_df = pl.DataFrame(
+        {"Packed designation": names}, schema={"Packed designation": pl.String}
+    )
     relevant_mpcorb = names_df.join(
         relevant_mpcorb, on="Packed designation", how="left"
     )
