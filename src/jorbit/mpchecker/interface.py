@@ -56,6 +56,11 @@ def mpchecker(
     a specific observer. These positions should agree with Horizons to ~1 mas if using
     extra_precision_gravity="default solar system".
 
+    The 16 asteroid perturbers and Pluto use their prescribed JPL trajectories rather
+    than being re-integrated with extra_precision_gravity. Their positions include
+    light travel time for the requested observer. Pluto uses the system barycenter
+    supplied by the planetary ephemeris.
+
     Args:
         coordinate (SkyCoord):
             The coordinate to search around.
@@ -182,6 +187,10 @@ def nearest_asteroid(
     re-integrate the orbits of all minor planets that fell within the search radius at
     any time, compute their on-sky coordinates and Vmags as seen from a specific
     observer, and produce more detailed tables of the results.
+
+    As in mpchecker, the 16 asteroid perturbers and Pluto use prescribed JPL
+    trajectories, with light travel time for the requested observer, independently of
+    extra_precision_gravity. Pluto's position is the system barycenter.
 
     Args:
         coordinate (SkyCoord):

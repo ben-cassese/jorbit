@@ -8,6 +8,8 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from functools import lru_cache
+
 import astropy.units as u
 import jax.numpy as jnp
 import numpy as np
@@ -16,8 +18,19 @@ from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 
-from jorbit.astrometry.sky_projection import sky_sep
-from jorbit.data.constants import JORBIT_EPHEM_URL_BASE, PERTURBER_PACKED_DESIGNATIONS
+from jorbit.accelerations import (
+    create_default_ephemeris_acceleration_func,
+    create_gr_ephemeris_acceleration_func,
+    create_newtonian_ephemeris_acceleration_func,
+)
+from jorbit.astrometry.sky_projection import on_sky, sky_sep
+from jorbit.data.constants import (
+    JORBIT_EPHEM_URL_BASE,
+    LARGE_ASTEROID_NAMES,
+    PERTURBER_PACKED_DESIGNATIONS,
+)
+from jorbit.ephemeris import Ephemeris
+from jorbit.ephemeris.ephemeris_processors import EphemerisPostProcessor
 from jorbit.system import System
 from jorbit.utils.cache import download_file_wrapper
 from jorbit.utils.horizons import get_observer_positions
@@ -346,6 +359,43 @@ def apparent_mag(
     return h + 5 * jnp.log10(r * delta) + phase_function
 
 
+@lru_cache(maxsize=4)
+def _mpchecker_ephemeris(
+    de_version: str = "440", ssos: str = "default solar system"
+) -> Ephemeris:
+    """Lazily retain one ephemeris per JPL version and body group for 2000-2040."""
+    return Ephemeris(
+        ssos=ssos,
+        earliest_time=Time("1999-12-30"),
+        latest_time=Time("2040-01-02"),
+        de_ephemeris_version=de_version,
+    )
+
+
+@jax.jit
+def _perturber_on_sky(
+    processor: EphemerisPostProcessor,
+    index: int,
+    time: float,
+    observer_position: jnp.ndarray,
+) -> tuple:
+    """Project a prescribed JPL trajectory without evaluating self-gravity."""
+    positions, velocities = processor.state(time)
+
+    def emission_position(dt: float) -> jnp.ndarray:
+        return processor.state(time + dt)[0][index]
+
+    ra, dec = on_sky(
+        positions[index],
+        velocities[index],
+        time,
+        observer_position,
+        acc_func=None,
+        ltt_position_fn=jax.tree_util.Partial(emission_position),
+    )
+    return ra, dec, positions[index]
+
+
 def extra_precision_calcs(
     asteroid_flags: jnp.ndarray,
     times: Time,
@@ -357,7 +407,16 @@ def extra_precision_calcs(
     observer_positions: jnp.ndarray | None = None,
     de_ephemeris_version: str | None = "440",
 ) -> tuple:
-    """Helper function for running N-body ephemeris calculations.
+    """Refine asteroid positions using integration or prescribed JPL trajectories.
+
+    The 16 asteroid perturbers and Pluto are read directly from the JPL ephemeris,
+    including their individual light travel time corrections. They are not integrated
+    using the requested gravity model.
+
+    Ephemeris processors are cached over the full supported date range (2000-2040)
+    and shared between integration and projection when they use the same body group
+    and JPL version. This retains their coefficient arrays in memory and allows JAX
+    to reuse compiled code across queries with the same shapes and dtypes.
 
     Args:
         asteroid_flags (jnp.ndarray):
@@ -379,8 +438,9 @@ def extra_precision_calcs(
         observer_positions (jnp.ndarray):
             The observer positions. If None, they will be retrieved from Horizons.
         de_ephemeris_version (str | None):
-            Which version of the JPL DE ephemeris to use when calculating observer
-            positions. Accepts either "440" or "430", default is "440".
+            Which version of the JPL DE ephemeris to use for the built-in gravity
+            models, perturber positions, and observer positions. Accepts either "440"
+            or "430", default is "440".
 
     Returns:
         tuple:
@@ -389,6 +449,8 @@ def extra_precision_calcs(
     """
     if observer == "geocentric":
         observer = "500@399"
+    if times.shape == ():
+        times = Time([times])
 
     if np.sum(np.asarray(asteroid_flags)) == 0:
         # nothing nearby to refine: the integrator chokes on a system with no
@@ -407,60 +469,99 @@ def extra_precision_calcs(
 
     all_names = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "names.npy"))
     names = all_names[asteroid_flags]
-    if np.isin(names, PERTURBER_PACKED_DESIGNATIONS).sum() > 0:
-        relavant_perturbers = names[np.isin(names, PERTURBER_PACKED_DESIGNATIONS)]
-        raise ValueError(
-            "Of the objects found nearby the target, at these specific times, "
-            f"{relavant_perturbers} are massive perturbers that are included in jorbit "
-            "ephemeris calculations by default. Consequently, jorbit cannot actually "
-            "integrate this target itself since doing so would produce infinite "
-            "accelerations. Either modify your times, or use the Ephemeris module, or "
-            "an external service like JPL Horizons, to get the ephemeris of these "
-            "objects."
-        )
-
-    x0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "x0.npy"))
-    x0 = x0[asteroid_flags]
-    v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))
-    v0 = v0[asteroid_flags]
-
-    # tested breaking this into chunks and running in serial instead of all particles
-    # at once, no major speedup
-    state = SystemState(
-        tracer_positions=x0,
-        tracer_velocities=v0,
-        massive_positions=jnp.empty((0, 3)),
-        massive_velocities=jnp.empty((0, 3)),
-        log_gms=jnp.empty((0,)),
-        acceleration_func_kwargs={},
-        # The epoch the cached x0/v0 are defined at. System(state=...) recovers
-        # the absolute epoch from relative_time + time_reference.
-        time_reference=Time("2020-01-01").tdb.jd,
-        relative_time=jnp.array(0.0),
-        fixed_perturber_positions=jnp.empty((0, 3)),
-        fixed_perturber_velocities=jnp.empty((0, 3)),
-        fixed_perturber_log_gms=jnp.empty((0,)),
-    )
-
-    sy = System(
-        state=state,
-        gravity=gravity,
-        earliest_time=Time("1999-12-30"),
-        latest_time=Time("2040-01-02"),
-    )
+    is_perturber = np.isin(names, PERTURBER_PACKED_DESIGNATIONS)
 
     # might as well only query once, will need both for the ephemeris and phase function
     if observer_positions is None:
         observer_positions = get_observer_positions(
             times, observer, de_ephemeris_version
         )
-    coords = sy.ephemeris(times=times, observer=observer_positions)
+    ras = jnp.zeros((len(names), len(times)))
+    decs = jnp.zeros_like(ras)
+    positions = jnp.zeros((len(times), len(names), 3))
+
+    if np.any(~is_perturber):
+        x0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "x0.npy"))
+        v0 = jnp.load(download_file_wrapper(JORBIT_EPHEM_URL_BASE + "v0.npy"))
+
+        # Only ordinary asteroids are tracers; perturbers retain their JPL trajectories.
+        state = SystemState(
+            tracer_positions=x0[asteroid_flags][~is_perturber],
+            tracer_velocities=v0[asteroid_flags][~is_perturber],
+            massive_positions=jnp.empty((0, 3)),
+            massive_velocities=jnp.empty((0, 3)),
+            log_gms=jnp.empty((0,)),
+            acceleration_func_kwargs={},
+            # The epoch the cached x0/v0 are defined at.
+            time_reference=Time("2020-01-01").tdb.jd,
+            relative_time=jnp.array(0.0),
+            fixed_perturber_positions=jnp.empty((0, 3)),
+            fixed_perturber_velocities=jnp.empty((0, 3)),
+            fixed_perturber_log_gms=jnp.empty((0,)),
+        )
+        ephemeris_models = {
+            "newtonian planets": (
+                create_newtonian_ephemeris_acceleration_func,
+                "default planets",
+            ),
+            "newtonian solar system": (
+                create_newtonian_ephemeris_acceleration_func,
+                "default solar system",
+            ),
+            "gr planets": (create_gr_ephemeris_acceleration_func, "default planets"),
+            "gr solar system": (
+                create_gr_ephemeris_acceleration_func,
+                "default solar system",
+            ),
+            "default solar system": (
+                create_default_ephemeris_acceleration_func,
+                "default solar system",
+            ),
+        }
+        if isinstance(gravity, str) and gravity in ephemeris_models:
+            factory, ssos = ephemeris_models[gravity]
+            eph = _mpchecker_ephemeris(de_ephemeris_version, ssos)
+            gravity = factory(eph.processor)
+        sy = System(
+            state=state,
+            gravity=gravity,
+            earliest_time=Time("1999-12-30"),
+            latest_time=Time("2040-01-02"),
+            de_ephemeris_version=de_ephemeris_version,
+        )
+        integrated_coords = sy.ephemeris(times=times, observer=observer_positions)
+        integrated_positions, _ = sy.integrate(times=times)
+        ras = ras.at[~is_perturber].set(integrated_coords.ra.rad)
+        decs = decs.at[~is_perturber].set(integrated_coords.dec.rad)
+        positions = positions.at[:, ~is_perturber].set(integrated_positions)
+
+    if np.any(is_perturber):
+        eph = _mpchecker_ephemeris(de_ephemeris_version, "default solar system")
+        perturber_names = dict(
+            zip(
+                PERTURBER_PACKED_DESIGNATIONS,
+                [*LARGE_ASTEROID_NAMES, "pluto"],
+                strict=True,
+            )
+        )
+        indices = jnp.array(
+            [eph._combined_names.index(perturber_names[n]) for n in names[is_perturber]]
+        )
+        pert_ras, pert_decs, pert_positions = jax.vmap(
+            jax.vmap(_perturber_on_sky, in_axes=(None, None, 0, 0)),
+            in_axes=(None, 0, None, None),
+        )(eph.processor, indices, jnp.array(times.tdb.jd), observer_positions)
+        ras = ras.at[is_perturber].set(pert_ras)
+        decs = decs.at[is_perturber].set(pert_decs)
+        positions = positions.at[:, is_perturber].set(
+            jnp.swapaxes(pert_positions, 0, 1)
+        )
+
+    coords = SkyCoord(ra=ras, dec=decs, unit=u.rad, frame="icrs")
     coord_table = Table(
         [[str(i) for i in list(relevant_mpcorb["Unpacked Name"])], coords],
         names=["name", "coord"],
     )
-
-    positions, _ = sy.integrate(times=times)
 
     # a few hundred objects in MPCORB have blank H/G: these come through as null
     # (polars) or NaN (astropy), and np.asarray maps both to NaN
