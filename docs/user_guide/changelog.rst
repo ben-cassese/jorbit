@@ -1,6 +1,13 @@
 Changelog
 +++++++++
 
+**1.7.1 (10/2026)**
+
+- Fixed the MPChecker failures reported in `issue #81 <https://github.com/ben-cassese/jorbit/issues/81>`_. Objects with missing MPCORB H/G values now produce a warning and ``NaN`` apparent magnitudes instead of raising an exception. Their unknown fluxes are excluded from the total magnitude calculation in ``nearest_asteroid(compute_contamination=True)``. Empty searches now return correctly shaped empty results, including when high-precision calculations are requested.
+- High-precision ``mpchecker`` and ``nearest_asteroid`` searches now support the 16 massive asteroid perturbers and Pluto. These bodies use their prescribed JPL trajectories, with light-travel-time corrections for the requested observer, rather than being integrated as tracers in their own gravitational fields. Their trajectories are independent of ``extra_precision_gravity``; Pluto's position is the Pluto-system barycenter.
+- MPChecker now retains ephemeris processors by JPL DE version and body group, sharing them between ordinary-asteroid integration and massive-body projection. Repeated queries with matching array shapes reuse the compiled numerical kernels. A changed integration-step count can still require compilation of intermediate buffer-slicing and padding operations.
+- Fixed ``mpchecker(chunk_coefficients=...)`` so supplied coefficients are actually used, avoiding the otherwise repeated coefficient-file reads.
+
 **1.7.0 (09/2026)**
 
 - **Bug fix: the backward dense-output pad is sized at the state epoch, so it was never a bound, and an object far enough from the observer at an observation could exhaust it.** ``ltt_seed_floor`` sizes the backward extension as twice the largest particle-observer distance *at the integration epoch*, while the quantity that has to be covered is the light travel time *at each observation*. There is no finite multiple of the first that bounds the second, and its own docstring said as much ("doubling covers growth up to ~2x the epoch topocentric distance"). On the stitched paths -- ``Particle.ephemeris(interpolate=True)`` and ``System.ephemeris(interpolate=True)`` -- exhausting it produced a hard ``RuntimeError``; a downstream user generating astrometry in bulk hit it once in roughly 196,000 examples, which was enough to kill a 100,000-example job at example 95,820. ``stitched_dense_buffers`` now measures the requirement from the buffers it just built and, if the backward pass falls short, **extends it until it covers** before asserting. The raise survives as a backstop for genuine buffer truncation, but is no longer reachable by this geometry.
