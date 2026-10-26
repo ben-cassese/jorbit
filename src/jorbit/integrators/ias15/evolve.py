@@ -23,9 +23,15 @@ from jorbit.utils.states import IAS15IntegratorState, SystemState
 # headroom for slightly tighter encounters and matches that envelope.
 IAS15_MAX_DYNAMIC_STEPS = 15_000
 
+# Maximum number of iterations (accepted + rejected) the forced-landing loop will spend
+# marching between two consecutive requested times. Past it the loop gives up and records
+# wherever it got to as the landing, so callers must check the reached times it emits;
+# jorbit.integrators.budgeted.budgeted_forced_landing does that and subdivides.
+IAS15_MAX_FORCED_LANDING_ITERS = 10_000
+
 
 @jax.jit
-def ias15_evolve_forced_landing(
+def _forced_landing_with_times(
     initial_system_state: SystemState,
     acceleration_func: Callable[[SystemState], jnp.ndarray],
     times: jnp.ndarray,
@@ -34,16 +40,16 @@ def ias15_evolve_forced_landing(
         [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
     ],
 ) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-    """Forced-landing IAS15 evolve (internal testing reference only).
+    """Internal: forced-landing IAS15 evolve, also reporting the time each landing reached.
 
-    Clamps the adaptive step size so that a step always lands exactly on the next
-    entry of ``times``. Kept private because the public ``ias15_evolve`` (below)
-    uses dense-output polynomial interpolation instead, which avoids the small
-    final jumps that the forced-landing scheme is prone to. This function is
-    retained as an independent reference path for tests and benchmarks.
+    Body shared with :func:`ias15_evolve_forced_landing`, which drops the reached
+    times to keep the 5-tuple contract the generic ``integrator_func`` call sites
+    share with the leapfrog and dense-output backends.
 
-    .. warning::
-       Caps the number of steps between requested times at 10,000.
+    A landing that hit the ``IAS15_MAX_FORCED_LANDING_ITERS`` cap stops short, and
+    the only way to see that is the reached time for *that* landing: the intervals
+    that follow start from the (correct, just early) state it stopped at and land
+    normally, so the final state alone cannot reveal it.
 
     Args:
         initial_system_state (SystemState):
@@ -59,9 +65,11 @@ def ias15_evolve_forced_landing(
             step size.
 
     Returns:
-        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState]:
-            The positions and velocities of the system at each timestep,
-            the final state of the system, and the final state of the integrator.
+        tuple:
+            ``(positions, velocities, landing_times, final_system_state,
+            final_integrator_state, tot_steps)``. ``landing_times`` has shape
+            ``(len(times),)`` and equals ``times`` exactly unless an interval
+            truncated.
     """
 
     def evolve(
@@ -93,7 +101,7 @@ def ias15_evolve_forced_landing(
             step_length = jnp.sign(final_time - t) * jnp.min(
                 jnp.array([jnp.abs(final_time - t), jnp.abs(integrator_state.dt)])
             )
-            return (step_length != 0) & (iter_num < 10_000)
+            return (step_length != 0) & (iter_num < IAS15_MAX_FORCED_LANDING_ITERS)
 
         final_system_state, final_integrator_state, _last_meaningful_dt, iter_num = (
             jax.lax.while_loop(
@@ -137,12 +145,86 @@ def ias15_evolve_forced_landing(
                     system_state.tracer_velocities,
                 )
             ),
+            system_state.relative_time,
         )
 
-    (final_system_state, final_integrator_state, tot_steps), (positions, velocities) = (
-        jax.lax.scan(
-            scan_func, (initial_system_state, initial_integrator_state, 0), times
-        )
+    (
+        (final_system_state, final_integrator_state, tot_steps),
+        (positions, velocities, landing_times),
+    ) = jax.lax.scan(
+        scan_func, (initial_system_state, initial_integrator_state, 0), times
+    )
+    return (
+        positions,
+        velocities,
+        landing_times,
+        final_system_state,
+        final_integrator_state,
+        tot_steps,
+    )
+
+
+def ias15_evolve_forced_landing(
+    initial_system_state: SystemState,
+    acceleration_func: Callable[[SystemState], jnp.ndarray],
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable[
+        [jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float
+    ],
+) -> tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
+    """Forced-landing IAS15 evolve (internal testing reference only).
+
+    Clamps the adaptive step size so that a step always lands exactly on the next
+    entry of ``times``. Kept private because the public ``ias15_evolve`` (below)
+    uses dense-output polynomial interpolation instead, which avoids the small
+    final jumps that the forced-landing scheme is prone to. This function is
+    retained as an independent reference path for tests and benchmarks.
+
+    Thin wrapper (deliberately not jitted, so there is only one compiled kernel)
+    around :func:`_forced_landing_with_times`, dropping the per-landing reached
+    times so that this matches the 5-tuple signature the leapfrog and dense-output
+    backends share. Callers that need to know whether a landing truncated -- see
+    :func:`jorbit.integrators.budgeted.budgeted_forced_landing` -- should use the
+    six-output version directly.
+
+    .. warning::
+       Caps the number of iterations between requested times at
+       ``IAS15_MAX_FORCED_LANDING_ITERS`` (10,000), then silently records wherever
+       it got to. Use ``budgeted_forced_landing`` instead of calling this directly.
+
+    Args:
+        initial_system_state (SystemState):
+            The initial state of the system.
+        acceleration_func (Callable[[SystemState], jnp.ndarray]):
+            The acceleration function to use.
+        times (jnp.ndarray):
+            The times to evolve the system to.
+        initial_integrator_state (IAS15IntegratorState):
+            The initial state of the integrator.
+        step_scheduler (Callable[[jnp.ndarray, jnp.ndarray, jnp.ndarray, float, jnp.ndarray, jnp.ndarray], float]):
+            The step scheduler function to use for determining the next proposed
+            step size.
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray, SystemState, IAS15IntegratorState, jnp.ndarray]:
+            The positions and velocities of the system at each timestep, the final
+            state of the system, the final state of the integrator, and the total
+            iteration count.
+    """
+    (
+        positions,
+        velocities,
+        _landing_times,
+        final_system_state,
+        final_integrator_state,
+        tot_steps,
+    ) = _forced_landing_with_times(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
     )
     return positions, velocities, final_system_state, final_integrator_state, tot_steps
 

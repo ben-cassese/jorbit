@@ -27,6 +27,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+from jorbit.integrators.ias15.dense_ltt import dense_ltt_radec
 from jorbit.integrators.ias15.evolve import (
     IAS15_MAX_DYNAMIC_STEPS,
     _ias15_evolve_core,
@@ -40,9 +41,16 @@ from jorbit.integrators.ias15.helpers import (
     initialize_ias15_integrator_state,
 )
 from jorbit.integrators.ias15.interpolation import (
+    DenseOutput,
     apply_ltt_seed_floor,
+    assert_ltt_span_covered,
+    dense_position,
     interpolate_from_dense_output,
+    ltt_backward_times,
+    ltt_coverage_mask,
     ltt_seed_floor,
+    ltt_span_excursion,
+    ltt_span_shortfall,
     make_ltt_propagator,
     precompute_interpolation_indices,
     warn_if_ltt_extrapolating,
@@ -60,6 +68,7 @@ from jorbit.integrators.ias15.step_control import (
 
 __all__ = [
     "IAS15_MAX_DYNAMIC_STEPS",
+    "DenseOutput",
     "_estimate_x_v_from_b",
     "_ias15_evolve_core",
     "_predict_next_step",
@@ -67,13 +76,20 @@ __all__ = [
     "_update_bs",
     "add_cs",
     "apply_ltt_seed_floor",
+    "assert_ltt_span_covered",
+    "dense_ltt_radec",
+    "dense_position",
     "ias15_evolve",
     "ias15_evolve_forced_landing",
     "ias15_evolve_with_dense_output",
     "ias15_step",
     "initialize_ias15_integrator_state",
     "interpolate_from_dense_output",
+    "ltt_backward_times",
+    "ltt_coverage_mask",
     "ltt_seed_floor",
+    "ltt_span_excursion",
+    "ltt_span_shortfall",
     "make_ltt_propagator",
     "next_proposed_dt_PRS23",
     "next_proposed_dt_global",

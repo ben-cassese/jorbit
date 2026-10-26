@@ -69,18 +69,32 @@ def _cov_from_jacobian(
     nominal_vec: jnp.ndarray,
     cov: jnp.ndarray,
     N: int,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    has_aux: bool = False,
+) -> tuple[jnp.ndarray, ...]:
     """Linear error propagation via forward-mode AD.
 
     ``radec_fn`` must accept a ``(6,)`` parameter vector and return a flat
     ``(2N,)`` interleaved ``[ra0, dec0, ra1, dec1, ...]`` array (radians).
     Returns ``(ra, dec, cov_radec)`` where ``cov_radec`` has shape ``(N, 2, 2)``
     in ``arcsec**2``.
+
+    With ``has_aux=True``, ``radec_fn`` instead returns ``(radec, aux)`` and the auxiliary
+    value is appended to the result. The nominal value is evaluated separately from the
+    Jacobian either way, so this costs nothing; it exists so that the dense
+    light-travel-time path can report its coverage mask, which cannot be differentiated and
+    so cannot ride along in the Jacobian.
     """
-    radec_nominal = radec_fn(nominal_vec)
+    if has_aux:
+        radec_nominal, aux = radec_fn(nominal_vec)
+        jac_fn = lambda v: radec_fn(v)[0]
+    else:
+        radec_nominal = radec_fn(nominal_vec)
+        jac_fn = radec_fn
     ras = radec_nominal[0::2]
     decs = radec_nominal[1::2]
-    J = jax.jacfwd(radec_fn)(nominal_vec)
+    J = jax.jacfwd(jac_fn)(nominal_vec)
     J_t = J.reshape(N, 2, 6)
     cov_radec = jnp.einsum("nij,jk,nlk->nil", J_t, cov, J_t) * _RAD2ARCSEC_SQ
+    if has_aux:
+        return ras, decs, cov_radec, aux
     return ras, decs, cov_radec

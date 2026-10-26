@@ -340,7 +340,7 @@ def test_repeated_refinement_reuses_compiled_code(
     caplog: pytest.LogCaptureFixture,
     field: str,
 ) -> None:
-    """Repeated queries and changed numeric inputs do not trigger compilation."""
+    """Reuse numerical kernels; new step counts may compile buffer preparation once."""
     names, _ = catalogue
     selected = {
         "ordinary": ["00006"],
@@ -367,15 +367,29 @@ def test_repeated_refinement_reuses_compiled_code(
         jax.block_until_ready((result[1], result[3], result[5]))
         assert np.all(np.isfinite(result[0].ra.rad))
 
+    def compilations(t: Time, observer_positions: jnp.ndarray) -> list[str]:
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="jax"), jax.log_compiles(True):
+            refine(t, observer_positions)
+        return [
+            r.getMessage() for r in caplog.records if "Compiling jit(" in r.getMessage()
+        ]
+
     refine(times, observers)
-    caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="jax"), jax.log_compiles(True):
-        refine(times, observers)
-        refine(times + 0.125 * u.day, changed_observers)
-    compilations = [
-        r.getMessage() for r in caplog.records if "Compiling jit(" in r.getMessage()
+    repeated = compilations(times, observers)
+    assert not repeated, "\n".join(repeated)
+
+    changed_times = times + 0.125 * u.day
+    # The stitched trajectory is sliced and padded according to its accepted step count.
+    preparation = ("dynamic_slice", "broadcast_in_dim", "concatenate")
+    unexpected = [
+        message
+        for message in compilations(changed_times, changed_observers)
+        if not any(f"Compiling jit({name})" in message for name in preparation)
     ]
-    assert not compilations, "\n".join(compilations)
+    assert not unexpected, "\n".join(unexpected)
+    repeated = compilations(changed_times, changed_observers)
+    assert not repeated, "\n".join(repeated)
 
 
 @pytest.mark.parametrize(

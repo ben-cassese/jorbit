@@ -30,6 +30,7 @@ from jorbit.ephemeris.ephemeris import Ephemeris
 from jorbit.integrators import (
     create_leapfrog_times,
     ias15_evolve,
+    ias15_span_probe,
     initialize_ias15_integrator_state,
     leapfrog_evolve,
     next_proposed_dt_global,
@@ -42,8 +43,10 @@ from jorbit.system.ephem import _ephem, _integrate
 from jorbit.system.ias15_dense import _ephem_ias15_stitched
 from jorbit.system.keplerian import _keplerian_system_ephem, _keplerian_system_integrate
 from jorbit.system.likelihood import (
+    _model_leapfrog,
     create_system_forward_model,
     precompute_system_forward_model_data,
+    precompute_system_leapfrog_forward_model_data,
 )
 from jorbit.utils.horizons import get_observer_positions
 from jorbit.utils.states import (
@@ -86,9 +89,13 @@ class System:
                 dynamically independent (they could represent different asteroids), but
                 when observations are provided **every particle is scored against this
                 same data**. Enables the fast, reusable ``loglike``/``residuals``/
-                ``chi2``/``model_radec`` attributes (see below). Only supported for the
-                IAS15 integrator; otherwise those attributes are ``None``. Defaults to
-                None.
+                ``chi2``/``model_radec`` attributes (see below), plus
+                ``model_radec_with_status``, which returns the same coordinates as
+                ``model_radec`` along with two per-observation boolean masks: whether
+                the integration reached that time before its dense-output buffer filled,
+                and whether the light-travel-corrected time it needed fell inside the
+                integrated span. Supported for the IAS15 and leapfrog integrators; for a
+                Keplerian system those attributes are ``None``. Defaults to None.
             gravity (str | Callable):
                 The gravitational acceleration function to use when integrating the
                 particle's orbit. Defaults to "default solar system", which corresponds
@@ -105,7 +112,15 @@ class System:
                 The integrator to use for the particle. Choices are "ias15", which is a
                 15th order adaptive step-size integrator, or "Y4", "Y6", or "Y8", which
                 are 4th, 6th, and 8th order Yoshida leapfrog integrators with fixed
-                step sizes. Defaults to "ias15".
+                step sizes. The leapfrog integrators require ``max_step_size`` and
+                ignore ``step_scheduler``/``ias15_max_steps``; they support the
+                observation-scoring ``loglike``/``residuals``/``chi2``/``model_radec``
+                callables, but not the dense-output interpolation the IAS15 path uses.
+                They are typically slower than adaptive IAS15 at matched accuracy,
+                since the fixed step must be sized for the tightest part of the orbit
+                everywhere; in exchange they are a plain ``jax.lax.scan``, so
+                ``jax.grad`` differentiates them in reverse mode, which the IAS15
+                ``while_loop`` cannot support. Defaults to "ias15".
             earliest_time (Time):
                 The earliest time we expect to integrate the particle to. Defaults to
                 Time("1980-01-01"). Larger time windows will result in larger in-memory
@@ -140,8 +155,12 @@ class System:
                 methods stitch extra chunks as needed, so a small value never
                 truncates them; the observation-based ``loglike``/``residuals``/
                 ``chi2``/``model_radec`` callables instead fail loudly (``-inf``/
-                ``NaN``) when the arc exceeds one buffer. Ignored for leapfrog
-                integrators and Keplerian systems. Defaults to None.
+                ``NaN``) when the arc exceeds one buffer. Use ``probe_span`` to check
+                a span against the buffer before paying for a likelihood, or
+                ``model_radec_with_status`` to tell truncation from a light-travel-time
+                extrapolation after the fact.
+                Ignored for leapfrog integrators and Keplerian systems.
+                Defaults to None.
         """
         self._earliest_time = earliest_time
         self._latest_time = latest_time
@@ -214,11 +233,13 @@ class System:
             self.residuals = None
             self.chi2 = None
             self.model_radec = None
+            self.model_radec_with_status = None
         else:
             self.loglike = forward_model["loglike"]
             self.residuals = forward_model["residuals"]
             self.chi2 = forward_model["chi2"]
             self.model_radec = forward_model["model_radec"]
+            self.model_radec_with_status = forward_model["model_radec_with_status"]
 
     def __repr__(self) -> str:
         """Return a string representation of the System."""
@@ -382,6 +403,11 @@ class System:
                 max_step_size is not None
             ), "Must provide max_step_size for leapfrog integrators."
             dt = max_step_size.to(u.day).value
+            assert dt > 0, (
+                "max_step_size must be positive for leapfrog integrators, got "
+                f"{max_step_size}. The step direction is taken from the requested "
+                "times, not from the sign of max_step_size."
+            )
             if integrator == "Y4":
                 c = Y4_C
                 d = Y4_D
@@ -401,14 +427,16 @@ class System:
         """Build the fast batched forward model when shared observations are available.
 
         Returns None (leaving loglike/residuals/chi2/model_radec unset) unless the System
-        has an Observations object and uses the IAS15 dense path.
+        has an Observations object and uses either the IAS15 dense path or a fixed-step
+        leapfrog.
         """
-        if (
-            self._observations is None
-            or self._is_keplerian
-            or self._integrator_method != "ias15"
-        ):
+        if self._observations is None or self._is_keplerian:
             return None
+        if self._integrator_method in ["Y4", "Y6", "Y8"]:
+            data = precompute_system_leapfrog_forward_model_data(
+                self, self._observations
+            )
+            return create_system_forward_model(data, model_fn=_model_leapfrog)
         data = precompute_system_forward_model_data(
             self, self._observations, self._step_scheduler
         )
@@ -444,8 +472,9 @@ class System:
             return_steps (bool):
                 If True, also return the total number of integration steps taken (summed
                 across any stitched interpolation chunks), appended as the final element
-                of the returned tuple. ``None`` for the analytic Keplerian and fixed-step
-                leapfrog paths, which cannot truncate. Defaults to False.
+                of the returned tuple. On the leapfrog paths this is the length of the
+                expanded fixed-step schedule, which cannot truncate. ``None`` for the
+                analytic Keplerian path. Defaults to False.
 
         Returns:
             tuple[jnp.ndarray, jnp.ndarray]:
@@ -482,7 +511,9 @@ class System:
                 inds,
                 scheduler,
             )
-            steps = None
+            # One leapfrog step per entry of the expanded schedule, matching what
+            # leapfrog_evolve reports and what Particle.integrate returns.
+            steps = jnp.asarray(times.shape[0], dtype=jnp.int32)
         else:
             # IAS15: stitch dense-output chunks so the 15k buffer can't silently
             # truncate. See jorbit.integrators.budgeted.
@@ -536,8 +567,9 @@ class System:
             return_steps (bool):
                 If True, return a tuple of the SkyCoord and the total number of
                 integration steps taken (summed across any stitched interpolation
-                chunks). ``None`` for the analytic Keplerian and fixed-step leapfrog
-                paths, which cannot truncate. Defaults to False.
+                chunks). On the leapfrog paths this is the length of the expanded
+                fixed-step schedule, which cannot truncate. ``None`` for the analytic
+                Keplerian path. Defaults to False.
 
         Returns:
             coords (SkyCoord):
@@ -589,7 +621,7 @@ class System:
                 inds,
                 scheduler,
             )
-            steps = None
+            steps = jnp.asarray(times.shape[0], dtype=jnp.int32)
         else:
             # IAS15: stitch dense-output chunks (truncation-proof) and use the
             # b-coefficients for each particle's light-travel-time correction.
@@ -610,3 +642,61 @@ class System:
         if return_steps:
             return coords, steps
         return coords
+
+    def probe_span(self, times: Time | jnp.ndarray | None = None) -> tuple[bool, int]:
+        """Check whether integrating to ``times`` would overflow the dense-output buffer.
+
+        Runs one cheap forward IAS15 integration (no autodiff, no stitching) from the
+        System's own state and reports whether a single dense-output buffer of depth
+        ``ias15_max_steps`` reaches the farthest requested time in each direction.
+
+        The ``loglike``/``residuals``/``chi2``/``model_radec`` callables cannot guard
+        themselves: they are compile-once callables whose candidate states arrive as
+        *arguments*, so a probe inside them would force a device sync and a full extra
+        integration on every evaluation. Call this instead, once, before committing to
+        a fit or a Jacobian. Note the answer is specific to the System's current state:
+        a sampler that wanders onto a more demanding orbit can still truncate.
+
+        The ``integrate``/``ephemeris`` methods stitch extra chunks as needed and so
+        never truncate; there is no reason to probe before calling them.
+
+        Args:
+            times (Time | jnp.ndarray | None):
+                The times to probe. If a jnp.array, the entries are assumed to be in
+                TDB JD. None (default) uses the times of the attached ``Observations``.
+
+        Returns:
+            tuple[bool, int]:
+                ``(would_truncate, steps)``. ``steps`` is the total iteration count
+                (accepted plus rejected, summed over the forward and backward passes),
+                so it is a conservative upper bound when used to size
+                ``ias15_max_steps``. Always ``(False, 0)`` for Keplerian systems and
+                leapfrog integrators, which land on every requested time by
+                construction and have no dense-output buffer to overflow.
+        """
+        if self._is_keplerian or self._integrator_method in ["Y4", "Y6", "Y8"]:
+            return False, 0
+
+        if times is None:
+            if self._observations is None:
+                raise ValueError(
+                    "probe_span() needs a `times` argument: this System has no "
+                    "attached Observations to fall back on."
+                )
+            times = self._observations.times_astropy
+            if times is None:
+                times = Time(self._observations.times, format="jd", scale="tdb")
+
+        times = self._times_to_offsets(times)
+        if times.shape == ():
+            times = jnp.array([times])
+
+        would_truncate, steps = ias15_span_probe(
+            self._state,
+            self.gravity,
+            times,
+            self._integrator_state,
+            self._step_scheduler,
+            self._ias15_max_steps,
+        )
+        return bool(would_truncate), int(steps)

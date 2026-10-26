@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 from astropy.time import Time
 
+import jorbit.integrators.budgeted as budgeted_module
 import jorbit.integrators.ias15 as ias15_module
 from jorbit import Particle, System
 from jorbit.accelerations import newtonian_gravity
@@ -41,6 +42,7 @@ from jorbit.integrators.budgeted import (
     discover_natural_step_times,
     insert_budget_dummy_times,
 )
+from jorbit.integrators.ias15.evolve import _forced_landing_with_times
 from jorbit.utils.states import CartesianState
 
 X0 = jnp.array([-2.003779703686627, 1.780533558134481, 0.5203350526739642])
@@ -82,6 +84,34 @@ def _shrink_cap(value: int) -> Callable[[], None]:
         jax.clear_caches()
 
     return restore
+
+
+def _shrink_forced_cap(cap: int, budget: int) -> Callable[[], None]:
+    """Save/patch/restore the forced-landing per-interval iteration cap and its budget.
+
+    The forced-landing analogue of :func:`_shrink_cap`: shrinking the cap drives an
+    ordinary-length interval to truncate without needing a genuinely enormous
+    integration, so the truncation condition is constructed explicitly rather than
+    waited for. ``FORCED_LANDING_STEP_BUDGET`` is bound at import from the cap, so it
+    has to be patched alongside it for the recovery path to subdivide small enough.
+    """
+    original_cap = ias15_module.evolve.IAS15_MAX_FORCED_LANDING_ITERS
+    original_budget = budgeted_module.FORCED_LANDING_STEP_BUDGET
+    ias15_module.evolve.IAS15_MAX_FORCED_LANDING_ITERS = cap
+    budgeted_module.FORCED_LANDING_STEP_BUDGET = budget
+    jax.clear_caches()
+
+    def restore() -> None:
+        ias15_module.evolve.IAS15_MAX_FORCED_LANDING_ITERS = original_cap
+        budgeted_module.FORCED_LANDING_STEP_BUDGET = original_budget
+        jax.clear_caches()
+
+    return restore
+
+
+# Straddles the epoch, ascending: the whole pre-epoch arc is traversed as the single
+# interval from the epoch back to times[0], which is the one that overruns the cap.
+STRADDLING_OFFSETS = np.array([-3000.0, -2000.0, -1000.0, 0.0, 400.0])
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +259,72 @@ def test_forced_landing_dummy_roundtrip(particle: Particle) -> None:
         particle._step_scheduler,
     )
     assert float(jnp.max(jnp.abs(pos_aug[inds] - pos_ref))) < 1e-7  # AU (~15 m)
+
+
+def test_forced_landing_reports_per_landing_truncation(particle: Particle) -> None:
+    """A truncated early interval is invisible in the final state but shows in its landing.
+
+    The exact signature of the silent failure: the first (pre-epoch) interval overruns
+    the cap and stops short, while the last requested time -- all the old check looked
+    at -- is reached normally, because the truncated interval leaves the integrator at a
+    state that is correct for the time it stopped at.
+    """
+    times = T0 + STRADDLING_OFFSETS * u.day
+    toff = particle._times_to_offsets(times)
+    state = particle._cartesian_state.to_system()
+
+    restore = _shrink_forced_cap(120, 60)
+    try:
+        _, _, landing_times, fss, _, _ = _forced_landing_with_times(
+            state,
+            particle.gravity,
+            toff,
+            particle._integrator_state,
+            particle._step_scheduler,
+        )
+    finally:
+        restore()
+
+    # The long backward leg fell short, by days rather than by rounding.
+    assert abs(float(landing_times[0]) - float(toff[0])) > 1.0
+    # Yet the last requested time was reached, and so the final state looks healthy.
+    assert abs(float(landing_times[-1]) - float(toff[-1])) < 1e-9
+    assert abs(float(fss.relative_time) - float(toff[-1])) < 1e-9
+
+
+def test_forced_landing_straddling_array_not_silently_truncated(
+    particle: Particle,
+) -> None:
+    """Regression: a truncated interval that is not the last one must still be recovered.
+
+    Before the per-landing check, this returned the earliest landing wrong by ~0.3 AU on
+    a real eccentric orbit (tens of degrees on the sky) while every other landing was
+    correct, and the same time asked alone came back fine.
+    """
+    times = T0 + STRADDLING_OFFSETS * u.day
+    toff = particle._times_to_offsets(times)
+    state = particle._cartesian_state.to_system()
+
+    x_ref, _, _ = budgeted_forced_landing(
+        state,
+        particle.gravity,
+        toff,
+        particle._integrator_state,
+        particle._step_scheduler,
+    )
+    restore = _shrink_forced_cap(120, 60)
+    try:
+        x_small, _, _ = budgeted_forced_landing(
+            state,
+            particle.gravity,
+            toff,
+            particle._integrator_state,
+            particle._step_scheduler,
+        )
+    finally:
+        restore()
+
+    assert float(jnp.max(jnp.abs(x_small - x_ref))) < 1e-9  # AU
 
 
 # ---------------------------------------------------------------------------

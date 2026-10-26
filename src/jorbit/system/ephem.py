@@ -54,6 +54,10 @@ def _ephem(
         step_scheduler,
     )
 
+    # positions/velocities were gathered down to the requested times above; `times`
+    # may be a longer, pre-expanded array (leapfrog), so gather it to match.
+    obs_times = times[relevant_inds]
+
     def interior(px: jnp.ndarray, pv: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
         def scan_func(
             carry: None, scan_over: tuple[jnp.ndarray, jnp.ndarray]
@@ -72,7 +76,7 @@ def _ephem(
         _, (ras, decs) = jax.lax.scan(
             scan_func,
             None,
-            (px, pv, times, observer_positions),
+            (px, pv, obs_times, observer_positions),
         )
 
         return ras, decs

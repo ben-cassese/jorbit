@@ -18,7 +18,8 @@ methods are truncation-proof:
 - :func:`stitched_per_query_gather` stitches successive interpolation chunks together,
   carrying the integrator state forward so the result is bit-identical to a single run
   with a larger buffer.
-- :func:`budgeted_forced_landing` detects a truncating forced-landing run and inserts
+- :func:`budgeted_forced_landing` detects a truncating forced-landing run -- per
+  landing, since a truncated interval leaves the ones after it correct -- and inserts
   "dummy" landing times (dropped from the output afterward) so no single interval
   exceeds the backend's per-interval cap. This mirrors the existing
   :func:`jorbit.integrators.create_leapfrog_times` "expand then select" pattern.
@@ -40,27 +41,39 @@ from jorbit.ephemeris.ephemeris_processors import (
     EphemerisProcessor,
 )
 from jorbit.integrators.ias15 import (
+    DenseOutput,
+    apply_ltt_seed_floor,
+    assert_ltt_span_covered,
     ias15_evolve,
-    ias15_evolve_forced_landing,
     ias15_evolve_with_dense_output,
     interpolate_from_dense_output,
+    ltt_backward_times,
+    ltt_seed_floor,
+    ltt_span_shortfall,
+    precompute_interpolation_indices,
 )
+from jorbit.integrators.ias15.evolve import (
+    IAS15_MAX_FORCED_LANDING_ITERS,
+    _forced_landing_with_times,
+)
+from jorbit.integrators.ias15.interpolation import _TIME_TOL
 from jorbit.utils.states import IAS15IntegratorState, SystemState
 
-# Tolerance (days) for "did the integrator reach this time" comparisons. ~0.1 ms, far
-# below any meaningful step size, so it only absorbs floating-point round-trips.
-_TIME_TOL = 1e-9
-
 # Natural-step budget per forced-landing interval. The backend caps a single interval at
-# 10000 *iterations* (accepted + rejected); we budget on accepted natural steps and keep
-# generous headroom for the occasional rejected step plus the clamp step each dummy adds.
-FORCED_LANDING_STEP_BUDGET = 8000
+# IAS15_MAX_FORCED_LANDING_ITERS *iterations* (accepted + rejected); we budget on accepted
+# natural steps and keep generous headroom for the occasional rejected step plus the clamp
+# step each dummy adds.
+FORCED_LANDING_STEP_BUDGET = int(0.8 * IAS15_MAX_FORCED_LANDING_ITERS)
 
 # Sentinel value used by the backend to fill unused dense-output slots (see ias15.py).
 _DTS_SENTINEL = 1e29
 
 # J2000 epoch in JD (TDB); EphemerisProcessor.init values are seconds past this.
 _J2000_JD = 2451545.0
+
+# Concatenated dense buffers are padded up to a multiple of this, so that the jitted
+# consumers see a handful of distinct shapes rather than one per distinct step count.
+_BUFFER_QUANTUM = 1024
 
 
 def _loaded_ephemeris_bounds_jd(
@@ -229,6 +242,206 @@ def _iterate_evolve_chunks(
         chunk_start = t_reached
 
 
+def _direction_buffers(
+    initial_system_state: SystemState,
+    acceleration_func: Callable,
+    chunk_times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
+    max_steps: int | None,
+) -> tuple[DenseOutput, int]:
+    """Concatenate the accepted steps of every stitched chunk of one directional pass.
+
+    Stitching continues the adaptive sequence bit-identically, so pasting each chunk's
+    filled prefix end to end yields exactly the step sequence a single run with a bigger
+    buffer would have produced: ``t_step_starts`` stays monotone and
+    :func:`precompute_interpolation_indices` can search it directly.
+    """
+    parts: list[list[jnp.ndarray]] = [[] for _ in range(6)]
+    total_steps = 0
+
+    for out, _chunk_start, _t_reached, _direction in _iterate_evolve_chunks(
+        initial_system_state,
+        acceleration_func,
+        chunk_times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    ):
+        iter_num = out[4]
+        total_steps += int(iter_num)
+        dts_buf = out[9]
+        # Accepted steps only. A zero-span pass accepts none; keep slot 0, which the
+        # backend seeds with the initial state and a sentinel dt, so a query there
+        # collapses to the Taylor expansion about the epoch.
+        n = max(int(jnp.sum(jnp.abs(dts_buf) < _DTS_SENTINEL)), 1)
+        for part, buf in zip(parts, out[5:11], strict=True):
+            part.append(buf[:n])
+
+    b, a0, x0, v0, dts, t_step_starts = (jnp.concatenate(part) for part in parts)
+
+    n_pad = -b.shape[0] % _BUFFER_QUANTUM
+    if n_pad:
+        pad_state = jnp.zeros((n_pad, *a0.shape[1:]))
+        b = jnp.concatenate((b, jnp.zeros((n_pad, *b.shape[1:]))))
+        a0 = jnp.concatenate((a0, pad_state))
+        x0 = jnp.concatenate((x0, pad_state))
+        v0 = jnp.concatenate((v0, pad_state))
+        dts = jnp.concatenate((dts, jnp.full((n_pad,), 1e30)))
+        t_step_starts = jnp.concatenate((t_step_starts, jnp.zeros((n_pad,))))
+
+    return DenseOutput(b, a0, x0, v0, dts, t_step_starts), total_steps
+
+
+def stitched_dense_buffers(
+    initial_system_state: SystemState,
+    acceleration_func: Callable,
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
+    max_steps: int | None = None,
+    backward_pad: float = 0.0,
+    obs_times: jnp.ndarray | None = None,
+    observer_positions: jnp.ndarray | None = None,
+) -> tuple[DenseOutput, DenseOutput, int]:
+    """Dense output covering ``times``, as one buffer per integration direction (no cap).
+
+    Stitches as many chunks as the span requires and hands back the concatenated per-step
+    polynomial data, rather than per-query slices of it. Consumers that need to evaluate the
+    trajectory at times they cannot know in advance -- the light-travel-time correction,
+    whose retarded times depend on the state -- need the whole buffer.
+
+    Both directions are always integrated, even when every requested time is on one side of
+    the epoch: a query at the epoch itself has a retarded time *before* it, which only the
+    backward pass can cover. ``backward_pad`` (days) extends the backward pass past the
+    earliest requested time so those retarded times land inside a real step. An unused
+    direction costs one zero-span kernel call.
+
+    **Light-travel-time coverage.** Passing ``observer_positions`` (and ``obs_times``) opts
+    into the full dense-LTT contract, and is what every ``interpolate=True`` ephemeris path
+    uses. It does three things ``backward_pad`` alone does not:
+
+    1. floors the integrator's first proposed step via :func:`apply_ltt_seed_floor`,
+    2. derives the backward pad from :func:`ltt_seed_floor` (added to any explicit
+       ``backward_pad``), and
+    3. measures the resulting coverage and, if the backward pass still falls short,
+       **extends it until it covers** -- see below -- before asserting.
+
+    Without ``observer_positions`` none of that happens and the behaviour is byte-for-byte
+    what it was: no seed floor (which would change the first proposed step, and so every
+    subsequent one), no derived pad, no coverage check. :func:`stitched_per_query_gather`
+    and hence ``Particle.integrate`` rely on that.
+
+    The extension exists because the pad is a guess and the requirement is not knowable
+    until a pass exists: :func:`ltt_seed_floor` sizes the pad from the particle's distance at
+    the *epoch*, while what has to be covered is the light travel time at each
+    *observation*. The new target is the measured retarded time itself rather than a
+    multiple of the old pad, because a backward pass stops at the end of the first natural
+    step past its target and so already covers the pad *plus* that overshoot; sizing an
+    extension from the pad alone can land inside the existing buffer and accomplish nothing.
+    Since the adaptive steps are natural (the target only ends the loop, it never clamps a
+    step), the extended buffer is a prefix-identical superset of the original and every
+    already-covered observation keeps a bitwise identical position.
+
+    Args:
+        initial_system_state (SystemState): State at the integration epoch.
+        acceleration_func (Callable): The system's acceleration function.
+        times (jnp.ndarray): Times the buffers must cover, shape (n_times,).
+        initial_integrator_state (IAS15IntegratorState): Starting integrator state.
+        step_scheduler (Callable): The adaptive step-size controller.
+        max_steps (int | None): Per-chunk dense-output buffer depth (None uses
+            ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more chunks.
+        backward_pad (float): Days by which to extend the backward pass past the earliest
+            requested time (and past the epoch when nothing precedes it).
+        obs_times (jnp.ndarray | None): The subset of ``times`` that are real observations,
+            shape (n_obs,). Defaults to all of ``times``. Only used with
+            ``observer_positions``.
+        observer_positions (jnp.ndarray | None): Observer position at each observation time,
+            shape (n_obs, 3). Opts into the light-travel-time contract described above.
+
+    Returns:
+        tuple[DenseOutput, DenseOutput, int]:
+            The forward buffers, the backward buffers, and the summed iteration count. The
+            count includes any discarded backward pass, since it is a measure of work done.
+    """
+    t0 = float(initial_system_state.relative_time)
+
+    pad = backward_pad
+    if observer_positions is not None:
+        if obs_times is None:
+            obs_times = times
+        positions = jnp.concatenate(
+            (
+                initial_system_state.massive_positions,
+                initial_system_state.tracer_positions,
+            )
+        )
+        initial_integrator_state = apply_ltt_seed_floor(
+            initial_integrator_state, positions, observer_positions
+        )
+        pad = pad + float(ltt_seed_floor(positions, observer_positions))
+
+    fwd, fwd_steps = _direction_buffers(
+        initial_system_state,
+        acceleration_func,
+        jnp.maximum(times, t0),
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+    bwd, bwd_steps = _direction_buffers(
+        initial_system_state,
+        acceleration_func,
+        ltt_backward_times(times, t0, pad),
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+
+    if observer_positions is not None:
+        retarded_min, shortfall = ltt_span_shortfall(
+            fwd, bwd, t0, obs_times, observer_positions
+        )
+        if shortfall > 0.0:
+            # Target the measured retarded time absolutely. ltt_span_shortfall already
+            # inflates its light travel time to cover on_sky's converged value, so the only
+            # margin needed here is float slack on the summation.
+            new_pad = (
+                float(jnp.min(jnp.minimum(times, t0))) - retarded_min + 10.0 * _TIME_TOL
+            )
+            # Only a backward shortfall is curable here. new_pad <= pad means the pass was
+            # already aimed at least this deep, so the excursion is either on the forward
+            # side or a pass that fell short of its own target -- neither of which a deeper
+            # target fixes. Rebuilding on those would re-run the identical integration
+            # (ltt_backward_times ignores a pad it already covers) and then raise anyway,
+            # so drop straight to the assert, which reports the real cause.
+            if new_pad > pad:
+                # ponytail: rebuilds the backward pass from the epoch rather than continuing
+                # the existing one from its final state. _iterate_evolve_chunks already
+                # continues the adaptive sequence bit-identically, so a true continuation is
+                # possible and would cost nothing -- it needs _direction_buffers to return
+                # its final state/integrator state and the _BUFFER_QUANTUM padding moved out
+                # to here. Not worth it at the observed ~5e-6 trigger rate; revisit if that
+                # rate climbs.
+                bwd, extra_steps = _direction_buffers(
+                    initial_system_state,
+                    acceleration_func,
+                    ltt_backward_times(times, t0, new_pad),
+                    initial_integrator_state,
+                    step_scheduler,
+                    max_steps,
+                )
+                bwd_steps += extra_steps
+            # Backstop. After a successful extension this can only fire on a genuine
+            # buffer truncation; when the extension was skipped above it is what reports
+            # the uncurable cause. Only needed inside this branch -- a zero shortfall is
+            # ltt_span_shortfall reporting that this same predicate already passed, so
+            # asserting unconditionally would just re-run the whole check on every call.
+            assert_ltt_span_covered(fwd, bwd, t0, obs_times, observer_positions)
+
+    return fwd, bwd, fwd_steps + bwd_steps
+
+
 def stitched_per_query_gather(
     initial_system_state: SystemState,
     acceleration_func: Callable,
@@ -241,17 +454,14 @@ def stitched_per_query_gather(
 
     For each requested time this returns the converged 7th-order ``b`` coefficients plus
     the start-of-step ``a0``/``x0``/``v0``, the step length ``dt``, and the fractional
-    position ``h`` of the query within its step, drawn from whichever stitched chunk
-    actually covers that time. The result is exactly what a single
-    :func:`ias15_evolve_with_dense_output` call would return for those times if its
-    buffer were large enough, but with no silent truncation.
+    position ``h`` of the query within its step, drawn from whichever direction's
+    stitched buffer (see :func:`stitched_dense_buffers`) covers that time. The result is
+    exactly what a single :func:`ias15_evolve_with_dense_output` call would return for
+    those times if its buffer were large enough, but with no silent truncation.
 
-    Feed the gather to :func:`interpolate_from_dense_output` for positions/velocities, or
-    to :func:`jorbit.integrators.make_ltt_propagator` for dense-output ephemerides.
-
-    ``max_steps`` sets the per-chunk dense-output buffer depth (None uses
-    ``IAS15_MAX_DYNAMIC_STEPS``); smaller buffers just mean more stitched chunks,
-    never truncation.
+    Feed the gather to :func:`interpolate_from_dense_output` for positions/velocities.
+    The light-travel-time paths need :func:`stitched_dense_buffers` directly, since a
+    single step per query cannot cover the retarded times.
 
     Returns:
         ``(b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps)``. With ``n = len(times)`` and
@@ -259,75 +469,34 @@ def stitched_per_query_gather(
         ``(n, P, 3)``; ``dt_q``/``h_q`` are ``(n,)``; ``total_steps`` is the summed
         iteration count across all chunks.
     """
-    n_times = times.shape[0]
-    t0 = float(initial_system_state.relative_time)
-    b_q = a0_q = x0_q = v0_q = dt_q = h_q = None
-    covered = jnp.zeros(n_times, dtype=bool)
-    total_steps = 0
+    fwd, bwd, total_steps = stitched_dense_buffers(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
 
-    for forward_pass in [True, False]:
-        pass_mask = times >= t0 if forward_pass else times < t0
-        if not jnp.any(pass_mask):
-            continue
+    def gathered(dense: DenseOutput) -> tuple:
+        idx, h = precompute_interpolation_indices(dense.t_step_starts, dense.dts, times)
+        return (
+            dense.b[idx],
+            dense.a0[idx],
+            dense.x0[idx],
+            dense.v0[idx],
+            dense.dts[idx],
+            # Safety rail against floating-point drift at a step boundary, matching
+            # _ias15_evolve_core's own clip of the h values it returns.
+            jnp.clip(h, 0.0, 1.0),
+        )
 
-        chunk_times = jnp.where(pass_mask, times, t0)
-
-        for out, _chunk_start, t_reached, direction in _iterate_evolve_chunks(
-            initial_system_state,
-            acceleration_func,
-            chunk_times,
-            initial_integrator_state,
-            step_scheduler,
-            max_steps,
-        ):
-            (
-                _positions,
-                _velocities,
-                _final_system_state,
-                _final_integrator_state,
-                iter_num,
-                b_buf,
-                a0_buf,
-                x0_buf,
-                v0_buf,
-                dts_buf,
-                _t_step_starts,
-                step_indices,
-                h_values,
-            ) = out
-            total_steps += int(iter_num)
-
-            if b_q is None:
-                # Allocate accumulators now that we know the per-step shapes.
-                b_q = jnp.zeros((n_times, *b_buf.shape[1:]))
-                a0_q = jnp.zeros((n_times, *a0_buf.shape[1:]))
-                x0_q = jnp.zeros((n_times, *x0_buf.shape[1:]))
-                v0_q = jnp.zeros((n_times, *v0_buf.shape[1:]))
-                dt_q = jnp.zeros((n_times,))
-                h_q = jnp.zeros((n_times,))
-
-            # Times this chunk newly covers: not yet covered and at/before t_reached in the
-            # integration direction. Already-covered times keep their earlier gather; times
-            # past t_reached are left for a later chunk.
-            reached = direction * (t_reached - times) >= -_TIME_TOL
-            newly = (~covered) & reached & pass_mask
-
-            b_chunk = b_buf[step_indices]
-            a0_chunk = a0_buf[step_indices]
-            x0_chunk = x0_buf[step_indices]
-            v0_chunk = v0_buf[step_indices]
-            dt_chunk = dts_buf[step_indices]
-
-            b_q = jnp.where(newly[:, None, None, None], b_chunk, b_q)
-            a0_q = jnp.where(newly[:, None, None], a0_chunk, a0_q)
-            x0_q = jnp.where(newly[:, None, None], x0_chunk, x0_q)
-            v0_q = jnp.where(newly[:, None, None], v0_chunk, v0_q)
-            dt_q = jnp.where(newly, dt_chunk, dt_q)
-            h_q = jnp.where(newly, h_values, h_q)
-
-            covered = covered | newly
-
-    return b_q, a0_q, x0_q, v0_q, dt_q, h_q, total_steps
+    is_fwd = times >= float(initial_system_state.relative_time)
+    picked = []
+    for f_i, b_i in zip(gathered(fwd), gathered(bwd), strict=True):
+        mask = is_fwd.reshape((-1,) + (1,) * (f_i.ndim - 1))
+        picked.append(jnp.where(mask, f_i, b_i))
+    return (*picked, total_steps)
 
 
 def stitched_interpolate(
@@ -417,9 +586,11 @@ def insert_budget_dummy_times(
     """Insert dummy landing times so no requested interval holds more than ``budget`` steps.
 
     Mirrors the contract of :func:`jorbit.integrators.create_leapfrog_times`: returns an
-    expanded, ascending time array plus the indices of the original ``requested_times``
-    within it. Dummy times are placed at natural step boundaries inside any interval that
-    would otherwise exceed ``budget`` natural steps.
+    expanded time array plus the indices of the original ``requested_times`` within it.
+    The expansion is in *marching* order, which follows ``requested_times`` and so is not
+    ascending when those cross the epoch or are unsorted. Dummy times are placed at
+    natural step boundaries inside any interval that would otherwise exceed ``budget``
+    natural steps.
 
     Args:
         natural_step_times: Cumulative natural step end-times from
@@ -464,10 +635,21 @@ def budgeted_forced_landing(
 ) -> tuple[jnp.ndarray, jnp.ndarray, int]:
     """Forced-landing integration that never silently truncates between requested times.
 
-    Runs :func:`ias15_evolve_forced_landing` on ``times``; if any interval truncated (the
-    integrator failed to reach the last requested time), discovers the natural step
-    structure, inserts dummy landing times so each sub-interval stays under the backend's
-    per-interval cap, and re-runs. The dummy times are dropped from the returned arrays.
+    Runs the forced-landing backend on ``times``; if any interval truncated, discovers
+    the natural step structure, inserts dummy landing times so each sub-interval stays
+    under the backend's per-interval cap, and re-runs. The dummy times are dropped from
+    the returned arrays.
+
+    Truncation is detected per landing, against the reached times the backend emits, not
+    from the final state: a truncated interval stops at a state that is correct for the
+    time it stopped at, so every interval after it starts on the true trajectory and
+    lands normally. Checking only the last requested time therefore misses a truncation
+    anywhere else -- which is exactly what happened to an ascending array straddling the
+    epoch, where the whole pre-epoch arc is traversed as the single interval from the
+    epoch back to ``times[0]``: that one interval overran the cap, the (post-epoch) last
+    time was reached anyway, and the earliest landing came back silently wrong. A single
+    requested time was unaffected only because there the last-time check *is* the whole
+    check.
 
     Inserting a dummy landing splits one step into two clamped steps, a perturbation of
     the same kind forced-landing already incurs at every requested time and far below the
@@ -476,8 +658,8 @@ def budgeted_forced_landing(
     Returns:
         ``(positions, velocities, total_steps)`` at the originally requested ``times``.
     """
-    positions, velocities, final_system_state, _final_integrator_state, tot_steps = (
-        ias15_evolve_forced_landing(
+    positions, velocities, landing_times, _fss, _fis, tot_steps = (
+        _forced_landing_with_times(
             initial_system_state,
             acceleration_func,
             times,
@@ -486,17 +668,13 @@ def budgeted_forced_landing(
         )
     )
 
-    last_time = float(times[-1])
-    t0 = float(initial_system_state.relative_time)
-    direction = 1.0 if last_time >= t0 else -1.0
-    reached = (
-        direction * (float(final_system_state.relative_time) - last_time) >= -_TIME_TOL
-    )
-    if reached:
+    # Forced landing clamps its step to land exactly on each requested time, so an
+    # untruncated landing matches bit-for-bit; _TIME_TOL only absorbs round-trip noise.
+    if float(jnp.max(jnp.abs(landing_times - times))) <= _TIME_TOL:
         return positions, velocities, int(tot_steps)
 
-    # A run truncated somewhere; targets only advance, so a short final time is a
-    # reliable signal. Discover the natural step density and subdivide.
+    # Some interval truncated. Discover the natural step density and subdivide.
+    t0 = float(initial_system_state.relative_time)
     natural_step_times = discover_natural_step_times(
         initial_system_state,
         acceleration_func,
@@ -507,8 +685,8 @@ def budgeted_forced_landing(
     augmented_times, relevant_inds = insert_budget_dummy_times(
         natural_step_times, times, t0, FORCED_LANDING_STEP_BUDGET
     )
-    positions, velocities, final_system_state, _final_integrator_state, tot_steps = (
-        ias15_evolve_forced_landing(
+    positions, velocities, landing_times, _fss, _fis, tot_steps = (
+        _forced_landing_with_times(
             initial_system_state,
             acceleration_func,
             augmented_times,
@@ -517,10 +695,10 @@ def budgeted_forced_landing(
         )
     )
 
-    last_aug = float(augmented_times[-1])
-    if direction * (float(final_system_state.relative_time) - last_aug) < -_TIME_TOL:
-        # Essentially unreachable (would require a single ~8000-natural-step sub-interval
-        # to still overflow the 10000-iteration cap). Raise rather than silently truncate.
+    if float(jnp.max(jnp.abs(landing_times - augmented_times))) > _TIME_TOL:
+        # Essentially unreachable (would require a single FORCED_LANDING_STEP_BUDGET-step
+        # sub-interval to still overflow the iteration cap), or an interval that stalled
+        # for some reason other than the cap. Raise rather than silently truncate.
         raise RuntimeError(
             "Forced-landing integration still truncated after inserting dummy landing "
             "times. Try integrate_or_interpolate (interpolation path) instead, or "
@@ -542,9 +720,16 @@ def ias15_span_probe(
     Returns ``(would_truncate, total_steps)`` where ``would_truncate`` is True if one
     dense-output buffer (of depth ``max_steps``; None uses
     ``IAS15_MAX_DYNAMIC_STEPS``) fails to reach ``max(times)``. A cheap forward
-    integration (no autodiff) used by the detect-and-raise guards on the
-    covariance-ephemeris and likelihood paths, where the host-side stitching loop
-    cannot be threaded through ``jax.jacfwd``.
+    integration with no autodiff, for the paths that run inside ``jax.jacfwd`` and so
+    cannot be threaded through the host-side stitching loop.
+
+    Called automatically by the detect-and-raise guards in
+    ``Particle.ephemeris(uncertainty=True)`` and ``Particle.max_likelihood``. The
+    ``System(observations=...)`` forward model is deliberately *not* guarded this way:
+    its callables are compiled once and scored on candidate states supplied as
+    arguments, so an automatic probe would force a device sync and a full extra
+    integration on every likelihood evaluation. ``System.probe_span`` exposes this
+    function for those callers to invoke at their own discretion.
     """
     t0 = float(initial_system_state.relative_time)
     would_truncate = False

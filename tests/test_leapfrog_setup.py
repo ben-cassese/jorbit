@@ -16,3 +16,16 @@ def test_create_leapfrog_times() -> None:
     )
     assert jnp.allclose(expanded_times[inds], times)
     assert jnp.abs(jnp.diff(expanded_times)).max() <= 0.3 + 1e-14
+
+
+def test_create_leapfrog_times_repeated_timestamps() -> None:
+    """A repeated requested time must map to its own entry, not back to index 0.
+
+    Two observations sharing an epoch (two sites reporting the same instant) used to
+    silently return the state at the *first* expanded time instead.
+    """
+    times = jnp.array([1.0, 2.0, 2.0, 3.0])
+    expanded_times, inds = create_leapfrog_times(
+        t0=0.0, times=times, biggest_allowed_dt=1.0
+    )
+    assert jnp.allclose(expanded_times[inds], times)

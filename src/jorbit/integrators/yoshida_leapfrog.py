@@ -3,6 +3,20 @@
 Please see/cite https://doi.org/10.1016/0375-9601(90)90092-3. Includes ability for a
 4th, 6th, and 8th order integrator via appropriate choice of coefficients (all of which
 are pre-computed using routines below and stored in jorbit.data.constants).
+
+Two properties worth knowing before choosing these over IAS15:
+
+- **Reverse-mode differentiable.** :func:`leapfrog_evolve` is a plain ``jax.lax.scan``
+  over a pre-computed schedule with no data-dependent control flow, so ``jax.grad``
+  works through it directly. The adaptive IAS15 path uses a ``lax.while_loop`` and so
+  supports forward mode only. There is no ``jax.checkpoint`` on the scan body, so the
+  reverse-mode tape grows linearly in the number of steps.
+- **Not symplectic as used here.** The composition itself is symplectic at a fixed
+  step, but :func:`create_leapfrog_times` sizes each leg of the schedule to land
+  exactly on the requested output times, so neighboring steps generally differ in
+  length. That variable stepping forfeits the bounded-energy-error behavior that
+  usually motivates a symplectic integrator; treat these as fixed-schedule high-order
+  composition integrators, not as long-term symplectic propagators.
 """
 
 import jax
@@ -139,8 +153,13 @@ def leapfrog_evolve(
     def scan_func(carry: tuple, scan_over: float) -> tuple[tuple, tuple]:
         system_state, integrator_state = carry
         tf = scan_over
+        # Signed: dt carries the direction of travel. The Yoshida C/D vectors are
+        # palindromic and the substep times are symmetric about the midpoint, so a
+        # negative step is the exact inverse of the positive one (even though the
+        # acceleration is time-dependent). Taking abs(dt) here marches the state
+        # forward on a backward request, and the mismatch compounds every step.
         dt = tf - system_state.relative_time
-        integrator_state.dt = jnp.abs(dt)
+        integrator_state.dt = dt
         new_state = leapfrog_step(system_state, acceleration_func, integrator_state)
         return (new_state, integrator_state), (
             jnp.concatenate(
@@ -175,6 +194,14 @@ def create_leapfrog_times(
     larger than `biggest_allowed_dt`. Also returns the indices of the original times in
     the expanded array.
 
+    Each leg (the gap between two consecutive requested times) is subdivided evenly so
+    the integration lands exactly on every requested time, which means different legs
+    generally get different step sizes. See the module docstring: that variable
+    stepping is why these integrators are not symplectic in practice.
+
+    ``times`` need not be sorted or monotonic, and entries may repeat; the schedule
+    simply walks from one requested time to the next in the order given.
+
     Args:
         t0 (float):
             The initial time.
@@ -194,7 +221,7 @@ def create_leapfrog_times(
     for jump in time_deltas:
         if jump == 0:
             step_times = jnp.concatenate([step_times, jnp.array([t0])])
-            inds = jnp.concatenate([inds, jnp.array([0])])
+            inds = jnp.concatenate([inds, jnp.array([step_times.shape[0] - 1])])
             continue
         step_size = jnp.sign(jump) * jnp.min(
             jnp.abs(jnp.array([jump, biggest_allowed_dt]))
