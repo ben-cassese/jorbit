@@ -14,6 +14,8 @@ the buffer must reach far enough back to contain the retarded time of even the e
 observation (which precedes the integration epoch).
 """
 
+from collections.abc import Callable, Iterator
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -53,6 +55,27 @@ GM_SUN = 2.9591220828559115e-04  # AU^3/day^2, only used to build plausible orbi
 # A single 3-observation tracklet: first obs at the particle epoch itself, which is
 # the worst case (the emission time predates the whole integration span).
 SHORT_ARC = EPOCH + jnp.array([0.0, 0.0055, 0.011]) * u.day
+
+
+@pytest.fixture
+def traced_patch(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable]:
+    """Patch a module global that jitted code resolves at trace time.
+
+    A cached executable bakes in whatever such a global resolved to when it was first
+    traced, so without clearing, a patch can be silently ignored (an earlier test compiled
+    the same shapes) or leak into later tests (this one compiled them). Clearing only the
+    innermost jitted function is not enough: Systems with matching shapes share the outer
+    ``_chi2``/``_loglike``/... executables too. So clear every cache after each patch,
+    and again after the patches are undone.
+    """
+
+    def patch(module: object, name: str, value: object) -> None:
+        monkeypatch.setattr(module, name, value)
+        jax.clear_caches()
+
+    yield patch
+    monkeypatch.undo()
+    jax.clear_caches()
 
 
 def _circular_particle(r: float) -> Particle:
@@ -268,6 +291,7 @@ def test_assert_ltt_span_covered_still_raises_on_an_uncovered_buffer() -> None:
 
 def test_backward_pass_extends_past_a_large_overshoot(
     monkeypatch: pytest.MonkeyPatch,
+    traced_patch: Callable,
 ) -> None:
     """The extension targets the measured retarded time, not a multiple of the pad.
 
@@ -315,7 +339,7 @@ def test_backward_pass_extends_past_a_large_overshoot(
     # Now with the coverage contract on. Patch the seed floor to reproduce the same first
     # backward step, and the pad to the same small value, so the only difference from the
     # run above is that the extension is allowed to happen.
-    monkeypatch.setattr(
+    traced_patch(
         interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(0.7 * required)
     )
     monkeypatch.setattr(budgeted, "ltt_seed_floor", lambda *a: jnp.asarray(pad))
@@ -368,7 +392,7 @@ def test_extension_is_bitwise_non_perturbing(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_bounded_path_reports_and_poisons_an_ltt_shortfall(
-    monkeypatch: pytest.MonkeyPatch,
+    traced_patch: Callable,
 ) -> None:
     """The jitted System path cannot extend or raise, so it reports and poisons instead.
 
@@ -384,10 +408,6 @@ def test_bounded_path_reports_and_poisons_an_ltt_shortfall(
     states = jnp.concatenate((state.tracer_positions, state.tracer_velocities), axis=1)
 
     def run() -> tuple:
-        # _ephem_ias15_bounded is jitted, and it resolves ltt_seed_floor from its module
-        # globals at trace time, so a cached executable would silently ignore the patches
-        # below and leave this test asserting nothing.
-        system_dense._ephem_ias15_bounded.clear_cache()
         return system_dense._ephem_ias15_bounded(
             states,
             times_off,
@@ -406,15 +426,15 @@ def test_bounded_path_reports_and_poisons_an_ltt_shortfall(
     assert bool(jnp.all(ltt_covered))
 
     # Starve the pad and the mask drops, on the observation whose retarded time is worst.
-    monkeypatch.setattr(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
-    monkeypatch.setattr(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
+    traced_patch(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
+    traced_patch(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
     _ras, _decs, reached, ltt_covered = run()
     assert bool(jnp.all(reached)), "truncation would confound this test"
     assert not bool(jnp.all(ltt_covered))
 
 
 def test_system_callables_poison_an_ltt_shortfall(
-    monkeypatch: pytest.MonkeyPatch,
+    traced_patch: Callable,
 ) -> None:
     """An uncovered retarded time is poisoned exactly the way a truncation is.
 
@@ -435,9 +455,8 @@ def test_system_callables_poison_an_ltt_shortfall(
     truth = jnp.concatenate([jnp.asarray(p._x), jnp.asarray(p._v)])[None, :]
 
     # Starve the backward pad so the 0.73 day light travel time reaches off the buffer.
-    monkeypatch.setattr(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
-    monkeypatch.setattr(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
-    system_dense._ephem_ias15_bounded.clear_cache()
+    traced_patch(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
+    traced_patch(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
 
     ras, decs, reached, ltt_covered = system.model_radec_with_status(truth)
     assert bool(jnp.all(reached)), "truncation would confound this test"
@@ -452,7 +471,7 @@ def test_system_callables_poison_an_ltt_shortfall(
 
 
 def test_host_and_traced_coverage_checks_agree(
-    monkeypatch: pytest.MonkeyPatch,
+    traced_patch: Callable,
 ) -> None:
     """The two guards are wrappers over one predicate, so they must flag the same rows."""
     p, times, observer, _required = _distant_observer_setup()
@@ -461,9 +480,8 @@ def test_host_and_traced_coverage_checks_agree(
     times_off = times - t0
     fwd_mask = times_off >= 0.0
 
-    monkeypatch.setattr(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
-    monkeypatch.setattr(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
-    system_dense._ephem_ias15_bounded.clear_cache()
+    traced_patch(system_dense, "ltt_seed_floor", lambda *a: jnp.asarray(0.0))
+    traced_patch(interpolation, "ltt_seed_floor", lambda *a: jnp.asarray(1e-6))
     _ras, _decs, reached, ltt_covered = system_dense._ephem_ias15_bounded(
         jnp.concatenate((state.tracer_positions, state.tracer_velocities), axis=1),
         times_off,
@@ -495,7 +513,7 @@ def test_host_and_traced_coverage_checks_agree(
 
 
 def test_covariance_path_raises_on_uncovered_ltt(
-    monkeypatch: pytest.MonkeyPatch,
+    traced_patch: Callable,
 ) -> None:
     """ephemeris(uncertainty=True) refuses rather than returning an extrapolation.
 
@@ -503,11 +521,7 @@ def test_covariance_path_raises_on_uncovered_ltt(
     extend them. It gets the same mask the batched System path does and raises on it.
     """
     p = _circular_particle(127.0)
-    monkeypatch.setattr(particle_dense, "ltt_seed_floor", lambda *args: 0.0)
-    # Same jit-cache hazard as the bounded path: _ephem_ias15 bakes in whatever
-    # ltt_seed_floor resolved to when it was first traced.
-    particle_dense._ephem_ias15.clear_cache()
-    particle_dense._ephem_ias15_with_cov.clear_cache()
+    traced_patch(particle_dense, "ltt_seed_floor", lambda *args: 0.0)
     state = p.cartesian_state.replace(cov=jnp.eye(6) * 1e-16)
     with pytest.raises(RuntimeError, match="outside the integrated span"):
         p.ephemeris(SHORT_ARC, "kitt peak", state=state, uncertainty=True)

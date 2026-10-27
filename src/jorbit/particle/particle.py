@@ -41,6 +41,7 @@ from jorbit.data.constants import (
     Y8_D,
 )
 from jorbit.ephemeris.ephemeris import Ephemeris
+from jorbit.ephemeris.ephemeris_processors import EphemerisProcessor
 from jorbit.integrators import (
     budgeted_forced_landing,
     create_leapfrog_times,
@@ -76,6 +77,19 @@ from jorbit.utils.states import (
     KeplerianState,
     LeapfrogIntegratorState,
 )
+
+
+@jax.jit
+def _sun_positions(processor: EphemerisProcessor, times: jnp.ndarray) -> jnp.ndarray:
+    """Evaluate the barycentric Sun record in a default DE430/DE440 processor."""
+
+    def position_at_time(time: jnp.ndarray) -> jnp.ndarray:
+        # The first raw planetary record is already relative to the barycenter.
+        return processor._individual_state(
+            processor.init[0], processor.intlen[0], processor.coeffs[0], time
+        )[0]
+
+    return jax.vmap(position_at_time)(times)
 
 
 class Particle:
@@ -1480,7 +1494,7 @@ class Particle:
             latest_time=self._latest_time,
             de_ephemeris_version=self._de_ephemeris_version,
         )
-        sun_pos = jax.vmap(eph.processor.state)(times)[0][:, 0, :]
+        sun_pos = _sun_positions(eph.ephs[0], times)
 
         eph_unit_vec = jnp.array(ephem.cartesian.xyz).T
 

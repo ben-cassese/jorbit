@@ -31,6 +31,31 @@ from jorbit.ephemeris.ephemeris_processors import (
 from jorbit.ephemeris.process_bsp import extract_data, merge_data
 
 
+# Module level (not nested in Ephemeris.__init__) so every Ephemeris shares the same
+# function object: a Partial's function is part of its pytree structure, so a fresh
+# closure per instance would force every jitted consumer to recompile.
+def _default_planets_postprocessing(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
+    # the earth and moon are relative to the earth barycenter, not the sun
+    x = x.at[4:6].set(x[4:6] + x[3])
+    v = v.at[4:6].set(v[4:6] + v[3])
+    x = jnp.delete(x, 3, axis=0)
+    v = jnp.delete(v, 3, axis=0)
+    return x, v
+
+
+def _default_solar_system_postprocessing(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
+    # the earth and moon are relative to the earth barycenter, not the sun
+    x = x.at[4:6].set(x[4:6] + x[3])
+    v = v.at[4:6].set(v[4:6] + v[3])
+    x = jnp.delete(x, 3, axis=0)
+    v = jnp.delete(v, 3, axis=0)
+
+    # the asteroids are all relative to the sun, not the barycenter
+    x = x.at[-16:].set(x[-16:] + x[0])
+    v = v.at[-16:].set(v[-16:] + v[0])
+    return x, v
+
+
 class Ephemeris:
     """A class for managing and processing a JPL DE solar system ephemeris.
 
@@ -106,15 +131,7 @@ class Ephemeris:
                 }
             ]
 
-            def postprocessing_func(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
-                # the earth and moon are relative to the earth barycenter, not the sun
-                x = x.at[4:6].set(x[4:6] + x[3])
-                v = v.at[4:6].set(v[4:6] + v[3])
-                x = jnp.delete(x, 3, axis=0)
-                v = jnp.delete(v, 3, axis=0)
-                return x, v
-
-            postprocessing_func = jax.tree_util.Partial(postprocessing_func)
+            postprocessing_func = jax.tree_util.Partial(_default_planets_postprocessing)
 
         elif ssos == "default solar system":
             ssos = [
@@ -136,19 +153,9 @@ class Ephemeris:
                 },
             ]
 
-            def postprocessing_func(x: jnp.ndarray, v: jnp.ndarray) -> tuple:
-                # the earth and moon are relative to the earth barycenter, not the sun
-                x = x.at[4:6].set(x[4:6] + x[3])
-                v = v.at[4:6].set(v[4:6] + v[3])
-                x = jnp.delete(x, 3, axis=0)
-                v = jnp.delete(v, 3, axis=0)
-
-                # the asteroids are all relative to the sun, not the barycenter
-                x = x.at[-16:].set(x[-16:] + x[0])
-                v = v.at[-16:].set(v[-16:] + v[0])
-                return x, v
-
-            postprocessing_func = jax.tree_util.Partial(postprocessing_func)
+            postprocessing_func = jax.tree_util.Partial(
+                _default_solar_system_postprocessing
+            )
 
         combined_names = []
         combined_log_gms = []
