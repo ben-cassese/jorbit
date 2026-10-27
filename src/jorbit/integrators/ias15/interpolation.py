@@ -127,15 +127,16 @@ def dense_position(
         dense.t_step_starts, dense.dts, jnp.atleast_1d(t)
     )
     i = step_indices[0]
+    # Select the particle first to avoid a second particle axis under vmap.
     x, _ = _estimate_x_v_from_b(
-        dense.a0[i],
-        dense.v0[i],
-        dense.x0[i],
+        dense.a0[i, particle_index][None, :],
+        dense.v0[i, particle_index][None, :],
+        dense.x0[i, particle_index][None, :],
         h_values[0],
         dense.dts[i],
-        dense.b[i][::-1],
+        dense.b[i, :, particle_index, :][::-1, None, :],
     )
-    return x[particle_index]
+    return x[0]
 
 
 def ltt_seed_floor(
