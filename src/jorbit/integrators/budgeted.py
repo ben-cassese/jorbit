@@ -30,6 +30,7 @@ The common case is a single backend call plus one cheap scalar check.
 """
 
 from collections.abc import Callable, Iterator
+from functools import partial
 
 import jax
 
@@ -169,6 +170,27 @@ def _no_progress_error(
     )
 
 
+@partial(jax.jit, static_argnames=["max_steps"])
+def _evolve_dense_chunk(
+    initial_system_state: SystemState,
+    acceleration_func: Callable,
+    times: jnp.ndarray,
+    initial_integrator_state: IAS15IntegratorState,
+    step_scheduler: Callable,
+    max_steps: int | None = None,
+) -> tuple[SystemState, IAS15IntegratorState, jnp.ndarray, DenseOutput]:
+    """Return only the chunk state and buffers so unused interpolation is eliminated."""
+    out = ias15_evolve_with_dense_output(
+        initial_system_state,
+        acceleration_func,
+        times,
+        initial_integrator_state,
+        step_scheduler,
+        max_steps,
+    )
+    return out[2], out[3], out[4], DenseOutput(*out[5:11])
+
+
 def _iterate_evolve_chunks(
     initial_system_state: SystemState,
     acceleration_func: Callable,
@@ -187,8 +209,8 @@ def _iterate_evolve_chunks(
 
     Yields:
         ``(chunk_output, chunk_start, t_reached, direction)`` per chunk, where
-        ``chunk_output`` is the full 13-tuple from
-        :func:`ias15_evolve_with_dense_output`.
+        ``chunk_output`` contains the final system state, final integrator state,
+        iteration count, and :class:`DenseOutput` buffers.
     """
     state = initial_system_state
     integrator_state = initial_integrator_state
@@ -207,7 +229,7 @@ def _iterate_evolve_chunks(
         current_times = (
             jnp.maximum(times, cur_t0) if is_forward else jnp.minimum(times, cur_t0)
         )
-        out = ias15_evolve_with_dense_output(
+        out = _evolve_dense_chunk(
             state,
             acceleration_func,
             current_times,
@@ -215,7 +237,7 @@ def _iterate_evolve_chunks(
             step_scheduler,
             max_steps,
         )
-        final_system_state = out[2]
+        final_system_state = out[0]
         t_reached = float(final_system_state.relative_time)
 
         if direction == 0.0:
@@ -237,8 +259,8 @@ def _iterate_evolve_chunks(
                 acceleration_func,
             )
 
-        state = out[2]
-        integrator_state = out[3]
+        state = out[0]
+        integrator_state = out[1]
         chunk_start = t_reached
 
 
@@ -268,14 +290,15 @@ def _direction_buffers(
         step_scheduler,
         max_steps,
     ):
-        iter_num = out[4]
+        iter_num = out[2]
         total_steps += int(iter_num)
-        dts_buf = out[9]
+        dense = out[3]
+        dts_buf = dense.dts
         # Accepted steps only. A zero-span pass accepts none; keep slot 0, which the
         # backend seeds with the initial state and a sentinel dt, so a query there
         # collapses to the Taylor expansion about the epoch.
         n = max(int(jnp.sum(jnp.abs(dts_buf) < _DTS_SENTINEL)), 1)
-        for part, buf in zip(parts, out[5:11], strict=True):
+        for part, buf in zip(parts, dense, strict=True):
             part.append(buf[:n])
 
     b, a0, x0, v0, dts, t_step_starts = (jnp.concatenate(part) for part in parts)
@@ -565,7 +588,7 @@ def discover_natural_step_times(
             initial_integrator_state,
             step_scheduler,
         ):
-            dts_buf = out[9]
+            dts_buf = out[3].dts
             # Keep only the filled prefix; unused slots hold the large sentinel.
             valid = dts_buf[dts_buf < _DTS_SENTINEL]
             all_dts.append(valid)

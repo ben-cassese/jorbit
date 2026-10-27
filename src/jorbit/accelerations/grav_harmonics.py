@@ -59,21 +59,24 @@ def grav_harmonics(
     x = jnp.dot(x, rot_matrix)
 
     def _vn(x: jnp.ndarray) -> jnp.ndarray:
-        # for a single particle, what is the potential for all Jn's?
+        # for a single particle, what is the total potential for all Jn's?
         r = jnp.linalg.norm(x)
-        theta = jnp.arccos(x[-1] / r)
-        cos_theta = jnp.array([jnp.cos(theta)])
-        tmp = jns.shape[0] + 1
-        p = jax.scipy.special.lpmn_values(tmp, tmp, cos_theta, is_normalized=False)
-        return (
-            -(body_gm / r)
-            * (body_req / r) ** jnp.arange(2, tmp + 1)
-            * jns
-            * p[0, 2:, 0]
+        # Avoid arccos: its derivative is undefined at the poles.
+        cos_theta = x[-1] / r
+        degrees = jnp.arange(2, jns.shape[0] + 2)
+
+        def legendre_step(carry: tuple, n: int) -> tuple:
+            p_nm2, p_nm1 = carry
+            p_n = ((2 * n - 1) * cos_theta * p_nm1 - (n - 1) * p_nm2) / n
+            return (p_nm1, p_n), p_n
+
+        _, p = jax.lax.scan(
+            legendre_step, (jnp.ones_like(cos_theta), cos_theta), degrees
         )
+        return jnp.sum(-(body_gm / r) * (body_req / r) ** degrees * jns * p)
 
     # the acceleration is just the gradient of that, then vmapped over all particles
-    accs = jax.vmap(lambda p: jnp.sum(jax.jacrev(_vn)(p), axis=0))(x)
+    accs = jax.vmap(jax.grad(_vn))(x)
 
     # rotate them back to the original frame
     accs = jnp.dot(accs, rot_matrix.T)

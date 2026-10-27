@@ -100,6 +100,27 @@ def precompute_interpolation_indices(
     return step_indices, h_values
 
 
+def _dense_position_inputs(
+    dense: DenseOutput,
+    t: jnp.ndarray,
+    particle_index: jnp.ndarray,
+) -> tuple[jnp.ndarray, ...]:
+    """Gather one particle's polynomial inputs from the step containing ``t``."""
+    step_indices, h_values = precompute_interpolation_indices(
+        dense.t_step_starts, dense.dts, jnp.atleast_1d(t)
+    )
+    i = step_indices[0]
+    # Keep a singleton particle axis for the polynomial helper's denominators.
+    return (
+        dense.a0[i, particle_index][None, :],
+        dense.v0[i, particle_index][None, :],
+        dense.x0[i, particle_index][None, :],
+        h_values[0],
+        dense.dts[i],
+        dense.b[i, :, particle_index, :][::-1, None, :],
+    )
+
+
 def dense_position(
     dense: DenseOutput,
     t: jnp.ndarray,
@@ -123,19 +144,7 @@ def dense_position(
         jnp.ndarray:
             Position at ``t``, shape (3,).
     """
-    step_indices, h_values = precompute_interpolation_indices(
-        dense.t_step_starts, dense.dts, jnp.atleast_1d(t)
-    )
-    i = step_indices[0]
-    # Select the particle first to avoid a second particle axis under vmap.
-    x, _ = _estimate_x_v_from_b(
-        dense.a0[i, particle_index][None, :],
-        dense.v0[i, particle_index][None, :],
-        dense.x0[i, particle_index][None, :],
-        h_values[0],
-        dense.dts[i],
-        dense.b[i, :, particle_index, :][::-1, None, :],
-    )
+    x, _ = _estimate_x_v_from_b(*_dense_position_inputs(dense, t, particle_index))
     return x[0]
 
 
@@ -533,10 +542,15 @@ def _ltt_position(
 ) -> jnp.ndarray:
     """Position at ``t_obs + dt``, taken from whichever pass covers that time."""
     t = t_obs + dt
-    x_fwd = dense_position(fwd, t, particle_index)
-    if bwd is None:
-        return x_fwd
-    return jnp.where(t >= t0, x_fwd, dense_position(bwd, t, particle_index))
+    inputs = _dense_position_inputs(fwd, t, particle_index)
+    if bwd is not None:
+        inputs = jax.tree.map(
+            lambda f, b: jnp.where(t >= t0, f, b),
+            inputs,
+            _dense_position_inputs(bwd, t, particle_index),
+        )
+    x, _ = _estimate_x_v_from_b(*inputs)
+    return x[0]
 
 
 def make_ltt_propagator(
@@ -627,14 +641,27 @@ def interpolate_from_dense_output(
         tuple[jnp.ndarray, jnp.ndarray]:
             Interpolated positions and velocities, each shape (n_queries, n_particles, 3).
     """
-    b = b_all[step_indices]
     a0 = a0_all[step_indices]
     x0 = x0_all[step_indices]
     v0 = v0_all[step_indices]
-    dt = dts[step_indices]
+    dt = dts[step_indices, None, None]
+    h = h_values[:, None, None]
 
-    positions, velocities = jax.vmap(
-        lambda a, v, x, _h, _dt, _b: _estimate_x_v_from_b(a, v, x, _h, _dt, _b[::-1])
-    )(a0, v0, x0, h_values, dt, b)
+    def coefficient(carry: tuple, k: jnp.ndarray) -> tuple:
+        x, v = carry
+        # Gather one coefficient at a time instead of a (n_queries, 7, P, 3) array.
+        b = b_all[step_indices, k]
+        x = x * h + b * dt * dt / ((k + 2) * (k + 3))
+        v = v * h + b * dt / (k + 2)
+        return (x, v), None
 
-    return positions, velocities
+    (x, v), _ = jax.lax.scan(
+        coefficient,
+        (jnp.zeros_like(x0), jnp.zeros_like(v0)),
+        jnp.arange(6, -1, -1),
+    )
+    x *= h * h * h
+    x += (v0 * dt) * h + (a0 * dt * dt / 2.0) * h * h + x0
+    v *= h * h
+    v += v0 + (a0 * dt) * h
+    return x, v
