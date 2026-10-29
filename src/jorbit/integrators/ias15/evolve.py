@@ -520,15 +520,15 @@ def ias15_evolve(
     is prone to.
 
     Supports forward-mode AD only (``jax.lax.while_loop`` has no reverse-mode rule).
-    Also, because the step sequence is chosen adaptively from the state, an
-    infinitesimal change in the initial state can change the realized number and
-    placement of steps: the outputs (and any scalar built from them, e.g. a
-    likelihood) are only piecewise-smooth in the initial state, with
-    discontinuities at roughly the integrator tolerance. Use forward-mode AD for
-    derivatives — it differentiates the realized step sequence and is exact for
-    the function actually evaluated. Finite differences straddle the
-    discontinuities and silently return garbage whenever the true derivative is
-    small (weakly-constrained directions).
+    Adaptive step-size proposals are held constant during differentiation (see
+    :func:`ias15_step`). Forward-mode AD therefore estimates the physical orbit
+    sensitivities to integration accuracy, rather than the exact derivative of
+    every numerical choice made by the adaptive algorithm. The acceleration's
+    explicit time dependence must remain differentiable.
+
+    Finite differences can validate these sensitivities, but their perturbation
+    sizes must be checked for convergence: changes in the realized step sequence
+    and floating-point roundoff can dominate a small finite-difference signal.
 
     Args:
         initial_system_state (SystemState):

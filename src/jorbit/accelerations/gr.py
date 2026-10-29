@@ -136,8 +136,8 @@ def _ppn_non_constant(
 def _compute_ppn_setup(inputs: SystemState) -> tuple:
     """Compute geometry, COM frame, Newtonian accelerations, and constant PPN terms.
 
-    Fixed perturber inputs are wrapped in stop_gradient at the source, so no
-    gradients flow through perturber quantities anywhere downstream.
+    Fixed perturber positions and velocities remain differentiable so ephemeris
+    evaluation times contribute to the acceleration derivative. GMs are constant.
 
     The constant PPN terms and non-constant iteration geometry are computed for
     ALL particles (P+M+T), but tracer sources are skipped (GM=0).
@@ -153,11 +153,9 @@ def _compute_ppn_setup(inputs: SystemState) -> tuple:
     N = P + M + T  # all particles (targets in the iteration)
     S = P + M  # all sources with GM > 0
 
-    # Fixed perturbers come from pre-computed ephemerides; we never need
-    # gradients through them, so stop_gradient at the source eliminates all
-    # downstream gradient computation through perturber quantities.
-    p_pos = jax.lax.stop_gradient(inputs.fixed_perturber_positions)  # (P, 3)
-    p_vel = jax.lax.stop_gradient(inputs.fixed_perturber_velocities)  # (P, 3)
+    # Preserve the time dependence of perturbers supplied by an ephemeris.
+    p_pos = inputs.fixed_perturber_positions  # (P, 3)
+    p_vel = inputs.fixed_perturber_velocities  # (P, 3)
     p_gms = jax.lax.stop_gradient(jnp.exp(inputs.fixed_perturber_log_gms))  # (P,)
 
     m_pos = inputs.massive_positions  # (M, 3)
@@ -272,10 +270,9 @@ def ppn_gravity(
     unnecessary N² interactions. Tracer sources (GM=0) are excluded from all
     computations, reducing the source dimension from P+M+T to P+M.
 
-    Note: We use "stop_gradient" on perturbers that are passed as fixed inputs, so
-    any gradients with respect to these perturber quantities will not be correct. To
-    track gradients with respect to perturbers, they must be included as "massive"
-    particles, not "fixed perturbers".
+    Fixed perturber positions and velocities remain differentiable: ephemeris
+    states depend on the evaluation time, even though these bodies are not
+    integrated. Their GMs are treated as constants under autodiff.
 
     Args:
         inputs (SystemState): The instantaneous state of the system.
