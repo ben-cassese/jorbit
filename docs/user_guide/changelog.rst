@@ -4,7 +4,7 @@ Changelog
 **1.7.3 (10/2026)**
 
 - **Bug fix: adaptive IAS15 forward-mode derivatives omitted the motion of ephemeris perturbers.** ``stop_gradient`` on their positions and velocities hid the acceleration's explicit time dependence, even while autodiff moved the adaptive substep times. This could produce large errors in long-arc orbit Jacobians, including the derivatives used for sky-plane covariance and fitting. Perturber geometry now remains differentiable, and the step-size controller's proposals are held constant during differentiation to avoid unnecessary controller derivatives. Nominal integration still uses the same adaptive algorithm. The ``ias15_evolve`` and ``System.ephemeris`` documentation now describes these derivative conventions and explains how converged finite differences can validate them.
-- Added multi-year derivative and covariance regression tests and a reproducible timing comparison. On the local CPU with JAX 0.11.1, the combined fix made seven-parameter position Jacobians 24-28% faster and sky-coordinate Jacobians 2-8% slower across the tested one- and ten-year arcs. Ordinary integration showed no slowdown, and nominal barycentric positions were bitwise identical. The benchmark script and raw timing samples are in ``tools/benchmark_ias15_autodiff.py`` and ``docs/misc/ias15_autodiff_benchmark.json``.
+- Added multi-year derivative and covariance regression tests covering time-dependent gravity, both step-size controllers, backward integration, and forced landing.
 
 **1.7.2 (10/2026)**
 
