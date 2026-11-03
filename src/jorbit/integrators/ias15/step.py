@@ -86,6 +86,10 @@ def ias15_step(
     will be needed until runtime. For a static version that accepts pre-computed
     perturber data, see ias15_static_step.
 
+    Adaptive step-size proposals are treated as constants under autodiff. This
+    computes orbit sensitivities without differentiating the numerical controller;
+    the nominal integration still adapts its steps normally.
+
     Args:
         initial_system_state (SystemState):
             The initial system state.
@@ -264,7 +268,8 @@ def ias15_step(
     )
 
     dt_done = dt
-    next_dt = step_scheduler(a0, at_final, b, dt, x_end, v_end)
+    # Differentiate the orbit, holding the controller's numerical choices fixed.
+    next_dt = jax.lax.stop_gradient(step_scheduler(a0, at_final, b, dt, x_end, v_end))
 
     def step_too_ambitious(
         x0: jnp.ndarray,

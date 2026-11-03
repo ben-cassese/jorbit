@@ -540,13 +540,11 @@ class System:
     ) -> SkyCoord:
         """Compute an ephemeris for the system.
 
-        Note: on the adaptive IAS15 path, the returned coordinates are only
-        piecewise-smooth functions of the particle states. The step sequence is
-        chosen adaptively, so an infinitesimal change in the state can change the
-        realized number and placement of steps, leaving discontinuities at roughly
-        the integrator tolerance (~1e-6 in a typical astrometric likelihood). Use
-        forward-mode AD for derivatives of anything built from this output; finite
-        differences are silently unreliable in weakly-constrained directions.
+        On the adaptive IAS15 path, forward-mode AD holds step-size controller
+        proposals constant and estimates physical orbit sensitivities to integration
+        accuracy. Finite differences can validate them, provided perturbation sizes
+        are checked for convergence: roundoff and changes in the adaptive step
+        sequence can dominate small finite-difference signals.
 
         Args:
             times (Time | jnp.ndarray):
