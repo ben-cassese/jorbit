@@ -1,11 +1,12 @@
 Changelog
 +++++++++
 
-**1.7.3 (10/2026)**
+**1.7.3 (11/2026)**
 
 - **Bug fix: adaptive IAS15 forward-mode derivatives were inconsistent with time-dependent ephemeris perturbers.** Autodiff let the step-size controller's proposals, and therefore the substep times, depend on the initial state, but ``stop_gradient`` on the perturbers' positions and velocities hid how they move with those times. This produced large errors in long-arc orbit Jacobians, and hence in the derivatives used for sky-plane covariance and fitting: tens of percent per Jacobian column over a 10-year NEO arc, and a ``Particle.scipy_objective_grad`` off by orders of magnitude on a 2-year synthetic arc. Derivatives are now taken along a frozen step sequence: the controller's proposals and the light-travel-time seed floor (``ltt_seed_floor``) are held constant under autodiff. Nominal integration still uses the same adaptive algorithm. The ``ias15_evolve`` and ``System.ephemeris`` documentation now describes this convention. The 1.6.0 entry below describing forward-mode AD as exact was incorrect.
 - **Fixed perturbers are no longer wrapped in** ``stop_gradient`` **anywhere.** Their positions, velocities, GMs, and the precomputed perturber-perturber PPN terms are now differentiable in ``newtonian_gravity``, ``ppn_gravity``, and ``static_ppn_gravity_tracer``, so derivatives with respect to evaluation times or perturber GMs are no longer silently zero. This has no measurable runtime cost, and forward-mode Jacobians through adaptive IAS15 are 20-35% faster than in 1.7.2 because the controller is no longer differentiated.
-- Added derivative regression tests for the time dependence of ephemeris accelerations and for a long-arc Jacobian through adaptive IAS15.
+- **Bug fix: ``nongrav_acceleration`` returned the wrong shape when any of** ``a1``, ``a2``, ``a3`` **was omitted.** The docstring says omitted coefficients are zero, but the defaults were built with the shape of the positions, ``(n, 3)``, instead of one value per particle, ``(n,)``. The returned acceleration was then ``(n, n, 3)`` rather than ``(n, 3)``, with every row repeating the full set of accelerations, and adding it to an ``(n, 3)`` gravity term broadcast silently instead of raising. Omitted coefficients are now ``(n,)`` zeros. Results with all three coefficients passed explicitly are unchanged, and nothing inside jorbit calls ``nongrav_acceleration``, so only user-built acceleration functions that relied on the defaults were affected.
+- Added derivative regression tests for the time dependence of ephemeris accelerations, for the PPN acceleration's dependence on perturber velocities, and for a forward-mode directional derivative through a 180-day adaptive IAS15 integration, plus a test that ``nongrav_acceleration`` treats omitted coefficients as zeros.
 
 **1.7.2 (10/2026)**
 
