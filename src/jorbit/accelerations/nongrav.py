@@ -24,9 +24,10 @@ def nongrav_acceleration(state: SystemState) -> jnp.ndarray:
     """
     x = jnp.concatenate([state.massive_positions, state.tracer_positions])
     v = jnp.concatenate([state.massive_velocities, state.tracer_velocities])
-    a1 = state.acceleration_func_kwargs.get("a1", jnp.zeros_like(x))
-    a2 = state.acceleration_func_kwargs.get("a2", jnp.zeros_like(x))
-    a3 = state.acceleration_func_kwargs.get("a3", jnp.zeros_like(x))
+    n = x.shape[0]
+    a1 = state.acceleration_func_kwargs.get("a1", jnp.zeros(n))
+    a2 = state.acceleration_func_kwargs.get("a2", jnp.zeros(n))
+    a3 = state.acceleration_func_kwargs.get("a3", jnp.zeros(n))
 
     r = jnp.linalg.norm(x, axis=1)
     r_cross_v = jnp.cross(x, v, axis=1)

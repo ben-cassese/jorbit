@@ -15,6 +15,7 @@ from jorbit.accelerations.gr import (
     static_ppn_gravity_tracer,
 )
 from jorbit.accelerations.newtonian import newtonian_gravity
+from jorbit.accelerations.nongrav import nongrav_acceleration
 from jorbit.data.constants import SPEED_OF_LIGHT
 from jorbit.utils.states import SystemState
 
@@ -361,3 +362,19 @@ def test_ppn_tracer_agreement() -> None:
     _tracer_agreement(n_tracer=5, n_perturber=3, seed=20)
     _tracer_agreement(n_tracer=3, n_perturber=8, seed=30)
     _tracer_agreement(n_tracer=20, n_perturber=10, seed=40)
+
+
+def test_nongrav_omitted_coefficients() -> None:
+    """Test that omitted nongrav coefficients act as zeros of shape (n,)."""
+    for n_massive, n_tracer in [(0, 1), (1, 0), (2, 3)]:
+        state = _make_state(n_massive, n_tracer, 0, c2=0.0, seed=50)
+        n = n_massive + n_tracer
+        rng = np.random.RandomState(n)
+        coeffs = {k: jnp.array(rng.normal(0, 1e-12, n)) for k in ("a1", "a2", "a3")}
+        for omitted in [(), ("a1",), ("a2",), ("a3",), ("a1", "a2", "a3")]:
+            kw = {k: v for k, v in coeffs.items() if k not in omitted}
+            ref_kw = {k: jnp.zeros(n) if k in omitted else v for k, v in coeffs.items()}
+            res = nongrav_acceleration(state.replace(acceleration_func_kwargs=kw))
+            ref = nongrav_acceleration(state.replace(acceleration_func_kwargs=ref_kw))
+            assert res.shape == (n, 3), f"n={n}, omitted={omitted}: {res.shape}"
+            assert jnp.array_equal(res, ref)
