@@ -15,9 +15,8 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
     Set up to separate massive and tracer particles, so systems with many tracers
     will not compute useless pairwise interactions.
 
-    Fixed perturber positions remain differentiable: ephemeris positions depend on
-    the evaluation time, even though these bodies are not integrated. Their GMs
-    are treated as constants under autodiff.
+    Fixed perturber positions and GMs remain differentiable: ephemeris positions
+    depend on the evaluation time, even though these bodies are not integrated.
 
     Args:
         inputs (SystemState): The instantaneous state of the system.
@@ -62,7 +61,7 @@ def newtonian_gravity(inputs: SystemState) -> jnp.ndarray:
     # Fixed perturbers acting on all (massive + tracer) particles.
     # Preserve the time dependence of perturbers supplied by an ephemeris.
     p_pos = inputs.fixed_perturber_positions
-    p_gms = jax.lax.stop_gradient(jnp.exp(inputs.fixed_perturber_log_gms))
+    p_gms = jnp.exp(inputs.fixed_perturber_log_gms)
 
     dx_perturbers = (
         jnp.concatenate([inputs.massive_positions, inputs.tracer_positions], axis=0)[

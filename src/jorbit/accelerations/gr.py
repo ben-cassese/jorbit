@@ -136,8 +136,8 @@ def _ppn_non_constant(
 def _compute_ppn_setup(inputs: SystemState) -> tuple:
     """Compute geometry, COM frame, Newtonian accelerations, and constant PPN terms.
 
-    Fixed perturber positions and velocities remain differentiable so ephemeris
-    evaluation times contribute to the acceleration derivative. GMs are constant.
+    Fixed perturber positions, velocities, and GMs remain differentiable so ephemeris
+    evaluation times contribute to the acceleration derivative.
 
     The constant PPN terms and non-constant iteration geometry are computed for
     ALL particles (P+M+T), but tracer sources are skipped (GM=0).
@@ -156,7 +156,7 @@ def _compute_ppn_setup(inputs: SystemState) -> tuple:
     # Preserve the time dependence of perturbers supplied by an ephemeris.
     p_pos = inputs.fixed_perturber_positions  # (P, 3)
     p_vel = inputs.fixed_perturber_velocities  # (P, 3)
-    p_gms = jax.lax.stop_gradient(jnp.exp(inputs.fixed_perturber_log_gms))  # (P,)
+    p_gms = jnp.exp(inputs.fixed_perturber_log_gms)  # (P,)
 
     m_pos = inputs.massive_positions  # (M, 3)
     m_vel = inputs.massive_velocities  # (M, 3)
@@ -270,9 +270,9 @@ def ppn_gravity(
     unnecessary N² interactions. Tracer sources (GM=0) are excluded from all
     computations, reducing the source dimension from P+M+T to P+M.
 
-    Fixed perturber positions and velocities remain differentiable: ephemeris
+    Fixed perturber positions, velocities, and GMs remain differentiable: ephemeris
     states depend on the evaluation time, even though these bodies are not
-    integrated. Their GMs are treated as constants under autodiff.
+    integrated.
 
     Args:
         inputs (SystemState): The instantaneous state of the system.
@@ -506,11 +506,10 @@ def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
     """
     c2 = inputs.acceleration_func_kwargs.get("c2", SPEED_OF_LIGHT**2)
 
-    # Perturber properties (P perturbers) — stop_gradient since we never need
-    # gradients through fixed perturber quantities.
-    p_pos = jax.lax.stop_gradient(inputs.fixed_perturber_positions)  # (P, 3)
-    p_vel = jax.lax.stop_gradient(inputs.fixed_perturber_velocities)  # (P, 3)
-    p_gms = jax.lax.stop_gradient(jnp.exp(inputs.fixed_perturber_log_gms))  # (P,)
+    # Perturber properties (P perturbers)
+    p_pos = inputs.fixed_perturber_positions  # (P, 3)
+    p_vel = inputs.fixed_perturber_velocities  # (P, 3)
+    p_gms = jnp.exp(inputs.fixed_perturber_log_gms)  # (P,)
 
     # Tracer properties (T tracers)
     t_pos = inputs.tracer_positions  # (T, 3)
@@ -551,11 +550,9 @@ def static_ppn_gravity_tracer(inputs: SystemState) -> jnp.ndarray:
     # Read pre-computed perturber-perturber quantities from kwargs.
     # These are computed once during preprocessing by precompute_perturber_ppn
     # and placed into acceleration_func_kwargs by the integrator.
-    a2_per_perturber = jax.lax.stop_gradient(inputs.acceleration_func_kwargs["pp_a2"])
-    a_newt_perturbers = jax.lax.stop_gradient(
-        inputs.acceleration_func_kwargs["pp_a_newt"]
-    )
-    a_gr_perturbers = jax.lax.stop_gradient(inputs.acceleration_func_kwargs["pp_a_gr"])
+    a2_per_perturber = inputs.acceleration_func_kwargs["pp_a2"]
+    a_newt_perturbers = inputs.acceleration_func_kwargs["pp_a_newt"]
+    a_gr_perturbers = inputs.acceleration_func_kwargs["pp_a_gr"]
 
     a2 = jnp.broadcast_to(a2_per_perturber[None, :], (t_pos.shape[0], p_pos.shape[0]))
 

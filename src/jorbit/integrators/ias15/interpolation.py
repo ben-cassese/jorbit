@@ -169,6 +169,9 @@ def ltt_seed_floor(
     observation at which the object is farther away. Doubling covers growth up to ~2x
     the epoch topocentric distance.
 
+    The floor is a numerical choice, like the step-size controller's proposals, so it
+    is held constant under autodiff (see :func:`ias15_step`).
+
     Args:
         positions (jnp.ndarray): Particle position(s) at the integration epoch,
             shape (3,) or (P, 3).
@@ -184,7 +187,7 @@ def ltt_seed_floor(
     dists = jnp.linalg.norm(
         pos[:, None, :] - observer_positions[None, :, :], axis=-1
     )  # (P, n_obs)
-    return 2.0 * jnp.max(dists) * INV_SPEED_OF_LIGHT
+    return jax.lax.stop_gradient(2.0 * jnp.max(dists) * INV_SPEED_OF_LIGHT)
 
 
 def apply_ltt_seed_floor(
